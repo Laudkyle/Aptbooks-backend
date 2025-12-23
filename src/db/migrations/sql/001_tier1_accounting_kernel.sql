@@ -1,20 +1,20 @@
--- Account typing
-CREATE TABLE account_types (
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+CREATE TABLE IF NOT EXISTS account_types (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  code TEXT NOT NULL UNIQUE, -- ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   normal_balance TEXT NOT NULL CHECK (normal_balance IN ('debit','credit'))
 );
 
-CREATE TABLE account_categories (
+CREATE TABLE IF NOT EXISTS account_categories (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   UNIQUE (organization_id, name)
 );
 
--- Chart of accounts
-CREATE TABLE chart_of_accounts (
+CREATE TABLE IF NOT EXISTS chart_of_accounts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
@@ -29,10 +29,9 @@ CREATE TABLE chart_of_accounts (
   UNIQUE (organization_id, code)
 );
 
-CREATE INDEX idx_coa_org_code ON chart_of_accounts(organization_id, code);
+CREATE INDEX IF NOT EXISTS idx_coa_org_code ON chart_of_accounts(organization_id, code);
 
--- Flexible accounting periods (non-overlapping per org)
-CREATE TABLE accounting_periods (
+CREATE TABLE IF NOT EXISTS accounting_periods (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
@@ -45,28 +44,30 @@ CREATE TABLE accounting_periods (
   UNIQUE (organization_id, code)
 );
 
--- Prevent overlaps within an organization (requires btree_gist)
-CREATE EXTENSION IF NOT EXISTS btree_gist;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'no_period_overlap'
+  ) THEN
+    ALTER TABLE accounting_periods
+      ADD CONSTRAINT no_period_overlap
+      EXCLUDE USING gist (
+        organization_id WITH =,
+        daterange(start_date, end_date, '[]') WITH &&
+      );
+  END IF;
+END $$;
 
-ALTER TABLE accounting_periods
-  ADD CONSTRAINT no_period_overlap
-  EXCLUDE USING gist (
-    organization_id WITH =,
-    daterange(start_date, end_date, '[]') WITH &&
-  );
-
--- Journal entry types
-CREATE TABLE journal_entry_types (
+CREATE TABLE IF NOT EXISTS journal_entry_types (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  code TEXT NOT NULL UNIQUE,  -- e.g., GENERAL, ADJUSTMENT, CLOSING
+  code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL
 );
 
--- Journals
-CREATE TABLE journal_entries (
+CREATE TABLE IF NOT EXISTS journal_entries (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  entry_no BIGSERIAL, -- per DB; we also enforce per-org unique by unique index below
+  entry_no BIGSERIAL,
   journal_entry_type_id UUID NOT NULL REFERENCES journal_entry_types(id),
   period_id UUID NOT NULL REFERENCES accounting_periods(id),
   entry_date DATE NOT NULL,
@@ -82,15 +83,14 @@ CREATE TABLE journal_entries (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Ensure idempotency unique per org when provided
-CREATE UNIQUE INDEX uq_journal_idempotency_per_org
+CREATE UNIQUE INDEX IF NOT EXISTS uq_journal_idempotency_per_org
   ON journal_entries(organization_id, idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 
--- Ensure entry_no unique per org (best-effort; entry_no is global sequence)
-CREATE UNIQUE INDEX uq_journal_entry_no_per_org ON journal_entries(organization_id, entry_no);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_journal_entry_no_per_org
+  ON journal_entries(organization_id, entry_no);
 
-CREATE TABLE journal_entry_lines (
+CREATE TABLE IF NOT EXISTS journal_entry_lines (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   journal_entry_id UUID NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
   line_no INT NOT NULL,
@@ -106,10 +106,9 @@ CREATE TABLE journal_entry_lines (
   UNIQUE (journal_entry_id, line_no)
 );
 
-CREATE INDEX idx_journal_lines_journal ON journal_entry_lines(journal_entry_id);
+CREATE INDEX IF NOT EXISTS idx_journal_lines_journal ON journal_entry_lines(journal_entry_id);
 
--- GL balances (fast inquiries)
-CREATE TABLE general_ledger_balances (
+CREATE TABLE IF NOT EXISTS general_ledger_balances (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   period_id UUID NOT NULL REFERENCES accounting_periods(id) ON DELETE CASCADE,
   account_id UUID NOT NULL REFERENCES chart_of_accounts(id) ON DELETE CASCADE,
@@ -118,24 +117,14 @@ CREATE TABLE general_ledger_balances (
   PRIMARY KEY (organization_id, period_id, account_id)
 );
 
--- Closing entries (Phase 1 keeps structure; logic can be minimal)
-CREATE TABLE closing_entries (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  period_id UUID NOT NULL REFERENCES accounting_periods(id),
-  created_by UUID REFERENCES users(id),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  note TEXT
-);
-
--- FX scaffolding (base currency is GHS; keep types/history for later even if unused now)
-CREATE TABLE exchange_rate_types (
+-- FX scaffolding (Phase 1 enforces GHS-only at service layer)
+CREATE TABLE IF NOT EXISTS exchange_rate_types (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   code TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL
 );
 
-CREATE TABLE exchange_rates (
+CREATE TABLE IF NOT EXISTS exchange_rates (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   rate_type_id UUID NOT NULL REFERENCES exchange_rate_types(id),
@@ -146,11 +135,20 @@ CREATE TABLE exchange_rates (
   UNIQUE (organization_id, rate_type_id, from_currency, to_currency, effective_date)
 );
 
-CREATE TABLE exchange_rate_history (
+CREATE TABLE IF NOT EXISTS exchange_rate_history (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   exchange_rate_id UUID NOT NULL REFERENCES exchange_rates(id) ON DELETE CASCADE,
   old_rate NUMERIC(18,6) NOT NULL,
   new_rate NUMERIC(18,6) NOT NULL,
   changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   changed_by UUID REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS closing_entries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  period_id UUID NOT NULL REFERENCES accounting_periods(id),
+  created_by UUID REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note TEXT
 );
