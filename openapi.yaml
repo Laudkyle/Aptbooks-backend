@@ -1,0 +1,977 @@
+openapi: 3.0.3
+info:
+  title: AptBooks Backend API
+  version: "1.0.0"
+  description: Phase 1 API (Foundation + Accounting Kernel)
+servers:
+  - url: http://localhost:4000
+    description: Local
+tags:
+  - name: Auth
+  - name: Users
+  - name: Roles
+  - name: Permissions
+  - name: Settings
+  - name: Periods
+  - name: Chart of Accounts
+  - name: Journals
+  - name: Balances
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            missingToken:
+              value: { error: "Missing bearer token" }
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            forbidden:
+              value: { error: "Forbidden" }
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            notFound:
+              value: { error: "Not found" }
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          examples:
+            conflict:
+              value: { error: "Conflict" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, example: "admin@aptbooks.local" }
+        password: { type: string, example: "ChangeMe123!" }
+
+    LoginResponse:
+      type: object
+      required: [accessToken]
+      properties:
+        accessToken: { type: string, example: "eyJhbGciOi..." }
+
+    Permission:
+      type: object
+      properties:
+        code: { type: string, example: "accounting.journal.read" }
+        description: { type: string, example: "Read journals" }
+      required: [code]
+
+    Role:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        name: { type: string, example: "Admin" }
+        created_at: { type: string, format: date-time }
+      required: [id, organization_id, name]
+
+    CreateRoleRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: "Accountant" }
+
+    AttachPermissionsRequest:
+      type: object
+      required: [permissionCodes]
+      properties:
+        permissionCodes:
+          type: array
+          items: { type: string }
+          example: ["accounting.journal.read", "accounting.journal.create"]
+
+    AttachPermissionsResponse:
+      type: object
+      properties:
+        roleId: { type: string, format: uuid }
+        attached:
+          type: array
+          items: { type: string }
+
+    UserSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, example: "user@example.com" }
+        status: { type: string, enum: [active, disabled] }
+        created_at: { type: string, format: date-time }
+      required: [id, email, status]
+
+    CreateUserRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, example: "staff@aptbooks.local" }
+        password: { type: string, example: "StrongPass123!" }
+
+    AssignRolesRequest:
+      type: object
+      required: [roleIds]
+      properties:
+        roleIds:
+          type: array
+          items: { type: string, format: uuid }
+
+    AssignRolesResponse:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        assigned:
+          type: array
+          items: { type: string, format: uuid }
+
+    Setting:
+      type: object
+      properties:
+        key: { type: string, example: "company_profile" }
+        value_json: { type: object, additionalProperties: true }
+      required: [key, value_json]
+
+    Period:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        code: { type: string, example: "2026-01" }
+        start_date: { type: string, format: date, example: "2026-01-01" }
+        end_date: { type: string, format: date, example: "2026-01-31" }
+        status: { type: string, enum: [open, closed, locked], example: "open" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreatePeriodRequest:
+      type: object
+      required: [code, startDate, endDate]
+      properties:
+        code: { type: string, example: "2026-01" }
+        startDate: { type: string, format: date, example: "2026-01-01" }
+        endDate: { type: string, format: date, example: "2026-01-31" }
+
+    Account:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        code: { type: string, example: "1000" }
+        name: { type: string, example: "Cash" }
+        account_type_id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid, nullable: true }
+        parent_account_id: { type: string, format: uuid, nullable: true }
+        is_postable: { type: boolean, example: true }
+        status: { type: string, enum: [active, inactive], example: "active" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateAccountRequest:
+      type: object
+      required: [code, name, accountTypeCode]
+      properties:
+        code: { type: string, example: "1200" }
+        name: { type: string, example: "Bank" }
+        accountTypeCode:
+          type: string
+          enum: [ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE]
+          example: ASSET
+        parentAccountId: { type: string, format: uuid, nullable: true }
+        isPostable: { type: boolean, default: true }
+        status: { type: string, enum: [active, inactive], default: active }
+
+    UpdateAccountRequest:
+      type: object
+      properties:
+        name: { type: string }
+        parentAccountId: { type: string, format: uuid, nullable: true }
+        isPostable: { type: boolean }
+        status: { type: string, enum: [active, inactive] }
+
+    JournalLineCreate:
+      type: object
+      required: [accountId]
+      properties:
+        accountId: { type: string, format: uuid }
+        description: { type: string, nullable: true }
+        debit: { type: number, example: 100 }
+        credit: { type: number, example: 0 }
+
+    CreateJournalRequest:
+      type: object
+      required: [periodId, entryDate, lines]
+      properties:
+        periodId: { type: string, format: uuid }
+        entryDate: { type: string, format: date, example: "2026-01-10" }
+        typeCode:
+          type: string
+          enum: [GENERAL, ADJUSTMENT, CLOSING]
+          default: GENERAL
+        memo: { type: string, nullable: true }
+        idempotencyKey: { type: string, nullable: true, example: "test-001" }
+        lines:
+          type: array
+          minItems: 2
+          items: { $ref: "#/components/schemas/JournalLineCreate" }
+      example:
+        periodId: "00000000-0000-0000-0000-000000000000"
+        entryDate: "2026-01-10"
+        typeCode: "GENERAL"
+        memo: "Test sale"
+        idempotencyKey: "test-001"
+        lines:
+          - accountId: "00000000-0000-0000-0000-000000000000"
+            debit: 100
+          - accountId: "00000000-0000-0000-0000-000000000000"
+            credit: 100
+
+    CreateJournalResponse:
+      type: object
+      properties:
+        journalId: { type: string, format: uuid }
+        status: { type: string, enum: [draft], example: "draft" }
+
+    JournalEntry:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        entry_no: { type: integer }
+        journal_entry_type_id: { type: string, format: uuid }
+        period_id: { type: string, format: uuid }
+        entry_date: { type: string, format: date }
+        memo: { type: string, nullable: true }
+        status: { type: string, enum: [draft, posted, voided] }
+        posted_at: { type: string, format: date-time, nullable: true }
+        posted_by: { type: string, format: uuid, nullable: true }
+        voided_at: { type: string, format: date-time, nullable: true }
+        voided_by: { type: string, format: uuid, nullable: true }
+        void_reason: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    JournalLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        journal_entry_id: { type: string, format: uuid }
+        line_no: { type: integer }
+        account_id: { type: string, format: uuid }
+        description: { type: string, nullable: true }
+        debit: { type: number }
+        credit: { type: number }
+        currency_code: { type: string, example: "GHS" }
+        fx_rate: { type: number }
+        amount_base: { type: number }
+
+    JournalGetResponse:
+      type: object
+      properties:
+        journal: { $ref: "#/components/schemas/JournalEntry" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/JournalLine" }
+
+    VoidJournalRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, example: "Test reversal" }
+
+    VoidJournalResponse:
+      type: object
+      description: Implementation-specific; commonly includes reversalJournalId and updated status.
+      additionalProperties: true
+
+    TrialBalanceRow:
+      type: object
+      properties:
+        account_id: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        debit_total: { type: number }
+        credit_total: { type: number }
+
+    TrialBalanceResponse:
+      type: array
+      items: { $ref: "#/components/schemas/TrialBalanceRow" }
+
+    AccountActivityRow:
+      type: object
+      properties:
+        journal_id: { type: string, format: uuid }
+        entry_no: { type: integer }
+        entry_date: { type: string, format: date }
+        memo: { type: string, nullable: true }
+        status: { type: string, enum: [draft, posted, voided] }
+        debit: { type: number }
+        credit: { type: number }
+
+    AccountActivityResponse:
+      type: array
+      items: { $ref: "#/components/schemas/AccountActivityRow" }
+
+security:
+  - BearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login (public)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /core/permissions:
+    get:
+      tags: [Permissions]
+      summary: List permissions
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Permission" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /core/roles:
+    get:
+      tags: [Roles]
+      summary: List roles
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Role" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Roles]
+      summary: Create role
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRoleRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /core/roles/{id}/permissions:
+    post:
+      tags: [Roles]
+      summary: Attach permissions to role
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttachPermissionsRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttachPermissionsResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /core/users:
+    get:
+      tags: [Users]
+      summary: List users in org
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/UserSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      summary: Create user in org
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateUserRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSummary" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/users/{id}/disable:
+    patch:
+      tags: [Users]
+      summary: Disable user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserSummary" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/users/{id}/roles:
+    post:
+      tags: [Users]
+      summary: Assign roles to user
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignRolesRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignRolesResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /core/settings/{key}:
+    get:
+      tags: [Settings]
+      summary: Get setting by key
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Setting" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Settings]
+      summary: Upsert setting by key
+      parameters:
+        - in: path
+          name: key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            examples:
+              companyProfile:
+                value: { name: "AptBooks Demo Org", tin: "GHA-123", address: "Accra" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Setting" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /core/accounting/periods:
+    get:
+      tags: [Periods]
+      summary: List periods
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Period" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Periods]
+      summary: Create period
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePeriodRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Period" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/accounting/periods/{id}/close:
+    post:
+      tags: [Periods]
+      summary: Close period
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Period" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /core/accounting/periods/{id}/reopen:
+    post:
+      tags: [Periods]
+      summary: Reopen period
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Period" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /core/accounting/accounts:
+    get:
+      tags: [Chart of Accounts]
+      summary: List chart of accounts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Account" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Chart of Accounts]
+      summary: Create account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccountRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/accounting/accounts/{id}:
+    patch:
+      tags: [Chart of Accounts]
+      summary: Update account
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAccountRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /core/accounting/journals:
+    get:
+      tags: [Journals]
+      summary: List journals (optional filters)
+      parameters:
+        - in: query
+          name: periodId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema: { type: string, enum: [draft, posted, voided] }
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/JournalEntry" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Journals]
+      summary: Create draft journal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateJournalRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateJournalResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/accounting/journals/{id}:
+    get:
+      tags: [Journals]
+      summary: Get journal + lines
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JournalGetResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /core/accounting/journals/{id}/post:
+    post:
+      tags: [Journals]
+      summary: Post draft journal
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/accounting/journals/{id}/void:
+    post:
+      tags: [Journals]
+      summary: Void posted journal by reversal
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VoidJournalRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoidJournalResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /core/accounting/balances/trial-balance:
+    get:
+      tags: [Balances]
+      summary: Trial balance for a period
+      parameters:
+        - in: query
+          name: periodId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrialBalanceResponse" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /core/accounting/balances/gl:
+    get:
+      tags: [Balances]
+      summary: General ledger balances for a period
+      parameters:
+        - in: query
+          name: periodId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /core/accounting/balances/account-activity:
+    get:
+      tags: [Balances]
+      summary: Account activity within a date range
+      parameters:
+        - in: query
+          name: accountId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: from
+          required: true
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountActivityResponse" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
