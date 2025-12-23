@@ -48,7 +48,15 @@ async function run() {
       ["users.read", "Read users"],
       ["users.manage", "Create/disable users"],
       ["settings.read", "Read system settings"],
-      ["settings.manage", "Manage system settings"]
+      ["settings.manage", "Manage system settings"],
+
+      ["partners.read", "Read business partners"],
+      ["partners.manage", "Manage business partners"],
+
+      ["transactions.invoice.read", "Read invoices"],
+      ["transactions.invoice.manage", "Create draft invoices"],
+      ["transactions.invoice.issue", "Issue invoices (post journals)"],
+      ["transactions.invoice.void", "Void invoices (reversal)"],
     ];
 
     for (const [code, description] of perms) {
@@ -131,8 +139,10 @@ async function run() {
     );
 
     // Minimal COA skeleton (so tests + demo flows work)
-    const { rows: types } = await client.query(`SELECT code, id FROM account_types`);
-    const typeMap = Object.fromEntries(types.map(r => [r.code, r.id]));
+    const { rows: types } = await client.query(
+      `SELECT code, id FROM account_types`
+    );
+    const typeMap = Object.fromEntries(types.map((r) => [r.code, r.id]));
 
     const coa = [
       ["1000", "Cash", typeMap.ASSET],
@@ -140,7 +150,7 @@ async function run() {
       ["2000", "Accounts Payable", typeMap.LIABILITY],
       ["3000", "Owner's Equity", typeMap.EQUITY],
       ["4000", "Sales Revenue", typeMap.REVENUE],
-      ["5000", "Operating Expenses", typeMap.EXPENSE]
+      ["5000", "Operating Expenses", typeMap.EXPENSE],
     ];
 
     for (const [code, name, accountTypeId] of coa) {
@@ -158,7 +168,7 @@ async function run() {
     console.log("Seed complete:", {
       orgId,
       adminEmail,
-      adminPassword: existingUser.length ? "(unchanged)" : "ChangeMe123!"
+      adminPassword: existingUser.length ? "(unchanged)" : "ChangeMe123!",
     });
   } catch (e) {
     await client.query("ROLLBACK");

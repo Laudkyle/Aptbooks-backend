@@ -12,6 +12,8 @@ const coaRoutes = require("./core/accounting/chart-of-accounts/coa.routes");
 const periodRoutes = require("./core/accounting/periods/periods.routes");
 const journalRoutes = require("./core/accounting/journal/journal.routes");
 const balanceRoutes = require("./core/accounting/ledger/balances.routes");
+const businessModuleRoutes = require("./modules/business/business.routes");
+const transactionsModuleRoutes = require("./modules/transactions/transactions.routes");
 const permissionsRoutes = require("./core/foundation/permissions/permissions.routes");
 const rolesRoutes = require("./core/foundation/roles/roles.routes");
 const usersRoutes = require("./core/foundation/users/users.routes");
@@ -42,6 +44,9 @@ app.use("/core/accounting/accounts", coaRoutes);
 app.use("/core/accounting/periods", periodRoutes);
 app.use("/core/accounting/journals", journalRoutes);
 app.use("/core/accounting/balances", balanceRoutes);
+
+app.use("/modules/business", businessModuleRoutes);
+app.use("/modules/transactions", transactionsModuleRoutes);
 
 app.use(errorMiddleware);
 

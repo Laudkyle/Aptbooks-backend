@@ -1,7 +1,10 @@
 /**
  * Balance Inquiry API (Tier 1)
- * - trialBalance(orgId, periodId)
- * - glBalances(orgId, periodId)
- * - accountActivity(orgId, accountId, fromDate, toDate)
  */
-module.exports = {};
+const balancesSvc = require("../core/accounting/ledger/balances.service");
+
+async function trialBalance({ orgId, periodId }) {
+  return balancesSvc.trialBalance({ orgId, periodId });
+}
+
+module.exports = { trialBalance };
