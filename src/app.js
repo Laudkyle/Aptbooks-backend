@@ -19,6 +19,12 @@ const settingsRoutes = require("./core/foundation/system-settings/system-setting
 
 
 const app = express();
+const swaggerUi = require("swagger-ui-express");
+const { swaggerDocument } = require("./docs/swagger");
+
+// Public docs (recommended)
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
