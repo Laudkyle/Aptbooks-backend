@@ -1,140 +1,34 @@
 const router = require("express").Router();
-const bcrypt = require("bcryptjs");
-const { authRequired } = require("../../../middleware/auth.middleware");
-const { requirePermission } = require("../../../middleware/permission.middleware");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
-const { writeAudit } = require("../audit-logs/audit.service");
 
-router.use(authRequired);
-
-router.post("/", requirePermission("users.manage"), async (req, res, next) => {
+router.post("/login", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
     const { email, password } = req.body || {};
     if (!email || !password) throw new AppError(400, "email and password required");
-    if (String(password).length < 10) throw new AppError(400, "password must be at least 10 characters");
-
-    const passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
 
     const { rows } = await pool.query(
-      `
-      INSERT INTO users(organization_id, email, password_hash, status)
-      VALUES ($1,$2,$3,'active')
-      RETURNING id, organization_id, email, status, created_at
-      `,
-      [orgId, email, passwordHash]
+      `SELECT id, organization_id, password_hash, status FROM users WHERE email=$1`,
+      [email]
     );
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId: req.user.id,
-      action: "user.created",
-      entityType: "users",
-      entityId: rows[0].id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: rows[0]
-    });
-
-    res.status(201).json(rows[0]);
-  } catch (e) { next(e); }
-});
-
-router.get("/", requirePermission("users.read"), async (req, res, next) => {
-  try {
-    const orgId = req.user.organization_id;
-    const { rows } = await pool.query(
-      `SELECT id, email, status, created_at FROM users WHERE organization_id=$1 ORDER BY created_at DESC`,
-      [orgId]
-    );
-    res.json(rows);
-  } catch (e) { next(e); }
-});
-
-router.patch("/:id/disable", requirePermission("users.manage"), async (req, res, next) => {
-  try {
-    const orgId = req.user.organization_id;
-    const userId = req.params.id;
-
-    const { rows: before } = await pool.query(
-      `SELECT id, email, status FROM users WHERE organization_id=$1 AND id=$2`,
-      [orgId, userId]
-    );
-    if (!before.length) throw new AppError(404, "User not found");
-
-    const { rows: after } = await pool.query(
-      `UPDATE users SET status='disabled', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING id, email, status`,
-      [orgId, userId]
-    );
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId: req.user.id,
-      action: "user.disabled",
-      entityType: "users",
-      entityId: userId,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      before: before[0],
-      after: after[0]
-    });
-
-    res.json(after[0]);
-  } catch (e) { next(e); }
-});
-
-// Assign roles: { roleIds: ["..."] }
-router.post("/:id/roles", requirePermission("rbac.roles.manage"), async (req, res, next) => {
-  const client = await pool.connect();
-  try {
-    const orgId = req.user.organization_id;
-    const userId = req.params.id;
-    const roleIds = req.body?.roleIds || [];
-    if (!Array.isArray(roleIds) || roleIds.length === 0) throw new AppError(400, "roleIds required");
-
-    await client.query("BEGIN");
-
-    const { rows: u } = await client.query(
-      `SELECT id FROM users WHERE organization_id=$1 AND id=$2`,
-      [orgId, userId]
-    );
-    if (!u.length) throw new AppError(404, "User not found");
-
-    const { rows: roles } = await client.query(
-      `SELECT id FROM roles WHERE organization_id=$1 AND id = ANY($2::uuid[])`,
-      [orgId, roleIds]
-    );
-    if (roles.length !== roleIds.length) throw new AppError(400, "One or more roleIds invalid");
-
-    for (const r of roles) {
-      await client.query(
-        `INSERT INTO user_roles(user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-        [userId, r.id]
-      );
+    if (!rows.length || rows[0].status !== "active") {
+      throw new AppError(401, "Invalid credentials");
     }
 
-    await client.query("COMMIT");
+    const ok = await bcrypt.compare(password, rows[0].password_hash);
+    if (!ok) throw new AppError(401, "Invalid credentials");
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId: req.user.id,
-      action: "user.roles.assigned",
-      entityType: "users",
-      entityId: userId,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: { userId, roleIds }
-    });
+    const token = jwt.sign(
+      { id: rows[0].id, organization_id: rows[0].organization_id, email },
+      env.JWT_SECRET,
+      { expiresIn: env.JWT_EXPIRES_IN }
+    );
 
-    res.json({ userId, assigned: roleIds });
-  } catch (e) {
-    await client.query("ROLLBACK");
-    next(e);
-  } finally {
-    client.release();
-  }
+    res.json({ accessToken: token });
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

@@ -1,17 +1,13 @@
 {
   "name": "aptbooks-backend",
   "version": "1.0.0",
-  "main": "server.js",
-   "scripts": {
+  "main": "src/server.js",
+  "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "migrate": "node-pg-migrate",
-    "test": "jest"
-  },"pgm": {
-    "migrations-dir": "src/db/migrations",
-    "schema": "public",
-    "direction": "up",
-    "count": 1
+    "db:migrate": "node src/db/run-sql-migrations.js",
+    "db:seed": "node src/db/seeds/seed.js",
+    "test": "jest --runInBand"
   },
   "author": "",
   "license": "ISC",
@@ -22,14 +18,15 @@
     "dotenv": "^17.2.3",
     "express": "^4.22.1",
     "express-async-errors": "^3.1.1",
-    "faker": "^6.6.6",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.1",
-    "node-pg-migrate": "^8.0.4",
     "pg": "^8.16.3",
     "uuid": "^13.0.0",
-    "winston": "^3.19.0",
     "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "jest": "^30.0.0",
+    "nodemon": "^3.1.9"
   }
 }

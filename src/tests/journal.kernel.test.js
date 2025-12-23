@@ -1,5 +1,5 @@
 const request = require("supertest");
-const app = require("../src/app");
+const app = require("../app");
 const { pool } = require("../src/db/pool");
 
 let token;

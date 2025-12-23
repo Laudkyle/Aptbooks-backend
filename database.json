@@ -1,5 +1,0 @@
-{
-  "dev": {
-    "connectionString": "DATABASE_URL"
-  }
-}

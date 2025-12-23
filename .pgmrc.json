@@ -1,4 +1,0 @@
-{
-  "migrations-dir": "src/db/migrations",
-  "database-url-var": "DATABASE_URL"
-}

@@ -3,6 +3,7 @@ const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const { createPeriodSchema } = require("../../../shared/validators/accounting.validators");
+const { AppError } = require("../../../shared/errors/AppError");
 const svc = require("./periods.service");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 
@@ -27,21 +28,23 @@ router.post("/", requirePermission("accounting.period.manage"), async (req, res,
 
     res.status(201).json(created);
   } catch (e) {
-    // handle overlap constraint more readably
-    if (String(e.message || "").includes("no_period_overlap")) {
-      e.status = 409;
-      e.message = "Period dates overlap an existing period";
+    // Postgres exclusion constraint violation (period overlap)
+    if (e && e.code === "23P01") {
+      return next(new AppError(409, "Period dates overlap an existing period"));
     }
     next(e);
   }
 });
 
-router.get("/", requirePermission("accounting.period.manage"), async (req, res, next) => {
+// Read-only listing should not require manage permission
+router.get("/", requirePermission("accounting.period.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const out = await svc.listPeriods({ orgId });
     res.json(out);
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post("/:id/close", requirePermission("accounting.period.close"), async (req, res, next) => {
@@ -62,7 +65,9 @@ router.post("/:id/close", requirePermission("accounting.period.close"), async (r
     });
 
     res.json(out.after);
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 router.post("/:id/reopen", requirePermission("accounting.period.manage"), async (req, res, next) => {
@@ -83,7 +88,9 @@ router.post("/:id/reopen", requirePermission("accounting.period.manage"), async 
     });
 
     res.json(out.after);
-  } catch (e) { next(e); }
+  } catch (e) {
+    next(e);
+  }
 });
 
 module.exports = router;
