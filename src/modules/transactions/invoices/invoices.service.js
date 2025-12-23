@@ -50,6 +50,9 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
   if (!customer.default_receivable_account_id) {
     throw new AppError(400, "Customer missing defaultReceivableAccountId");
   }
+  if (payload.dueDate < payload.invoiceDate) {
+    throw new AppError(400, "dueDate must be on or after invoiceDate");
+  }
 
   for (const l of payload.lines) await assertRevenueAccount({ orgId, accountId: l.revenueAccountId });
 

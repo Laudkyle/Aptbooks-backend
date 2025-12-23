@@ -17,6 +17,15 @@ async function assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId }) {
   if (!rows.length) throw new AppError(400, "paymentTermsId is invalid for this organization");
 }
 
+async function getPartnerForOrg({ orgId, partnerId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM business_partners WHERE organization_id=$1 AND id=$2`,
+    [orgId, partnerId]
+  );
+  if (!rows.length) throw new AppError(404, "Partner not found");
+  return rows[0];
+}
+
 async function createPartner({ orgId, payload }) {
   if (payload.type === "customer" && payload.defaultPayableAccountId) {
     throw new AppError(400, "Customers cannot set defaultPayableAccountId");
@@ -78,25 +87,20 @@ async function listPartners({ orgId, query }) {
   return rows;
 }
 
-async function getPartnerForOrg({ orgId, partnerId }) {
-  const { rows } = await pool.query(
-    `SELECT * FROM business_partners WHERE organization_id=$1 AND id=$2`,
-    [orgId, partnerId]
-  );
-  if (!rows.length) throw new AppError(404, "Partner not found");
-  return rows[0];
-}
-
 async function getPartnerDetails({ orgId, partnerId }) {
   const partner = await getPartnerForOrg({ orgId, partnerId });
 
   const { rows: contacts } = await pool.query(
-    `SELECT * FROM business_partner_contacts WHERE organization_id=$1 AND partner_id=$2 ORDER BY is_primary DESC, created_at ASC`,
+    `SELECT * FROM business_partner_contacts
+     WHERE organization_id=$1 AND partner_id=$2
+     ORDER BY is_primary DESC, created_at ASC`,
     [orgId, partnerId]
   );
 
   const { rows: addresses } = await pool.query(
-    `SELECT * FROM business_partner_addresses WHERE organization_id=$1 AND partner_id=$2 ORDER BY is_primary DESC, created_at ASC`,
+    `SELECT * FROM business_partner_addresses
+     WHERE organization_id=$1 AND partner_id=$2
+     ORDER BY is_primary DESC, created_at ASC`,
     [orgId, partnerId]
   );
 
@@ -157,10 +161,269 @@ async function updatePartner({ orgId, partnerId, payload }) {
   return { before, after: rows[0] };
 }
 
+/**
+ * CONTACTS
+ */
+async function addContact({ orgId, partnerId, payload }) {
+  await getPartnerForOrg({ orgId, partnerId });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (payload.isPrimary === true) {
+      await client.query(
+        `
+        UPDATE business_partner_contacts
+        SET is_primary=FALSE, updated_at=NOW()
+        WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
+        `,
+        [orgId, partnerId]
+      );
+    }
+
+    const { rows } = await client.query(
+      `
+      INSERT INTO business_partner_contacts(
+        organization_id, partner_id, name, email, phone, role, is_primary
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,FALSE))
+      RETURNING *
+      `,
+      [
+        orgId,
+        partnerId,
+        payload.name,
+        payload.email || null,
+        payload.phone || null,
+        payload.role || null,
+        payload.isPrimary === true
+      ]
+    );
+
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (e) {
+    await client.query("ROLLBACK");
+    // If two requests race to set primary, surface a clean 409
+    if (e?.code === "23505") throw new AppError(409, "Primary contact already exists");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateContact({ orgId, partnerId, contactId, payload }) {
+  await getPartnerForOrg({ orgId, partnerId });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const { rows: beforeRows } = await client.query(
+      `
+      SELECT * FROM business_partner_contacts
+      WHERE organization_id=$1 AND partner_id=$2 AND id=$3
+      `,
+      [orgId, partnerId, contactId]
+    );
+    if (!beforeRows.length) throw new AppError(404, "Contact not found");
+    const before = beforeRows[0];
+
+    if (payload.isPrimary === true) {
+      await client.query(
+        `
+        UPDATE business_partner_contacts
+        SET is_primary=FALSE, updated_at=NOW()
+        WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
+        `,
+        [orgId, partnerId]
+      );
+    }
+
+    const map = {
+      name: "name",
+      email: "email",
+      phone: "phone",
+      role: "role",
+      isPrimary: "is_primary"
+    };
+
+    const columns = [];
+    const params = [orgId, partnerId, contactId];
+    let i = 4;
+
+    for (const [k, col] of Object.entries(map)) {
+      if (payload[k] !== undefined) {
+        columns.push(`${col}=$${i++}`);
+        params.push(payload[k] === "" ? null : payload[k]);
+      }
+    }
+
+    if (!columns.length) {
+      await client.query("COMMIT");
+      return { before, after: before };
+    }
+
+    const { rows: afterRows } = await client.query(
+      `
+      UPDATE business_partner_contacts
+      SET ${columns.join(", ")}, updated_at=NOW()
+      WHERE organization_id=$1 AND partner_id=$2 AND id=$3
+      RETURNING *
+      `,
+      params
+    );
+
+    await client.query("COMMIT");
+    return { before, after: afterRows[0] };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e?.code === "23505") throw new AppError(409, "Primary contact already exists");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * ADDRESSES
+ */
+async function addAddress({ orgId, partnerId, payload }) {
+  await getPartnerForOrg({ orgId, partnerId });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (payload.isPrimary === true) {
+      await client.query(
+        `
+        UPDATE business_partner_addresses
+        SET is_primary=FALSE, updated_at=NOW()
+        WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
+        `,
+        [orgId, partnerId]
+      );
+    }
+
+    const { rows } = await client.query(
+      `
+      INSERT INTO business_partner_addresses(
+        organization_id, partner_id, label, line1, line2, city, region, postal_code, country, is_primary
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'Ghana'),COALESCE($10,FALSE))
+      RETURNING *
+      `,
+      [
+        orgId,
+        partnerId,
+        payload.label || null,
+        payload.line1,
+        payload.line2 || null,
+        payload.city || null,
+        payload.region || null,
+        payload.postalCode || null,
+        payload.country || null,
+        payload.isPrimary === true
+      ]
+    );
+
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e?.code === "23505") throw new AppError(409, "Primary address already exists");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function updateAddress({ orgId, partnerId, addressId, payload }) {
+  await getPartnerForOrg({ orgId, partnerId });
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const { rows: beforeRows } = await client.query(
+      `
+      SELECT * FROM business_partner_addresses
+      WHERE organization_id=$1 AND partner_id=$2 AND id=$3
+      `,
+      [orgId, partnerId, addressId]
+    );
+    if (!beforeRows.length) throw new AppError(404, "Address not found");
+    const before = beforeRows[0];
+
+    if (payload.isPrimary === true) {
+      await client.query(
+        `
+        UPDATE business_partner_addresses
+        SET is_primary=FALSE, updated_at=NOW()
+        WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
+        `,
+        [orgId, partnerId]
+      );
+    }
+
+    const map = {
+      label: "label",
+      line1: "line1",
+      line2: "line2",
+      city: "city",
+      region: "region",
+      postalCode: "postal_code",
+      country: "country",
+      isPrimary: "is_primary"
+    };
+
+    const columns = [];
+    const params = [orgId, partnerId, addressId];
+    let i = 4;
+
+    for (const [k, col] of Object.entries(map)) {
+      if (payload[k] !== undefined) {
+        columns.push(`${col}=$${i++}`);
+        params.push(payload[k] === "" ? null : payload[k]);
+      }
+    }
+
+    if (!columns.length) {
+      await client.query("COMMIT");
+      return { before, after: before };
+    }
+
+    const { rows: afterRows } = await client.query(
+      `
+      UPDATE business_partner_addresses
+      SET ${columns.join(", ")}, updated_at=NOW()
+      WHERE organization_id=$1 AND partner_id=$2 AND id=$3
+      RETURNING *
+      `,
+      params
+    );
+
+    await client.query("COMMIT");
+    return { before, after: afterRows[0] };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    if (e?.code === "23505") throw new AppError(409, "Primary address already exists");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createPartner,
   listPartners,
   getPartnerForOrg,
   getPartnerDetails,
-  updatePartner
+  updatePartner,
+  addContact,
+  updateContact,
+  addAddress,
+  updateAddress
 };

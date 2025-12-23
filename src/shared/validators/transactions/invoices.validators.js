@@ -1,5 +1,7 @@
 const { z } = require("zod");
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
 const lineSchema = z.object({
   description: z.string().min(2).max(500),
   quantity: z.coerce.number().positive().default(1),
@@ -9,10 +11,19 @@ const lineSchema = z.object({
 
 const createInvoiceSchema = z.object({
   customerId: z.string().uuid(),
-  invoiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  invoiceDate: isoDate,
+  dueDate: isoDate,
   memo: z.string().max(2000).optional(),
   lines: z.array(lineSchema).min(1)
+}).superRefine((val, ctx) => {
+  // Lexicographic compare works for YYYY-MM-DD
+  if (val.dueDate < val.invoiceDate) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["dueDate"],
+      message: "dueDate must be on or after invoiceDate"
+    });
+  }
 });
 
 const listInvoicesQuerySchema = z.object({

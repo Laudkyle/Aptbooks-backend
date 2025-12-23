@@ -18,7 +18,7 @@ const createPartnerSchema = z.object({
 const updatePartnerSchema = createPartnerSchema.partial();
 
 const createContactSchema = z.object({
-  name: z.string().min(2),
+  name: z.string().min(2).max(200),
   email: z.string().email().optional(),
   phone: z.string().min(7).max(30).optional(),
   role: z.string().max(120).optional(),
@@ -29,7 +29,7 @@ const updateContactSchema = createContactSchema.partial();
 
 const createAddressSchema = z.object({
   label: z.string().max(60).optional(),
-  line1: z.string().min(2),
+  line1: z.string().min(2).max(200),
   line2: z.string().max(200).optional(),
   city: z.string().max(120).optional(),
   region: z.string().max(120).optional(),
