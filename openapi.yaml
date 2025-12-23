@@ -336,6 +336,210 @@ components:
     AccountActivityResponse:
       type: array
       items: { $ref: "#/components/schemas/AccountActivityRow" }
+    # -------------------------
+    # Phase 2: Business Ops (Tier 2)
+    # -------------------------
+    BusinessPartner:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        type: { type: string, enum: [customer, vendor] }
+        code: { type: string, example: "CUST-0001" }
+        name: { type: string, example: "Acme Trading Ltd" }
+        status: { type: string, enum: [active, inactive], example: "active" }
+        default_receivable_account_id: { type: string, format: uuid, nullable: true }
+        default_payable_account_id: { type: string, format: uuid, nullable: true }
+        payment_term_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CreateBusinessPartnerRequest:
+      type: object
+      required: [type, code, name]
+      properties:
+        type: { type: string, enum: [customer, vendor] }
+        code: { type: string, example: "CUST-0001" }
+        name: { type: string, example: "Acme Trading Ltd" }
+        defaultReceivableAccountId: { type: string, format: uuid, nullable: true }
+        defaultPayableAccountId: { type: string, format: uuid, nullable: true }
+        paymentTermId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [active, inactive], default: active }
+
+    UpdateBusinessPartnerRequest:
+      type: object
+      properties:
+        code: { type: string }
+        name: { type: string }
+        defaultReceivableAccountId: { type: string, format: uuid, nullable: true }
+        defaultPayableAccountId: { type: string, format: uuid, nullable: true }
+        paymentTermId: { type: string, format: uuid, nullable: true }
+        status: { type: string, enum: [active, inactive] }
+
+    PartnerContact:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        partner_id: { type: string, format: uuid }
+        name: { type: string, example: "Ama Mensah" }
+        email: { type: string, example: "ama@example.com", nullable: true }
+        phone: { type: string, example: "+233XXXXXXXXX", nullable: true }
+        is_primary: { type: boolean, example: true }
+        created_at: { type: string, format: date-time }
+
+    UpsertPartnerContactRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: "Ama Mensah" }
+        email: { type: string, example: "ama@example.com", nullable: true }
+        phone: { type: string, example: "+233XXXXXXXXX", nullable: true }
+        isPrimary: { type: boolean, default: false }
+
+    PartnerAddress:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        partner_id: { type: string, format: uuid }
+        line1: { type: string, example: "House 12, Ring Road" }
+        line2: { type: string, nullable: true }
+        city: { type: string, example: "Accra", nullable: true }
+        region: { type: string, example: "Greater Accra", nullable: true }
+        country_code: { type: string, example: "GH", nullable: true }
+        postal_code: { type: string, nullable: true }
+        is_primary: { type: boolean, example: true }
+        created_at: { type: string, format: date-time }
+
+    UpsertPartnerAddressRequest:
+      type: object
+      required: [line1]
+      properties:
+        line1: { type: string, example: "House 12, Ring Road" }
+        line2: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        region: { type: string, nullable: true }
+        countryCode: { type: string, nullable: true, example: "GH" }
+        postalCode: { type: string, nullable: true }
+        isPrimary: { type: boolean, default: false }
+
+    PaymentTerm:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        name: { type: string, example: "Net 30" }
+        net_days: { type: integer, example: 30 }
+        discount_days: { type: integer, nullable: true }
+        discount_rate: { type: number, nullable: true }
+        is_default: { type: boolean, example: false }
+        status: { type: string, enum: [active, inactive], example: "active" }
+        created_at: { type: string, format: date-time }
+
+    CreatePaymentTermRequest:
+      type: object
+      required: [name, netDays]
+      properties:
+        name: { type: string, example: "Net 30" }
+        netDays: { type: integer, example: 30 }
+        discountDays: { type: integer, nullable: true }
+        discountRate: { type: number, nullable: true, example: 0.05 }
+        isDefault: { type: boolean, default: false }
+        status: { type: string, enum: [active, inactive], default: active }
+
+    PaymentMethod:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        code: { type: string, example: "MOMO" }
+        name: { type: string, example: "Mobile Money" }
+        status: { type: string, enum: [active, inactive], example: "active" }
+        created_at: { type: string, format: date-time }
+
+    CreatePaymentMethodRequest:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, example: "MOMO" }
+        name: { type: string, example: "Mobile Money" }
+        status: { type: string, enum: [active, inactive], default: active }
+
+    # -------------------------
+    # Phase 2: Transactions (Tier 3) - Invoices
+    # -------------------------
+    Invoice:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        organization_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid }
+        invoice_no: { type: string, example: "INV-000001" }
+        invoice_date: { type: string, format: date }
+        due_date: { type: string, format: date }
+        currency_code: { type: string, example: "GHS" }
+        fx_rate: { type: number, example: 1 }
+        status: { type: string, enum: [draft, issued, voided] }
+        memo: { type: string, nullable: true }
+        subtotal: { type: number }
+        total: { type: number }
+        period_id: { type: string, format: uuid, nullable: true }
+        journal_entry_id: { type: string, format: uuid, nullable: true }
+        issued_at: { type: string, format: date-time, nullable: true }
+        issued_by: { type: string, format: uuid, nullable: true }
+        voided_at: { type: string, format: date-time, nullable: true }
+        voided_by: { type: string, format: uuid, nullable: true }
+        void_reason: { type: string, nullable: true }
+        reversal_journal_entry_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    InvoiceLine:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        invoice_id: { type: string, format: uuid }
+        line_no: { type: integer, example: 1 }
+        description: { type: string, example: "Consulting services" }
+        quantity: { type: number, example: 1 }
+        unit_price: { type: number, example: 500 }
+        line_total: { type: number, example: 500 }
+        revenue_account_id: { type: string, format: uuid }
+
+    CreateInvoiceLineRequest:
+      type: object
+      required: [description, quantity, unitPrice, revenueAccountId]
+      properties:
+        description: { type: string, example: "Consulting services" }
+        quantity: { type: number, example: 1 }
+        unitPrice: { type: number, example: 500 }
+        revenueAccountId: { type: string, format: uuid }
+
+    CreateInvoiceRequest:
+      type: object
+      required: [customerId, invoiceDate, dueDate, lines]
+      properties:
+        customerId: { type: string, format: uuid }
+        invoiceDate: { type: string, format: date }
+        dueDate: { type: string, format: date }
+        memo: { type: string, nullable: true }
+        lines:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CreateInvoiceLineRequest" }
+
+    InvoiceDetailsResponse:
+      type: object
+      properties:
+        invoice: { $ref: "#/components/schemas/Invoice" }
+        lines:
+          type: array
+          items: { $ref: "#/components/schemas/InvoiceLine" }
+
+    VoidInvoiceRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, example: "Customer cancelled" }
 
 security:
   - BearerAuth: []
@@ -975,3 +1179,370 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  # =========================
+  # Phase 2: Tier 2 - Business Ops
+  # =========================
+
+  /modules/business/partners:
+    get:
+      tags: [Business Partners]
+      summary: List business partners
+      parameters:
+        - in: query
+          name: type
+          schema: { type: string, enum: [customer, vendor] }
+        - in: query
+          name: status
+          schema: { type: string, enum: [active, inactive] }
+        - in: query
+          name: q
+          schema: { type: string, description: "Search by code/name (implementation-specific)" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/BusinessPartner" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    post:
+      tags: [Business Partners]
+      summary: Create business partner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateBusinessPartnerRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessPartner" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /modules/business/partners/{id}:
+    get:
+      tags: [Business Partners]
+      summary: Get partner by id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessPartner" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+    patch:
+      tags: [Business Partners]
+      summary: Update partner
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateBusinessPartnerRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BusinessPartner" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /modules/business/partners/{id}/contacts:
+    post:
+      tags: [Business Partners]
+      summary: Upsert partner contact (supports primary contact)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpsertPartnerContactRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartnerContact" }
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartnerContact" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /modules/business/partners/{id}/addresses:
+    post:
+      tags: [Business Partners]
+      summary: Upsert partner address (supports primary address)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpsertPartnerAddressRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartnerAddress" }
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PartnerAddress" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /modules/business/payment-config/payment-terms:
+    get:
+      tags: [Payment Config]
+      summary: List payment terms
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PaymentTerm" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    post:
+      tags: [Payment Config]
+      summary: Create payment term
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePaymentTermRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentTerm" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /modules/business/payment-config/payment-methods:
+    get:
+      tags: [Payment Config]
+      summary: List payment methods
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PaymentMethod" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    post:
+      tags: [Payment Config]
+      summary: Create payment method
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePaymentMethodRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentMethod" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # =========================
+  # Phase 2: Tier 3 - Transactions (Invoices)
+  # =========================
+
+  /modules/transactions/invoices:
+    get:
+      tags: [Invoices]
+      summary: List invoices
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [draft, issued, voided] }
+        - in: query
+          name: customerId
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Invoice" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+    post:
+      tags: [Invoices]
+      summary: Create draft invoice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInvoiceRequest" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /modules/transactions/invoices/{id}:
+    get:
+      tags: [Invoices]
+      summary: Get invoice + lines
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvoiceDetailsResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /modules/transactions/invoices/{id}/issue:
+    post:
+      tags: [Invoices]
+      summary: Issue invoice (posts journal via kernel interface)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invoice" }
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /modules/transactions/invoices/{id}/void:
+    post:
+      tags: [Invoices]
+      summary: Void issued invoice (reversal journal)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VoidInvoiceRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
