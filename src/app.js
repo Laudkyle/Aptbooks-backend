@@ -5,7 +5,7 @@ const cors = require("cors");
 const { errorMiddleware } = require("./middleware/error.middleware");
 const { auditMiddleware } = require("./middleware/audit.middleware");
 
-const authRoutes = require("./core/foundation/users/users.routes");
+const authRoutes = require("./core/foundation/users/auth.routes");
 const orgRoutes = require("./core/foundation/organizations/organizations.routes");
 
 const coaRoutes = require("./core/accounting/chart-of-accounts/coa.routes");

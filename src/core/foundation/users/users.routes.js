@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const bcrypt = require("bcrypt"); // <-- FIX: standardize on bcrypt
+const bcrypt = require("bcrypt"); 
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { pool } = require("../../../db/pool");

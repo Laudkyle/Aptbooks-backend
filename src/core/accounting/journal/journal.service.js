@@ -301,18 +301,23 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason }) {
     );
 
     // Mark original voided (for UX/reporting; GL is corrected by reversal)
-    await client.query(
-      `
-      UPDATE journal_entries
-      SET status='voided',
-          voided_at=NOW(),
-          voided_by=$3,
-          void_reason=$4,
-          memo = COALESCE(memo,'') || CASE WHEN memo IS NULL OR memo='' THEN '' ELSE ' | ' END || $5
-      WHERE organization_id=$1 AND id=$2
-      `,
-      [orgId, journalId, actorUserId, reason, `Voided by reversal JE ${reversalId}`]
-    );
+    // Mark original voided (for UX/reporting; GL is corrected by reversal)
+// IMPORTANT: Do NOT modify memo or any other non-void field (immutability trigger)
+await client.query(
+  `
+  UPDATE journal_entries
+  SET status='voided',
+      voided_at=NOW(),
+      voided_by=$3,
+      void_reason=$4,
+      updated_at=NOW()
+  WHERE organization_id=$1
+    AND id=$2
+    AND status='posted'
+  `,
+  [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
+);
+
 
     await client.query("COMMIT");
     return { journalId, status: "voided", reversalJournalId: reversalId };
