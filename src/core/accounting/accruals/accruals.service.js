@@ -7,11 +7,6 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 /**
  * Small helpers
  */
-function toUTCDate(dateStr) {
-  const d = new Date(`${dateStr}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) throw new AppError(400, `Invalid date: ${dateStr}`);
-  return d;
-}
 
 function ymd(d) {
   const y = d.getUTCFullYear();
@@ -32,6 +27,35 @@ function sumFixedLines(lines) {
   credit = Number(credit.toFixed(2));
   return { debit, credit };
 }
+function parseYMD(input, fieldName = "date") {
+  // Accept: "YYYY-MM-DD" OR JS Date object
+  if (input instanceof Date) {
+    if (Number.isNaN(input.getTime())) throw new AppError(400, `Invalid ${fieldName}`);
+    return new Date(Date.UTC(input.getUTCFullYear(), input.getUTCMonth(), input.getUTCDate()));
+  }
+
+  if (typeof input === "string") {
+    // Strict YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+      throw new AppError(400, `Invalid ${fieldName}: ${input} (expected YYYY-MM-DD)`);
+    }
+    const d = new Date(`${input}T00:00:00.000Z`);
+    if (Number.isNaN(d.getTime())) throw new AppError(400, `Invalid ${fieldName}: ${input}`);
+    return d;
+  }
+
+  if (input == null) return null;
+
+  throw new AppError(400, `Invalid ${fieldName} type`);
+}
+
+function formatYMD(dateObj) {
+  const y = dateObj.getUTCFullYear();
+  const m = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(dateObj.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 
 async function assertPostableActiveAccount({ orgId, accountId }) {
   const { rows } = await pool.query(
@@ -64,8 +88,8 @@ async function createRule({ orgId, payload }) {
 
     // Basic bounds validation
     if (payload.startDate && payload.endDate) {
-      const sd = toUTCDate(payload.startDate);
-      const ed = toUTCDate(payload.endDate);
+      const sd = parseYMD(payload.startDate);
+      const ed = parseYMD(payload.endDate);
       if (ed < sd) throw new AppError(400, "endDate must be >= startDate");
     }
 
@@ -181,18 +205,18 @@ async function getRuleWithLines({ orgId, ruleId }) {
  * - Uses advisory transaction lock to prevent duplicates without requiring a DB unique constraint
  */
 async function runOne({ orgId, actorUserId, ruleId, asOfDate, periodIdOverride = null }) {
-  const asOf = toUTCDate(asOfDate);
+  const asOf = parseYMD(asOfDate);
   const asOfYMD = ymd(asOf);
 
   const { rule, lines } = await getRuleWithLines({ orgId, ruleId });
 
   // Bounds
   if (rule.start_date) {
-    const sd = toUTCDate(ymd(toUTCDate(rule.start_date)));
+    const sd = parseYMD(ymd(parseYMD(rule.start_date)));
     if (asOf < sd) return { skipped: true, reason: "Before rule start_date", ruleId, asOfDate: asOfYMD };
   }
   if (rule.end_date) {
-    const ed = toUTCDate(ymd(toUTCDate(rule.end_date)));
+    const ed = parseYMD(ymd(parseYMD(rule.end_date)));
     if (asOf > ed) return { skipped: true, reason: "After rule end_date", ruleId, asOfDate: asOfYMD };
   }
 
@@ -362,15 +386,15 @@ async function runDueAccruals({ orgId, actorUserId, asOfDate }) {
     [orgId]
   );
 
-  const asOf = toUTCDate(asOfDate);
+  const asOf = parseYMD(asOfDate);
 
   const withinBounds = (r) => {
     if (r.start_date) {
-      const sd = toUTCDate(ymd(toUTCDate(r.start_date)));
+      const sd = parseYMD(ymd(parseYMD(r.start_date)));
       if (asOf < sd) return false;
     }
     if (r.end_date) {
-      const ed = toUTCDate(ymd(toUTCDate(r.end_date)));
+      const ed = parseYMD(ymd(parseYMD(r.end_date)));
       if (asOf > ed) return false;
     }
     return true;
@@ -383,13 +407,13 @@ async function runDueAccruals({ orgId, actorUserId, asOfDate }) {
 
     if (r.frequency === "WEEKLY") {
       // Anchor: start_date weekday; if none, Monday
-      const anchor = r.start_date ? toUTCDate(ymd(toUTCDate(r.start_date))) : new Date("1970-01-05T00:00:00.000Z");
+      const anchor = r.start_date ? parseYMD(ymd(parseYMD(r.start_date))) : new Date("1970-01-05T00:00:00.000Z");
       return asOf.getUTCDay() === anchor.getUTCDay();
     }
 
     if (r.frequency === "MONTHLY") {
       // Anchor day-of-month; if none, 1st.
-      const anchorDay = r.start_date ? toUTCDate(ymd(toUTCDate(r.start_date))).getUTCDate() : 1;
+      const anchorDay = r.start_date ? parseYMD(ymd(parseYMD(r.start_date))).getUTCDate() : 1;
       const y = asOf.getUTCFullYear();
       const m = asOf.getUTCMonth();
       const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
@@ -420,7 +444,7 @@ async function runPeriodEndAccruals({ orgId, actorUserId, periodId, asOfDateOver
   if (!p.length) throw new AppError(400, "Invalid periodId");
   if (p[0].status !== "open") throw new AppError(409, "Period is not open");
 
-  const asOfDate = asOfDateOverride || ymd(toUTCDate(p[0].end_date));
+  const asOfDate = asOfDateOverride || ymd(parseYMD(p[0].end_date));
 
   const { rows: rules } = await pool.query(
     `

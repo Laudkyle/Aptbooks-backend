@@ -55,7 +55,7 @@ const runDueAccrualsSchema = z.object({
 
 const runPeriodEndAccrualsSchema = z.object({
   periodId: uuid,
-  asOfDate: isoDate.optional() // optional override; defaults to period end_date
+  asOfDate: isoDate.optional()
 });
 
 module.exports = {

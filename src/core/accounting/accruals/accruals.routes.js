@@ -45,13 +45,7 @@ router.get("/", requirePermission("accounting.accruals.read"), async (req, res, 
   } catch (e) { next(e); }
 });
 
-// Get rule + lines
-router.get("/:id", requirePermission("accounting.accruals.read"), async (req, res, next) => {
-  try {
-    const orgId = req.user.organization_id;
-    res.json(await svc.getRuleWithLines({ orgId, ruleId: req.params.id }));
-  } catch (e) { next(e); }
-});
+
 
 // Run due accruals for a date
 router.post("/run/due", requirePermission("accounting.accruals.run"), async (req, res, next) => {
@@ -144,5 +138,11 @@ router.post("/run/period-end", requirePermission("accounting.accruals.run"), asy
     res.json(out);
   } catch (e) { next(e); }
 });
-
+// Get rule + lines
+router.get("/:id", requirePermission("accounting.accruals.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json(await svc.getRuleWithLines({ orgId, ruleId: req.params.id }));
+  } catch (e) { next(e); }
+});
 module.exports = router;
