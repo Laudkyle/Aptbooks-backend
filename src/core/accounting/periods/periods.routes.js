@@ -46,11 +46,19 @@ router.get("/", requirePermission("accounting.period.read"), async (req, res, ne
     next(e);
   }
 });
+router.get("/:id/close-preview", requirePermission("accounting.period.close"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const out = await svc.closePreview({ orgId, periodId: req.params.id });
+    res.json(out);
+  } catch (e) { next(e); }
+});
 
 router.post("/:id/close", requirePermission("accounting.period.close"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await svc.closePeriod({ orgId, periodId: req.params.id });
+    const out = await svc.closePeriod({ orgId, periodId: req.params.id, actorUserId: req.user.id,
+  options: { autoRunAccruals: req.body?.autoRunAccruals } });
 
     await writeAudit({
       organizationId: orgId,

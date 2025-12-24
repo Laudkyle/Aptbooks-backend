@@ -15,9 +15,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId }) {
 async function voidPostedJournal({ orgId, journalId, actorUserId, reason }) {
   return journalSvc.voidByReversal({ orgId, journalId, actorUserId, reason });
 }
+async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey }) {
+  return journalSvc.reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey });
+}
 
 module.exports = {
   createDraftJournal,
   postDraftJournal,
-  voidPostedJournal
+  voidPostedJournal,reversePostedJournal
 };

@@ -148,17 +148,17 @@ async function run() {
       [orgId]
     );
 
-  // Payment methods
-const methods = [
-  { code: "CASH", name: "Cash" },
-  { code: "BANK", name: "Bank Transfer" },
-  { code: "MOMO", name: "Mobile Money" },
-  { code: "CHEQUE", name: "Cheque" }
-];
+    // Payment methods
+    const methods = [
+      { code: "CASH", name: "Cash" },
+      { code: "BANK", name: "Bank Transfer" },
+      { code: "MOMO", name: "Mobile Money" },
+      { code: "CHEQUE", name: "Cheque" },
+    ];
 
-for (const m of methods) {
-  await client.query(
-    `
+    for (const m of methods) {
+      await client.query(
+        `
     INSERT INTO payment_methods(
       organization_id,
       code,
@@ -168,10 +168,9 @@ for (const m of methods) {
     VALUES ($1,$2,$3,'active')
     ON CONFLICT (organization_id, code) DO NOTHING
     `,
-    [orgId, m.code, m.name]
-  );
-}
-
+        [orgId, m.code, m.name]
+      );
+    }
   };
 
   const ensureDemoCustomer = async ({ orgId, arAccountId }) => {
@@ -250,6 +249,82 @@ for (const m of methods) {
     return partnerId;
   };
 
+  const ensureDemoVendor = async ({ orgId, apAccountId }) => {
+    const name = "Demo Vendor Ltd";
+    const code = "VEND-DEMO";
+
+    const { rows: existing } = await client.query(
+      `
+      SELECT id FROM business_partners
+      WHERE organization_id=$1 AND code=$2
+      LIMIT 1
+      `,
+      [orgId, code]
+    );
+
+    let partnerId;
+    if (existing.length) {
+      partnerId = existing[0].id;
+
+      await client.query(
+        `
+        UPDATE business_partners
+        SET default_payable_account_id = COALESCE(default_payable_account_id, $3),
+            status='active',
+            updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2
+        `,
+        [orgId, partnerId, apAccountId]
+      );
+    } else {
+      const { rows } = await client.query(
+        `
+        INSERT INTO business_partners(
+          organization_id, type, name, code, email, phone, status,
+          default_payable_account_id
+        )
+        VALUES ($1,'vendor',$2,$3,$4,$5,'active',$6)
+        RETURNING id
+        `,
+        [
+          orgId,
+          name,
+          code,
+          "demo.vendor@aptbooks.local",
+          "+233200000010",
+          apAccountId,
+        ]
+      );
+      partnerId = rows[0].id;
+    }
+
+    // Optional: primary contact
+    await client.query(
+      `
+      INSERT INTO business_partner_contacts(
+        organization_id, partner_id, name, email, phone, role, is_primary
+      )
+      VALUES ($1,$2,'Payables Contact','payables@demo.local','+233200000011','Payables',TRUE)
+      ON CONFLICT DO NOTHING
+      `,
+      [orgId, partnerId]
+    );
+
+    // Optional: primary address
+    await client.query(
+      `
+      INSERT INTO business_partner_addresses(
+        organization_id, partner_id, label, line1, city, region, country, is_primary
+      )
+      VALUES ($1,$2,'Head Office','456 Independence Ave','Accra','Greater Accra','Ghana',TRUE)
+      ON CONFLICT DO NOTHING
+      `,
+      [orgId, partnerId]
+    );
+
+    return partnerId;
+  };
+
   try {
     await client.query("BEGIN");
 
@@ -294,6 +369,9 @@ for (const m of methods) {
       ["users.manage", "Create/disable users"],
       ["settings.read", "Read system settings"],
       ["settings.manage", "Manage system settings"],
+      ["accounting.accruals.read", "Read accrual rules and runs"],
+      ["accounting.accruals.manage", "Create/update accrual rules"],
+      ["accounting.accruals.run", "Run accrual jobs manually"],
 
       // Tier 2
       ["partners.read", "Read business partners"],
@@ -304,6 +382,16 @@ for (const m of methods) {
       ["transactions.invoice.manage", "Create draft invoices"],
       ["transactions.invoice.issue", "Issue invoices (post journals)"],
       ["transactions.invoice.void", "Void invoices (reversal)"],
+
+      ["transactions.bill.read", "Read bills"],
+      ["transactions.bill.manage", "Create draft bills"],
+      ["transactions.bill.issue", "Issue bills (post journals)"],
+      ["transactions.bill.void", "Void bills (reversal)"],
+
+      ["transactions.vendor_payment.read", "Read vendor payments"],
+      ["transactions.vendor_payment.manage", "Create vendor payments"],
+      ["transactions.vendor_payment.post", "Post vendor payments"],
+      ["transactions.vendor_payment.void", "Void vendor payments"],
     ];
 
     for (const [code, description] of perms) {
@@ -366,7 +454,13 @@ for (const m of methods) {
     const arAccountId = await getCoaIdByCode(orgId, "1100");
     if (!arAccountId) throw new Error("Missing A/R account 1100 in COA");
 
-    const demoPartnerId = await ensureDemoCustomer({ orgId, arAccountId });
+    const demoCustomerId = await ensureDemoCustomer({ orgId, arAccountId });
+
+    // 8) Demo vendor with A/P set (Phase 2b)
+    const apAccountId = await getCoaIdByCode(orgId, "2000");
+    if (!apAccountId) throw new Error("Missing A/P account 2000 in COA");
+
+    const demoVendorId = await ensureDemoVendor({ orgId, apAccountId });
 
     await client.query("COMMIT");
 
@@ -375,10 +469,14 @@ for (const m of methods) {
       adminEmail,
       adminPassword: user.created ? adminPassword : "(unchanged)",
       openPeriodId: periodId,
-      demoCustomerId: demoPartnerId,
+      demoCustomerId,
+      demoVendorId,
       accounts: {
+        cashAccountId: await getCoaIdByCode(orgId, "1000"),
         arAccountId,
+        apAccountId,
         revenueAccountId: await getCoaIdByCode(orgId, "4000"),
+        expenseAccountId: await getCoaIdByCode(orgId, "5000"),
       },
     });
   } catch (e) {

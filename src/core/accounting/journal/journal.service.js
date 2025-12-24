@@ -328,5 +328,134 @@ await client.query(
     client.release();
   }
 }
+async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-module.exports = { createDraftJournal, postDraftJournal, voidByReversal };
+    // 1) Load original (lock)
+    const { rows: jRows } = await client.query(
+      `
+      SELECT id, status, period_id, entry_date, memo, journal_entry_type_id
+      FROM journal_entries
+      WHERE organization_id=$1 AND id=$2
+      FOR UPDATE
+      `,
+      [orgId, journalId]
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const orig = jRows[0];
+    if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be reversed");
+
+    // 2) Target period must be open (reversal posts there)
+    const targetPeriod = await getPeriodForUpdate(client, orgId, targetPeriodId);
+    if (targetPeriod.status !== "open") throw new AppError(409, "Target period not open; cannot post reversal");
+
+    // 3) Idempotency: if reversal already exists, return it
+    if (idempotencyKey) {
+      const { rows: existing } = await client.query(
+        `
+        SELECT id
+        FROM journal_entries
+        WHERE organization_id=$1 AND idempotency_key=$2
+        LIMIT 1
+        `,
+        [orgId, idempotencyKey]
+      );
+      if (existing.length) {
+        await client.query("COMMIT");
+        return { reversalJournalId: existing[0].id, alreadyExisted: true };
+      }
+    }
+
+    // 4) Load original lines
+    const { rows: lines } = await client.query(
+      `
+      SELECT line_no, account_id, description, debit, credit, currency_code
+      FROM journal_entry_lines
+      WHERE journal_entry_id=$1
+      ORDER BY line_no
+      `,
+      [journalId]
+    );
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
+    for (const l of lines) {
+      if (l.currency_code !== "GHS") throw new AppError(400, "Phase 1 supports base currency only (GHS)");
+    }
+
+    // 5) Create reversal journal in TARGET period/date
+    const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason || "n/a"}`;
+    const { rows: revRows } = await client.query(
+      `
+      INSERT INTO journal_entries
+        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key)
+      VALUES ($1,$2,$3,$4,$5,'draft',$6)
+      RETURNING id
+      `,
+      [orgId, orig.journal_entry_type_id, targetPeriodId, entryDate, reversalMemo, idempotencyKey || null]
+    );
+    const reversalId = revRows[0].id;
+
+    // 6) Insert reversed lines
+    for (const l of lines) {
+      const debit = Number(l.debit || 0);
+      const credit = Number(l.credit || 0);
+      const newDebit = credit;
+      const newCredit = debit;
+      const amountBase = newDebit > 0 ? newDebit : newCredit;
+
+      await client.query(
+        `
+        INSERT INTO journal_entry_lines
+          (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
+        VALUES ($1,$2,$3,$4,$5,$6,'GHS',1,$7)
+        `,
+        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ""}`.trim(), newDebit, newCredit, amountBase]
+      );
+    }
+
+    // 7) Post reversal into GL balances for TARGET period
+    const { rows: revLines } = await client.query(
+      `SELECT account_id, debit, credit FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+      [reversalId]
+    );
+    const totals = sum2(revLines);
+    if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced (unexpected)");
+
+    for (const l of revLines) {
+      await client.query(
+        `
+        INSERT INTO general_ledger_balances
+          (organization_id, period_id, account_id, debit_total, credit_total)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (organization_id, period_id, account_id)
+        DO UPDATE SET
+          debit_total = general_ledger_balances.debit_total + EXCLUDED.debit_total,
+          credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
+        `,
+        [orgId, targetPeriodId, l.account_id, Number(l.debit || 0), Number(l.credit || 0)]
+      );
+    }
+
+    await client.query(
+      `
+      UPDATE journal_entries
+      SET status='posted', posted_at=NOW(), posted_by=$2
+      WHERE organization_id=$1 AND id=$3
+      `,
+      [orgId, actorUserId, reversalId]
+    );
+
+    // 8) IMPORTANT: Do NOT modify original journal status
+    await client.query("COMMIT");
+    return { reversalJournalId: reversalId, alreadyExisted: false };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+
+module.exports = { createDraftJournal, postDraftJournal, voidByReversal,reversePostedJournal };

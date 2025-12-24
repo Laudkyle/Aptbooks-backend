@@ -18,7 +18,7 @@ const permissionsRoutes = require("./core/foundation/permissions/permissions.rou
 const rolesRoutes = require("./core/foundation/roles/roles.routes");
 const usersRoutes = require("./core/foundation/users/users.routes");
 const settingsRoutes = require("./core/foundation/system-settings/system-settings.routes");
-
+const accrualRoutes = require("./core/accounting/accruals/accruals.routes");
 
 const app = express();
 const swaggerUi = require("swagger-ui-express");
@@ -26,6 +26,7 @@ const { swaggerDocument } = require("./docs/swagger");
 
 // Public docs (recommended)
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
 
 app.use(helmet());
 app.use(cors());
@@ -39,6 +40,7 @@ app.use("/core/roles", rolesRoutes);
 app.use("/core/organizations", orgRoutes);
 app.use("/core/permissions", permissionsRoutes);
 app.use("/core/settings", settingsRoutes);
+app.use("/core/accounting/accruals", accrualRoutes);
 
 app.use("/core/accounting/accounts", coaRoutes);
 app.use("/core/accounting/periods", periodRoutes);
