@@ -1,7 +1,7 @@
 const { pool } = require("../../db/pool");
 const accrualIF = require("../../interfaces/accruals.interface");
 const periodIF = require("../../interfaces/periodManagement.interface");
-const {  getSystemActorUserIdUserId } = require("../../core/foundation/users/systemActor.service");
+const {  getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
 
 
 function yyyyMmDdUTC(d) {
@@ -11,14 +11,6 @@ function yyyyMmDdUTC(d) {
   return `${y}-${m}-${day}`;
 }
 
-// Use admin/system actor for scheduled tasks (you can make a system user later)
-async function  getSystemActorUserId({ orgId }) {
-  const { rows } = await pool.query(
-    `SELECT id FROM users WHERE organization_id=$1 ORDER BY created_at ASC LIMIT 1`,
-    [orgId]
-  );
-  return rows[0]?.id;
-}
 
 async function runDueAccrualsDaily() {
   // global runner: loop all orgs (free and simple)

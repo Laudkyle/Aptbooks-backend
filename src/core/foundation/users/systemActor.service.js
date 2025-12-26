@@ -33,7 +33,6 @@ async function ensureSystemUserForOrg({ orgId }) {
   }
 
   // 2) Create a system user for this org.
-  // Password: not needed; ensure auth middleware doesn't allow login for is_system users (recommended).
   const { rows } = await pool.query(
     `
     INSERT INTO users (organization_id, email, password_hash, status, is_system)

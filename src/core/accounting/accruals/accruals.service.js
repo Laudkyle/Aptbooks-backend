@@ -49,12 +49,7 @@ function parseYMD(input, fieldName = "date") {
   throw new AppError(400, `Invalid ${fieldName} type`);
 }
 
-function formatYMD(dateObj) {
-  const y = dateObj.getUTCFullYear();
-  const m = String(dateObj.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(dateObj.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
+
 
 
 async function assertPostableActiveAccount({ orgId, accountId }) {

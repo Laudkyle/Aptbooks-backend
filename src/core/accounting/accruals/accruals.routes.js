@@ -7,7 +7,7 @@ const {
   runDueAccrualsSchema,
   runPeriodEndAccrualsSchema
 } = require("../../../shared/validators/accrual.validators");
-
+const { getSystemActorUserId } = require("../../../core/foundation/users/systemActor.service");
 const svc = require("./accruals.service");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 
@@ -17,7 +17,7 @@ router.use(authRequired);
 router.post("/", requirePermission("accounting.accruals.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
+    const actorUserId = await getSystemActorUserId({ orgId });
     const payload = validate(createAccrualRuleSchema, req.body);
 
     const created = await svc.createRule({ orgId, actorUserId, payload });
@@ -51,7 +51,7 @@ router.get("/", requirePermission("accounting.accruals.read"), async (req, res, 
 router.post("/run/due", requirePermission("accounting.accruals.run"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
+    const actorUserId = await getSystemActorUserId({ orgId });
 
     const body = validate(runDueAccrualsSchema, req.body || {});
     const out = await svc.runDueAccruals({ orgId, actorUserId, asOfDate: body.asOfDate });
@@ -73,7 +73,7 @@ router.post("/run/due", requirePermission("accounting.accruals.run"), async (req
 router.post("/run/reversals", requirePermission("accounting.accruals.run"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
+    const actorUserId = await getSystemActorUserId({ orgId });
 
     const { periodId } = req.body || {};
     if (!periodId) return res.status(400).json({ error: "periodId required" });
@@ -114,7 +114,7 @@ router.get("/runs/:runId", requirePermission("accounting.accruals.read"), async 
 router.post("/run/period-end", requirePermission("accounting.accruals.run"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
+    const actorUserId = await getSystemActorUserId({ orgId });
 
     const body = validate(runPeriodEndAccrualsSchema, req.body || {});
     const out = await svc.runPeriodEndAccruals({
