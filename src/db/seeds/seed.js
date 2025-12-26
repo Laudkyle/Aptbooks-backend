@@ -443,6 +443,23 @@ async function run() {
         [orgId, code, name, accountTypeId]
       );
     }
+await client.query(
+  `
+  INSERT INTO users(organization_id, email, password_hash, status, is_system)
+  VALUES ($1, 'system@aptbooks.local', '', 'active', TRUE)
+  ON CONFLICT DO NOTHING
+  `,
+  [orgId]
+).catch(async () => {
+  await client.query(
+    `
+    INSERT INTO users(organization_id, email, password_hash, status)
+    VALUES ($1, 'system@aptbooks.local', '', 'active')
+    ON CONFLICT DO NOTHING
+    `,
+    [orgId]
+  );
+});
 
     // 5) Ensure open period for invoice issue tests
     const periodId = await ensureOpenPeriod(orgId);

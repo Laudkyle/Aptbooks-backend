@@ -14,9 +14,9 @@ router.post("/login", async (req, res, next) => {
       `SELECT id, organization_id, password_hash, status FROM users WHERE email=$1`,
       [email]
     );
-    if (!rows.length || rows[0].status !== "active") {
-      throw new AppError(401, "Invalid credentials");
-    }
+   
+if (!rows.length || rows[0].status !== "active" || rows[0].is_system) {
+  throw new AppError(401, "Invalid credentials");}
 
     const ok = await bcrypt.compare(password, rows[0].password_hash);
     if (!ok) throw new AppError(401, "Invalid credentials");

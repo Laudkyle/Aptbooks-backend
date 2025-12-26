@@ -1,6 +1,8 @@
 const { pool } = require("../../db/pool");
 const accrualIF = require("../../interfaces/accruals.interface");
 const periodIF = require("../../interfaces/periodManagement.interface");
+const {  getSystemActorUserIdUserId } = require("../../core/foundation/users/systemActor.service");
+
 
 function yyyyMmDdUTC(d) {
   const y = d.getUTCFullYear();
@@ -10,7 +12,7 @@ function yyyyMmDdUTC(d) {
 }
 
 // Use admin/system actor for scheduled tasks (you can make a system user later)
-async function getSystemActor({ orgId }) {
+async function  getSystemActorUserId({ orgId }) {
   const { rows } = await pool.query(
     `SELECT id FROM users WHERE organization_id=$1 ORDER BY created_at ASC LIMIT 1`,
     [orgId]
@@ -25,7 +27,7 @@ async function runDueAccrualsDaily() {
 
   let ran = 0;
   for (const o of orgs) {
-    const actorUserId = await getSystemActor({ orgId: o.id });
+    const actorUserId = await  getSystemActorUserId({ orgId: o.id });
     if (!actorUserId) continue;
     const out = await accrualIF.runDueAccruals({ orgId: o.id, actorUserId, asOfDate });
     ran += Array.isArray(out) ? out.length : 0;
@@ -40,7 +42,7 @@ async function runPeriodEndAccruals() {
 
   let ran = 0;
   for (const o of orgs) {
-    const actorUserId = await getSystemActor({ orgId: o.id });
+    const actorUserId = await  getSystemActorUserId({ orgId: o.id });
     if (!actorUserId) continue;
 
     // find open periods ending today
@@ -67,7 +69,7 @@ async function runReversalsDaily() {
 
   let ran = 0;
   for (const o of orgs) {
-    const actorUserId = await getSystemActor({ orgId: o.id });
+    const actorUserId = await  getSystemActorUserId({ orgId: o.id });
     if (!actorUserId) continue;
 
     // Find open period for today

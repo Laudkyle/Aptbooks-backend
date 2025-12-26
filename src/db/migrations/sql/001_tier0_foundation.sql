@@ -23,10 +23,14 @@ CREATE TABLE IF NOT EXISTS users (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
   email CITEXT NOT NULL UNIQUE,  -- global auth: one email belongs to exactly one org
   password_hash TEXT NOT NULL,
+  is_system BOOLEAN NOT NULL DEFAULT FALSE
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_org_is_system
+  ON users(organization_id, is_system);
 
 CREATE TABLE IF NOT EXISTS roles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
