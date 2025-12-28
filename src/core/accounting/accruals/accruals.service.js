@@ -4,10 +4,42 @@ const { AppError } = require("../../../shared/errors/AppError");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 
-/**
- * Small helpers
- */
+// --------------------------
+// Helpers for DEFERRAL rules
+// --------------------------
+function assertDeferralRuleShape({ rule, lines }) {
+  if (rule.rule_type !== "DEFERRAL") throw new AppError(500, "Internal: not a DEFERRAL rule");
+  // v1 strictness: exactly 2 lines, one debit and one credit, both fixed
+  if (!Array.isArray(lines) || lines.length !== 2) {
+    throw new AppError(400, "DEFERRAL rules must have exactly 2 lines (1 debit, 1 credit)");
+  }
+  const debitLines = lines.filter((l) => l.dc === "debit");
+  const creditLines = lines.filter((l) => l.dc === "credit");
+  if (debitLines.length !== 1 || creditLines.length !== 1) {
+    throw new AppError(400, "DEFERRAL rules must have exactly 1 debit line and 1 credit line");
+  }
+  for (const l of lines) {
+    if (l.amount_type !== "fixed") throw new AppError(400, "DEFERRAL v1 supports fixed amount_type only");
+    if (!(Number(l.amount_value) > 0)) throw new AppError(400, "amount_value must be > 0");
+  }
+}
 
+// Build journal lines from rule lines. If amountOverride is provided, it replaces amount_value.
+function buildJournalLinesFromRuleLines({ ruleLines, amountOverride, memoSuffix }) {
+  return ruleLines
+    .sort((a, b) => a.line_no - b.line_no)
+    .map((l) => {
+      const amt = amountOverride != null ? Number(amountOverride) : Number(l.amount_value);
+      const debit = l.dc === "debit" ? amt : 0;
+      const credit = l.dc === "credit" ? amt : 0;
+      return {
+        accountId: l.account_id,
+        debit,
+        credit,
+        description: (l.description || memoSuffix || "").trim() || null
+      };
+    });
+}
 function ymd(d) {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -160,6 +192,41 @@ async function createRule({ orgId, payload }) {
         [rule.id, l.lineNo, l.accountId, l.dc, l.amountValue, l.description]
       );
     }
+// If DEFERRAL: create/update schedule (optional)
+if (payload.ruleType === "DEFERRAL" && payload.deferralSchedule) {
+  const { totalAmount, periodCount, startPeriodId } = payload.deferralSchedule;
+
+  // Ensure rule lines are valid for DEFERRAL
+  const { rows: ruleLines } = await client.query(
+    `SELECT line_no, account_id, dc, amount_type, amount_value, description
+     FROM accrual_rule_lines WHERE accrual_rule_id=$1 ORDER BY line_no`,
+    [rule.id]
+  );
+
+  assertDeferralRuleShape({
+    rule: { rule_type: "DEFERRAL" },
+    lines: ruleLines.map((x) => ({ ...x, amount_type: x.amount_type, amount_value: x.amount_value }))
+  });
+
+  // Initialise schedule as active
+  await client.query(
+    `
+    INSERT INTO accrual_schedules
+      (accrual_rule_id, total_amount, remaining_amount, recognition_method, period_count, start_period_id, status)
+    VALUES
+      ($1,$2,$2,'straight_line',$3,$4,'active')
+    ON CONFLICT (accrual_rule_id)
+    DO UPDATE SET
+      total_amount=EXCLUDED.total_amount,
+      remaining_amount=EXCLUDED.remaining_amount,
+      period_count=EXCLUDED.period_count,
+      start_period_id=EXCLUDED.start_period_id,
+      status='active',
+      updated_at=NOW()
+    `,
+    [rule.id, totalAmount, periodCount, startPeriodId]
+  );
+}
 
     await client.query("COMMIT");
     return rule;
@@ -178,6 +245,293 @@ async function listRules({ orgId }) {
   );
   return rows;
 }
+
+async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
+  // 0) Read target period (NO FOR UPDATE here)
+  const { rows: pRows } = await pool.query(
+    `SELECT id, status, start_date, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!pRows.length) throw new AppError(400, "Invalid periodId");
+  const period = pRows[0];
+  if (period.status !== "open") throw new AppError(409, "Period is not open");
+
+  // 1) Find eligible schedules (NO FOR UPDATE here; we claim per schedule later)
+  const { rows: schedules } = await pool.query(
+    `
+    SELECT
+      s.id AS schedule_id,
+      s.accrual_rule_id,
+      s.total_amount,
+      s.remaining_amount,
+      s.period_count,
+      s.start_period_id,
+      sp.start_date AS schedule_start_date,
+      r.code AS rule_code,
+      r.name AS rule_name
+    FROM accrual_schedules s
+    JOIN accrual_rules r ON r.id = s.accrual_rule_id
+    JOIN accounting_periods sp ON sp.id = s.start_period_id AND sp.organization_id=$1
+    WHERE r.organization_id=$1
+      AND r.status='active'
+      AND r.rule_type='DEFERRAL'
+      AND s.status='active'
+      AND s.remaining_amount > 0
+      AND sp.start_date <= $2::date
+    ORDER BY r.code ASC
+    `,
+    [orgId, period.start_date]
+  );
+
+  const results = [];
+
+  for (const s of schedules) {
+    const totalAmount = Number(s.total_amount);
+    const remaining = Number(s.remaining_amount);
+    const periodCount = Number(s.period_count || 0);
+    if (!(periodCount > 0)) continue;
+
+    const perPeriod = Number((totalAmount / periodCount).toFixed(2));
+    const recognitionAmount = Number(Math.min(perPeriod, remaining).toFixed(2));
+    if (!(recognitionAmount > 0)) {
+      // tiny rounding residue: mark complete safely
+      await pool.query(
+        `UPDATE accrual_schedules SET status='complete', remaining_amount=0, updated_at=NOW() WHERE id=$1 AND status='active'`,
+        [s.schedule_id]
+      );
+      continue;
+    }
+
+    // 2) Claim/create run in a short transaction (no journal posting here)
+    let runId = null;
+    let alreadyRan = false;
+
+    {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        // Lock schedule row to prevent concurrent decrements
+        const { rows: lockedSched } = await client.query(
+          `SELECT id, remaining_amount, status FROM accrual_schedules WHERE id=$1 FOR UPDATE`,
+          [s.schedule_id]
+        );
+        if (!lockedSched.length || lockedSched[0].status !== "active") {
+          await client.query("ROLLBACK");
+          continue;
+        }
+
+        // Insert accrual run once per (org, rule, period, date)
+        // Your uq_accrual_runs_once / uq_accrual_runs_once-like index should block duplicates.
+        try {
+          const { rows: runRows } = await client.query(
+            `
+            INSERT INTO accrual_runs
+              (organization_id, accrual_rule_id, period_id, as_of_date, status, started_at)
+            VALUES
+              ($1,$2,$3,$4,'running',NOW())
+            RETURNING id
+            `,
+            [orgId, s.accrual_rule_id, period.id, period.end_date]
+          );
+          runId = runRows[0].id;
+        } catch (e) {
+          if (String(e.code) === "23505") {
+            alreadyRan = true;
+          } else {
+            throw e;
+          }
+        }
+
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK");
+        client.release();
+        throw e;
+      } finally {
+        client.release();
+      }
+    }
+
+    if (alreadyRan) {
+      results.push({
+        scheduleId: s.schedule_id,
+        ruleId: s.accrual_rule_id,
+        periodId: period.id,
+        status: "skipped",
+        reason: "already_ran_for_period"
+      });
+      continue;
+    }
+    
+    console.log('reaceged')
+    // 3) Load rule + lines (outside any lock-heavy tx)
+    const { rows: ruleRows } = await pool.query(
+      `SELECT id, rule_type, frequency, status, code, name
+       FROM accrual_rules WHERE organization_id=$1 AND id=$2`,
+      [orgId, s.accrual_rule_id]
+    );
+    if (!ruleRows.length) {
+      // mark run failed
+      await pool.query(
+        `UPDATE accrual_runs SET status='failed', failed_at=NOW(), failure_reason=$3, failure_count=failure_count+1, completed_at=NOW()
+         WHERE organization_id=$1 AND id=$2`,
+        [orgId, runId, "rule_not_found"]
+      );
+      continue;
+    }
+    const rule = ruleRows[0];
+
+    const { rows: ruleLines } = await pool.query(
+      `SELECT line_no, account_id, dc, amount_type, amount_value, description
+       FROM accrual_rule_lines WHERE accrual_rule_id=$1 ORDER BY line_no`,
+      [rule.id]
+    );
+
+    try {
+      assertDeferralRuleShape({ rule, lines: ruleLines });
+    } catch (e) {
+      await pool.query(
+        `UPDATE accrual_runs SET status='failed', failed_at=NOW(), failure_reason=$3, failure_count=failure_count+1, completed_at=NOW(), error=$4
+         WHERE organization_id=$1 AND id=$2`,
+        [orgId, runId, "invalid_deferral_rule_shape", String(e.message || e)]
+      );
+      continue;
+    }
+    const journalLines = buildJournalLinesFromRuleLines({
+      ruleLines,
+      amountOverride: recognitionAmount,
+      memoSuffix: `Deferral ${rule.code}`
+    });
+
+    const debitTotal = Number(journalLines.reduce((a, l) => a + Number(l.debit || 0), 0).toFixed(2));
+    const creditTotal = Number(journalLines.reduce((a, l) => a + Number(l.credit || 0), 0).toFixed(2));
+    if (debitTotal !== creditTotal) {
+      await pool.query(
+        `UPDATE accrual_runs SET status='failed', failed_at=NOW(), failure_reason=$3, failure_count=failure_count+1, completed_at=NOW()
+         WHERE organization_id=$1 AND id=$2`,
+        [orgId, runId, "journal_not_balanced"]
+      );
+      continue;
+    }
+
+    // 4) Post journal via kernel interface (safe: no outer tx holding locks)
+    const idempotencyKey = `accrual:deferral:${rule.id}:${period.id}`;
+
+    let posted;
+    try {
+      const draft = await journalIF.createDraftJournal({
+        orgId,
+        actorUserId,
+        payload: {
+          periodId: period.id,
+          entryDate: period.end_date,
+          typeCode: "ADJUSTMENT",
+          memo: `Deferral recognition (${rule.code}) - ${rule.name}`,
+          idempotencyKey,
+          lines: journalLines
+        }
+      });
+
+      posted = await journalIF.postDraftJournal({
+        orgId,
+        journalId: draft.journalId,
+        actorUserId
+      });
+    } catch (e) {
+      // Persist failure on run (do NOT change schedule)
+      await pool.query(
+        `UPDATE accrual_runs
+         SET status='failed',
+             failed_at=NOW(),
+             failure_reason=$3,
+             error=$4,
+             failure_count=failure_count+1,
+             completed_at=NOW()
+         WHERE organization_id=$1 AND id=$2`,
+        [orgId, runId, "journal_post_failed", String(e.message || e)]
+      );
+      continue;
+    }
+
+    // 5) Link posting + decrement schedule in a short transaction
+    {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+
+        // Link run → journal (idempotent)
+        await client.query(
+          `
+          INSERT INTO accrual_run_postings(accrual_run_id, journal_entry_id)
+          VALUES ($1,$2)
+          ON CONFLICT (accrual_run_id) DO NOTHING
+          `,
+          [runId, posted.journalId]
+        );
+
+        // Mark run posted
+        await client.query(
+          `
+          UPDATE accrual_runs
+          SET status='posted', completed_at=NOW()
+          WHERE organization_id=$1 AND id=$2
+          `,
+          [orgId, runId]
+        );
+
+        // Decrement schedule safely using current DB value (prevents double-decrement)
+        const { rows: schedNow } = await client.query(
+          `SELECT remaining_amount FROM accrual_schedules WHERE id=$1 FOR UPDATE`,
+          [s.schedule_id]
+        );
+
+        if (schedNow.length) {
+          const nowRemaining = Number(schedNow[0].remaining_amount);
+          const newRemaining = Number((nowRemaining - recognitionAmount).toFixed(2));
+          await client.query(
+            `
+            UPDATE accrual_schedules
+            SET remaining_amount=$2,
+                status = CASE WHEN $2 <= 0 THEN 'complete' ELSE status END,
+                updated_at=NOW()
+            WHERE id=$1
+            `,
+            [s.schedule_id, newRemaining <= 0 ? 0 : newRemaining]
+          );
+        }
+
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK");
+        // Important: journal is posted but schedule update failed.
+        // This should be alerted (operator can reconcile by recomputing remaining).
+        await pool.query(
+          `UPDATE accrual_runs
+           SET error = COALESCE(error,'') || $3
+           WHERE organization_id=$1 AND id=$2`,
+          [orgId, runId, ` | schedule_update_failed: ${String(e.message || e)}`]
+        );
+        throw e;
+      } finally {
+        client.release();
+      }
+    }
+
+    results.push({
+      scheduleId: s.schedule_id,
+      ruleId: rule.id,
+      periodId: period.id,
+      runId,
+      journalId: posted.journalId,
+      recognitionAmount
+    });
+  }
+
+  return results;
+}
+
+
 
 async function getRuleWithLines({ orgId, ruleId }) {
   const { rows: r } = await pool.query(
@@ -453,10 +807,13 @@ async function runPeriodEndAccruals({ orgId, actorUserId, periodId, asOfDateOver
     [orgId]
   );
 
+  
   const results = [];
   for (const r of rules) {
     results.push(await runOne({ orgId, actorUserId, ruleId: r.id, asOfDate, periodIdOverride: periodId }));
   }
+  // After running PERIOD_END recurring rules:
+  await runDeferralRecognitions({ orgId, actorUserId, periodId });
   return results;
 }
 
@@ -641,5 +998,5 @@ module.exports = {
   runPeriodEndAccruals,
   runReversals,
   listRuns,
-  getRun
+  getRun,runDeferralRecognitions
 };

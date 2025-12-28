@@ -55,8 +55,15 @@ router.get("/:id/close-preview", requirePermission("accounting.period.close"), a
 });
 
 router.post("/:id/close", requirePermission("accounting.period.close"), async (req, res, next) => {
+      const force = req.body?.force === true;
+  if (force) {
+      // require additional permission
+      await requirePermission("accounting.period.force_close")(req, res, () => {});
+    }
+
   try {
     const orgId = req.user.organization_id;
+
     const out = await svc.closePeriod({ orgId, periodId: req.params.id, actorUserId: req.user.id,
   options: { autoRunAccruals: req.body?.autoRunAccruals } });
 

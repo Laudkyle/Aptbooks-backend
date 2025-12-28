@@ -16,7 +16,7 @@ async function runPeriodEndAccruals({ orgId, actorUserId, periodId, asOfDateOver
   return accrualSvc.runPeriodEndAccruals({ orgId, actorUserId, periodId, asOfDateOverride });
 }
 
-async function runOneAccrual({ orgId, actorUserId, ruleId, asOfDate, periodId }) {
+async function runOneAccrual({ orgId, actorUserId, ruleId, asOfDate, periodIdOverride:periodId }) {
   return accrualSvc.runOne({ orgId, actorUserId, ruleId, asOfDate, periodId });
 }
 async function runReversals({ orgId, actorUserId, periodId }) {

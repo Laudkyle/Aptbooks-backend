@@ -21,9 +21,9 @@ CREATE TABLE IF NOT EXISTS organizations (
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
-  email CITEXT NOT NULL UNIQUE,  -- global auth: one email belongs to exactly one org
+  email CITEXT NOT NULL UNIQUE, 
   password_hash TEXT NOT NULL,
-  is_system BOOLEAN NOT NULL DEFAULT FALSE
+  is_system BOOLEAN NOT NULL DEFAULT FALSE,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

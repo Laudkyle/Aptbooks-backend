@@ -124,6 +124,12 @@ async function listPeriods({ orgId }) {
 async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
   const autoRunAccruals = options.autoRunAccruals !== false;
 
+  // B3: operator override (requires permission in routes)
+  const forceClose = options.force === true;
+
+  // B2: treat reversed as completion? default true (recommended)
+  const acceptReversedAsComplete = options.acceptReversedAsComplete !== false;
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -139,7 +145,6 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
     if (period.status !== "open") throw new AppError(409, "Period must be open to close");
 
     // 1) Block close if draft journals exist for the period
-    // (Assumes journal_entries has 'status' with 'draft'/'posted' etc.)
     const { rows: draftCount } = await client.query(
       `
       SELECT COUNT(*)::int AS n
@@ -148,15 +153,16 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
       `,
       [orgId, periodId]
     );
-    if (draftCount[0].n > 0) {
+    if (draftCount[0].n > 0 && !forceClose) {
       throw new AppError(409, `Cannot close: ${draftCount[0].n} draft journal(s) exist in this period`);
     }
 
     // 2) Accrual enforcement (only if accrual subsystem installed)
-    if (accrualSvc) {
+    // If accrualSvc is not wired, skip checks entirely.
+    if (typeof accrualSvc !== "undefined" && accrualSvc) {
       // If enabled, run period-end accruals first (outside current transaction)
-      // Because accrualSvc will do its own tx and post journals.
-      if (autoRunAccruals) {
+      // because accrualSvc will do its own tx and post journals.
+      if (autoRunAccruals && !forceClose) {
         await client.query("COMMIT");
         await accrualSvc.runPeriodEndAccruals({
           orgId,
@@ -165,10 +171,20 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
           asOfDateOverride: period.end_date
         });
         await client.query("BEGIN");
+
+        // Re-lock the period row after reacquiring the transaction
+        const { rows: relock } = await client.query(
+          `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+          [orgId, periodId]
+        );
+        if (!relock.length) throw new AppError(404, "Period not found");
       }
 
-      // 2a) Missing required PERIOD_END accruals
-      // Uses your schema: status, frequency, is_required
+      // -----------------------------
+      // B1+B2: Required PERIOD_END rules must have posted runs for this period
+      // -----------------------------
+      const completionStatuses = acceptReversedAsComplete ? ["posted", "reversed"] : ["posted"];
+
       const { rows: missingRequired } = await client.query(
         `
         SELECT r.id, r.code, r.name
@@ -183,19 +199,31 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
             WHERE ar.organization_id=$1
               AND ar.accrual_rule_id=r.id
               AND ar.period_id=$2
-              AND ar.status IN ('posted','reversed')
+              AND ar.status = ANY($3::text[])
           )
         ORDER BY r.code
         `,
-        [orgId, periodId]
+        [orgId, periodId, completionStatuses]
       );
 
-      if (missingRequired.length) {
-        const list = missingRequired.map((x) => x.code).join(", ");
-        throw new AppError(409, `Cannot close: required period-end accruals not posted (${list})`);
+      if (missingRequired.length && !forceClose) {
+        const msg =
+          "Cannot close: required period-end accruals not posted";
+        const err = new AppError(409, msg);
+
+        // attach details for client/UI
+        err.details = {
+          periodId,
+          missingRequired: missingRequired.map((x) => ({
+            id: x.id,
+            code: x.code,
+            name: x.name
+          }))
+        };
+        throw err;
       }
 
-      // 2b) Any failed accrual runs for this period
+      // 2b) Any failed accrual runs for this period block close (unless force)
       const { rows: failedRuns } = await client.query(
         `
         SELECT COUNT(*)::int AS n
@@ -204,10 +232,11 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
         `,
         [orgId, periodId]
       );
-      if (failedRuns[0].n > 0) {
+      if (failedRuns[0].n > 0 && !forceClose) {
         throw new AppError(409, `Cannot close: ${failedRuns[0].n} accrual run(s) failed for this period`);
       }
-    }
+
+         }
 
     // 3) Close the period
     const { rows: afterRows } = await client.query(
@@ -221,7 +250,12 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
     );
 
     await client.query("COMMIT");
-    return { id: periodId, before: period, after: afterRows[0] };
+
+    return {
+      id: periodId,
+      before: period,
+      after: afterRows[0]
+    };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -229,7 +263,6 @@ async function closePeriod({ orgId, periodId, actorUserId, options = {} }) {
     client.release();
   }
 }
-
 async function reopenPeriod({ orgId, periodId }) {
   const { rows: beforeRows } = await pool.query(
     `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
