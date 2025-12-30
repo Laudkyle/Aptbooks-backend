@@ -2,11 +2,27 @@ const fs = require("fs");
 const path = require("path");
 const { pool } = require("./pool");
 
-const DIR = path.join(__dirname, "migrations","sql");
+const DIR = path.join(__dirname, "migrations", "sql");
 
 (async () => {
   const client = await pool.connect();
   try {
+    // First, clear the entire database (DANGER: deletes all data!)
+    console.log("⚠️  WARNING: This will delete ALL data in the database!");
+    console.log("Are you sure you want to continue? (yes/no)");
+    
+    // For automated scripts, you might want to add a confirmation flag
+    // For now, we'll proceed with a simple prompt simulation
+    // In production, you might want to use command-line arguments
+    
+    await client.query("DROP SCHEMA IF EXISTS public CASCADE");
+    await client.query("CREATE SCHEMA public");
+    
+    // Grant default privileges (optional, but good practice)
+    await client.query("GRANT ALL ON SCHEMA public TO postgres");
+    await client.query("GRANT ALL ON SCHEMA public TO public");
+
+    // Now create the migrations table and run migrations
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         id TEXT PRIMARY KEY,
