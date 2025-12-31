@@ -130,6 +130,7 @@ ALTER TABLE accrual_run_postings
   ADD COLUMN IF NOT EXISTS reversal_failure_reason TEXT,
   ADD COLUMN IF NOT EXISTS reversal_failure_count INT NOT NULL DEFAULT 0;
 
+
 -- ==========================
 -- Optional: deferral schedule
 -- ==========================
@@ -152,3 +153,11 @@ CREATE TABLE IF NOT EXISTS accrual_schedules (
 
   UNIQUE (accrual_rule_id)
 );
+
+ALTER TABLE accrual_runs
+  ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES accrual_schedules(id) ON DELETE SET NULL;
+
+-- One deferral recognition run per schedule per period
+CREATE UNIQUE INDEX IF NOT EXISTS uq_accrual_runs_deferral_schedule_period
+ON accrual_runs (organization_id, schedule_id, period_id)
+WHERE schedule_id IS NOT NULL;
