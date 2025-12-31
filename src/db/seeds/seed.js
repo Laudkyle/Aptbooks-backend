@@ -392,6 +392,15 @@ async function run() {
       ["transactions.vendor_payment.manage", "Create vendor payments"],
       ["transactions.vendor_payment.post", "Post vendor payments"],
       ["transactions.vendor_payment.void", "Void vendor payments"],
+      // Assets (Tier 4)
+      ["assets.categories.read", "Read asset categories"],
+      ["assets.categories.manage", "Manage asset categories"],
+      ["assets.fixed_assets.read", "Read fixed assets"],
+      ["assets.fixed_assets.manage", "Manage fixed assets"],
+      ["assets.depreciation.run", "Run depreciation posting"],
+
+      // Optional override
+      ["accounting.period.force_close", "Force close period (override checks)"],
     ];
 
     for (const [code, description] of perms) {
@@ -443,23 +452,25 @@ async function run() {
         [orgId, code, name, accountTypeId]
       );
     }
-await client.query(
-  `
+    await client
+      .query(
+        `
   INSERT INTO users(organization_id, email, password_hash, status, is_system)
   VALUES ($1, 'system@aptbooks.local', '', 'active', TRUE)
   ON CONFLICT DO NOTHING
   `,
-  [orgId]
-).catch(async () => {
-  await client.query(
-    `
+        [orgId]
+      )
+      .catch(async () => {
+        await client.query(
+          `
     INSERT INTO users(organization_id, email, password_hash, status)
     VALUES ($1, 'system@aptbooks.local', '', 'active')
     ON CONFLICT DO NOTHING
     `,
-    [orgId]
-  );
-});
+          [orgId]
+        );
+      });
 
     // 5) Ensure open period for invoice issue tests
     const periodId = await ensureOpenPeriod(orgId);

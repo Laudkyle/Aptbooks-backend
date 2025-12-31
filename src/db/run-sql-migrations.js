@@ -9,7 +9,6 @@ const DIR = path.join(__dirname, "migrations", "sql");
   try {
     // First, clear the entire database (DANGER: deletes all data!)
     console.log("⚠️  WARNING: This will delete ALL data in the database!");
-    console.log("Are you sure you want to continue? (yes/no)");
     
     // For automated scripts, you might want to add a confirmation flag
     // For now, we'll proceed with a simple prompt simulation

@@ -49,6 +49,7 @@ app.use("/core/accounting/balances", balanceRoutes);
 
 app.use("/modules/business", businessModuleRoutes);
 app.use("/modules/transactions", transactionsModuleRoutes);
+app.use("/modules/assets", require("./modules/assets/assets.routes"));
 
 app.use(errorMiddleware);
 
