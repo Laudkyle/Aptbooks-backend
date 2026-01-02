@@ -1,6 +1,6 @@
 const request = require("supertest");
 const app = require("../app");
-const { pool } = require("../src/db/pool");
+const { pool } = require("../db/pool");
 
 let token;
 let orgId;

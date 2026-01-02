@@ -16,6 +16,8 @@ async function createCategory({ orgId, actorUserId, payload }) {
   await assertPostableActiveAccount({ orgId, accountId: payload.assetAccountId, label: "assetAccountId" });
   await assertPostableActiveAccount({ orgId, accountId: payload.accumDeprAccountId, label: "accumDeprAccountId" });
   await assertPostableActiveAccount({ orgId, accountId: payload.deprExpenseAccountId, label: "deprExpenseAccountId" });
+  await assertPostableActiveAccount({ orgId, accountId: payload.disposalGainAccountId, label: "disposalGainAccountId" });
+  await assertPostableActiveAccount({ orgId, accountId: payload.disposalLossAccountId, label: "disposalLossAccountId" });
 
   return repo.createCategory({ orgId, payload });
 }

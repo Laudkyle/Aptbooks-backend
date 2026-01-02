@@ -2,7 +2,7 @@ const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { validate } = require("../../../shared/validators/validate");
-const { createFixedAssetSchema } = require("../../../shared/validators/assets.validators");
+const { createFixedAssetSchema, acquireFixedAssetSchema, disposeFixedAssetSchema } = require("../../../shared/validators/assets.validators");
 const svc = require("./fixedAssets.service");
 
 router.use(authRequired);
@@ -23,6 +23,15 @@ router.get("/", requirePermission("assets.fixed_assets.read"), async (req, res, 
   } catch (e) { next(e); }
 });
 
+router.post("/:id/acquire", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const payload = validate(acquireFixedAssetSchema, req.body);
+    res.json(await svc.acquireAsset({ orgId, actorUserId, assetId: req.params.id, payload }));
+  } catch (e) { next(e); }
+});
+
 router.post("/:id/retire", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -35,7 +44,8 @@ router.post("/:id/dispose", requirePermission("assets.fixed_assets.manage"), asy
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-    res.json(await svc.disposeAsset({ orgId, actorUserId, assetId: req.params.id }));
+    const payload = validate(disposeFixedAssetSchema, req.body);
+    res.json(await svc.disposeAsset({ orgId, actorUserId, assetId: req.params.id, payload }));
   } catch (e) { next(e); }
 });
 

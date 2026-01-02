@@ -1,6 +1,7 @@
 const { z } = require("zod");
 
 const uuid = z.string().uuid();
+const isoDate = z.string().min(8); // YYYY-MM-DD
 
 const createAssetCategorySchema = z.object({
   code: z.string().min(1),
@@ -8,15 +9,33 @@ const createAssetCategorySchema = z.object({
   assetAccountId: uuid,
   accumDeprAccountId: uuid,
   deprExpenseAccountId: uuid,
+  // Required for operational completeness (disposal posting)
+  disposalGainAccountId: uuid,
+  disposalLossAccountId: uuid,
 });
 
 const createFixedAssetSchema = z.object({
   categoryId: uuid,
   code: z.string().min(1),
   name: z.string().min(1),
-  acquisitionDate: z.string().min(8), // YYYY-MM-DD (your validate() likely enforces)
+  acquisitionDate: isoDate,
   cost: z.number().nonnegative(),
   salvageValue: z.number().nonnegative().optional().default(0),
+});
+
+const acquireFixedAssetSchema = z.object({
+  periodId: uuid,
+  entryDate: isoDate,
+  fundingAccountId: uuid,
+  memo: z.string().max(500).optional(),
+});
+
+const disposeFixedAssetSchema = z.object({
+  periodId: uuid,
+  entryDate: isoDate,
+  proceeds: z.number().nonnegative().default(0),
+  proceedsAccountId: uuid,
+  memo: z.string().max(500).optional(),
 });
 
 const createDepreciationScheduleSchema = z.object({
@@ -25,14 +44,13 @@ const createDepreciationScheduleSchema = z.object({
   usefulLifeMonths: z.number().int().positive(),
 
   // Legacy field (keep for compatibility)
-  depreciationStartDate: z.string().min(8).optional(),
+  depreciationStartDate: isoDate.optional(),
 
   // Option A fields (recommended)
-  effectiveStartDate: z.string().min(8).optional(),
-  effectiveEndDate: z.string().min(8).nullable().optional().default(null),
+  effectiveStartDate: isoDate.optional(),
+  effectiveEndDate: isoDate.nullable().optional().default(null),
   componentCode: z.string().min(1).optional().nullable().default(null),
 }).superRefine((val, ctx) => {
-  // Require at least one date source
   if (!val.effectiveStartDate && !val.depreciationStartDate) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -41,8 +59,6 @@ const createDepreciationScheduleSchema = z.object({
     });
   }
 
-  // If both present, enforce consistency (optional but recommended)
-  // You can relax this, but it prevents subtle errors.
   if (val.effectiveStartDate && val.effectiveEndDate && val.effectiveEndDate < val.effectiveStartDate) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -53,12 +69,14 @@ const createDepreciationScheduleSchema = z.object({
 });
 
 const runDepreciationSchema = z.object({
-  periodId: uuid
+  periodId: uuid,
 });
 
 module.exports = {
   createAssetCategorySchema,
   createFixedAssetSchema,
+  acquireFixedAssetSchema,
+  disposeFixedAssetSchema,
   createDepreciationScheduleSchema,
-  runDepreciationSchema
+  runDepreciationSchema,
 };

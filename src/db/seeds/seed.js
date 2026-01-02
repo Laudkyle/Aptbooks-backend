@@ -325,6 +325,111 @@ async function run() {
     return partnerId;
   };
 
+  const upsertSystemSetting = async (orgId, key, valueJson) => {
+    await client.query(
+      `INSERT INTO system_settings(organization_id, key, value_json)
+       VALUES($1,$2,$3)
+       ON CONFLICT (organization_id, key) DO UPDATE SET value_json=EXCLUDED.value_json`,
+      [orgId, key, valueJson]
+    );
+  };
+
+  const ensureInventoryCostMethodDefault = async (orgId) => {
+    // Default to Weighted Average for Phase 4B. The transactions service will lock this after first posted journal.
+    await upsertSystemSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_AVERAGE", locked: false });
+  };
+
+  const ensureInventoryMasterData = async ({
+    orgId,
+    inventoryAccountId,
+    cogsAccountId,
+    adjustmentAccountId,
+    clearingAccountId,
+  }) => {
+    // Unit
+    await client.query(
+      `INSERT INTO item_units(organization_id, code, name)
+       VALUES($1,'EA','Each')
+       ON CONFLICT (organization_id, code) DO NOTHING`,
+      [orgId]
+    );
+    const { rows: unitRows } = await client.query(
+      `SELECT id FROM item_units WHERE organization_id=$1 AND code='EA' LIMIT 1`,
+      [orgId]
+    );
+    const unitId = unitRows[0].id;
+
+    // Warehouse
+    await client.query(
+      `INSERT INTO warehouses(organization_id, code, name, is_active)
+       VALUES($1,'MAIN','Main Warehouse',TRUE)
+       ON CONFLICT (organization_id, code) DO NOTHING`,
+      [orgId]
+    );
+    const { rows: whRows } = await client.query(
+      `SELECT id FROM warehouses WHERE organization_id=$1 AND code='MAIN' LIMIT 1`,
+      [orgId]
+    );
+    const warehouseId = whRows[0].id;
+
+    // Item category (with accounting links)
+    await client.query(
+      `INSERT INTO item_categories(
+         organization_id, code, name,
+         inventory_account_id, cogs_account_id, adjustment_account_id, clearing_account_id
+       )
+       VALUES($1,'GEN','General Items',$2,$3,$4,$5)
+       ON CONFLICT (organization_id, code) DO UPDATE
+         SET inventory_account_id=EXCLUDED.inventory_account_id,
+             cogs_account_id=EXCLUDED.cogs_account_id,
+             adjustment_account_id=EXCLUDED.adjustment_account_id,
+             clearing_account_id=EXCLUDED.clearing_account_id`,
+      [orgId, inventoryAccountId, cogsAccountId, adjustmentAccountId, clearingAccountId]
+    );
+    const { rows: catRows } = await client.query(
+      `SELECT id FROM item_categories WHERE organization_id=$1 AND code='GEN' LIMIT 1`,
+      [orgId]
+    );
+    const itemCategoryId = catRows[0].id;
+
+    // Demo item
+    await client.query(
+      `INSERT INTO inventory_items(organization_id, category_id, unit_id, sku, name, is_active)
+       VALUES($1,$2,$3,'SKU-DEMO','Demo Item',TRUE)
+       ON CONFLICT (organization_id, sku) DO UPDATE
+         SET category_id=EXCLUDED.category_id,
+             unit_id=EXCLUDED.unit_id,
+             name=EXCLUDED.name,
+             is_active=TRUE`,
+      [orgId, itemCategoryId, unitId]
+    );
+    const { rows: itemRows } = await client.query(
+      `SELECT id FROM inventory_items WHERE organization_id=$1 AND sku='SKU-DEMO' LIMIT 1`,
+      [orgId]
+    );
+    const itemId = itemRows[0].id;
+
+    return { unitId, warehouseId, itemCategoryId, itemId };
+  };
+
+  const ensureBankingSeed = async ({ orgId, bankGlAccountId, currencyCode = "GHS" }) => {
+    // Bank account entity (Tier 7)
+    await client.query(
+      `INSERT INTO bank_accounts(organization_id, code, name, currency_code, gl_account_id, is_active)
+       VALUES($1,'BANK-001','Demo Bank Account',$2,$3,TRUE)
+       ON CONFLICT (organization_id, code) DO UPDATE
+         SET currency_code=EXCLUDED.currency_code,
+             gl_account_id=EXCLUDED.gl_account_id,
+             is_active=TRUE`,
+      [orgId, currencyCode, bankGlAccountId]
+    );
+    const { rows } = await client.query(
+      `SELECT id FROM bank_accounts WHERE organization_id=$1 AND code='BANK-001' LIMIT 1`,
+      [orgId]
+    );
+    return { bankAccountId: rows[0].id };
+  };
+
   try {
     await client.query("BEGIN");
 
@@ -399,7 +504,27 @@ async function run() {
       ["assets.fixed_assets.manage", "Manage fixed assets"],
       ["assets.depreciation.run", "Run depreciation posting"],
 
-      // Optional override
+      
+// Inventory (Tier 5)
+["inventory.units.read", "Read item units"],
+["inventory.units.manage", "Manage item units"],
+["inventory.categories.read", "Read item categories"],
+["inventory.categories.manage", "Manage item categories"],
+["inventory.items.read", "Read inventory items"],
+["inventory.items.manage", "Manage inventory items"],
+["inventory.warehouses.read", "Read warehouses"],
+["inventory.warehouses.manage", "Manage warehouses"],
+["inventory.transactions.read", "Read inventory transactions"],
+["inventory.transactions.post", "Post inventory transactions"],
+["inventory.settings.manage", "Manage inventory settings"],
+
+// Banking (Tier 7)
+["banking.accounts.read", "Read bank accounts"],
+["banking.accounts.manage", "Manage bank accounts"],
+["banking.statements.read", "Read bank statements"],
+["banking.statements.manage", "Manage bank statements"],
+["banking.reconciliation.run", "Run bank reconciliation"],
+// Optional override
       ["accounting.period.force_close", "Force close period (override checks)"],
     ];
 
@@ -435,11 +560,16 @@ async function run() {
 
     const coa = [
       ["1000", "Cash", typeMap.ASSET],
+      ["1010", "Bank", typeMap.ASSET],
       ["1100", "Accounts Receivable", typeMap.ASSET],
+      ["1200", "Inventory", typeMap.ASSET],
       ["2000", "Accounts Payable", typeMap.LIABILITY],
+      ["2100", "Inventory Clearing (GRNI)", typeMap.LIABILITY],
       ["3000", "Owner's Equity", typeMap.EQUITY],
       ["4000", "Sales Revenue", typeMap.REVENUE],
       ["5000", "Operating Expenses", typeMap.EXPENSE],
+      ["5200", "Cost of Goods Sold", typeMap.EXPENSE],
+      ["5300", "Inventory Adjustments", typeMap.EXPENSE],
     ];
 
     for (const [code, name, accountTypeId] of coa) {
@@ -490,6 +620,32 @@ async function run() {
 
     const demoVendorId = await ensureDemoVendor({ orgId, apAccountId });
 
+    // 9) Phase 4 defaults & master data for Postman testing
+    await ensureInventoryCostMethodDefault(orgId);
+
+    const inventoryAccountId = await getCoaIdByCode(orgId, "1200");
+    const inventoryClearingAccountId = await getCoaIdByCode(orgId, "2100");
+    const cogsAccountId = await getCoaIdByCode(orgId, "5200");
+    const inventoryAdjustmentAccountId = await getCoaIdByCode(orgId, "5300");
+    const bankGlAccountId = await getCoaIdByCode(orgId, "1010");
+
+    if (!inventoryAccountId) throw new Error("Missing Inventory account 1200 in COA");
+    if (!inventoryClearingAccountId) throw new Error("Missing Inventory Clearing account 2100 in COA");
+    if (!cogsAccountId) throw new Error("Missing COGS account 5200 in COA");
+    if (!inventoryAdjustmentAccountId) throw new Error("Missing Inventory Adjustments account 5300 in COA");
+    if (!bankGlAccountId) throw new Error("Missing Bank account 1010 in COA");
+
+    const inventory = await ensureInventoryMasterData({
+      orgId,
+      inventoryAccountId,
+      cogsAccountId,
+      adjustmentAccountId: inventoryAdjustmentAccountId,
+      clearingAccountId: inventoryClearingAccountId,
+    });
+
+    const banking = await ensureBankingSeed({ orgId, bankGlAccountId, currencyCode: "GHS" });
+
+
     await client.query("COMMIT");
 
     console.log("Seed complete:", {
@@ -499,12 +655,29 @@ async function run() {
       openPeriodId: periodId,
       demoCustomerId,
       demoVendorId,
+      settings: {
+        inventoryCostMethod: { method: "WEIGHTED_AVERAGE", locked: false },
+      },
       accounts: {
         cashAccountId: await getCoaIdByCode(orgId, "1000"),
+        bankGlAccountId: await getCoaIdByCode(orgId, "1010"),
         arAccountId,
+        inventoryAccountId: await getCoaIdByCode(orgId, "1200"),
+        inventoryClearingAccountId: await getCoaIdByCode(orgId, "2100"),
         apAccountId,
         revenueAccountId: await getCoaIdByCode(orgId, "4000"),
         expenseAccountId: await getCoaIdByCode(orgId, "5000"),
+        cogsAccountId: await getCoaIdByCode(orgId, "5200"),
+        inventoryAdjustmentAccountId: await getCoaIdByCode(orgId, "5300"),
+      },
+      inventory: {
+        unitId: inventory.unitId,
+        warehouseId: inventory.warehouseId,
+        itemCategoryId: inventory.itemCategoryId,
+        itemId: inventory.itemId,
+      },
+      banking: {
+        bankAccountId: banking.bankAccountId,
       },
     });
   } catch (e) {

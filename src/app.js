@@ -50,6 +50,9 @@ app.use("/core/accounting/balances", balanceRoutes);
 app.use("/modules/business", businessModuleRoutes);
 app.use("/modules/transactions", transactionsModuleRoutes);
 app.use("/modules/assets", require("./modules/assets/assets.routes"));
+app.use("/modules/inventory", require("./modules/inventory/inventory.routes"));
+app.use("/modules/banking", require("./modules/banking/banking.routes"));
+
 
 app.use(errorMiddleware);
 

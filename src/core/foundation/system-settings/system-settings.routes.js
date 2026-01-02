@@ -31,6 +31,31 @@ router.put("/:key", requirePermission("settings.manage"), async (req, res, next)
       [orgId, key]
     );
 
+// Inventory cost method immutability (Phase 4)
+if (key === "inventoryCostMethod") {
+  const current = before[0]?.value_json || null;
+  if (current?.locked) throw new AppError(409, "inventoryCostMethod is locked once accounting starts");
+  // If any posted journal exists, lock and prevent change
+  const { rows: posted } = await pool.query(
+    `SELECT 1 FROM journal_entries WHERE organization_id=$1 AND status='posted' LIMIT 1`,
+    [orgId]
+  );
+  if (posted.length) {
+    // lock to current or requested method, but reject changing once started
+    const method = current?.method || value?.method || "WEIGHTED_AVERAGE";
+    await pool.query(
+      `INSERT INTO system_settings(organization_id, key, value_json)
+       VALUES ($1,$2,$3::jsonb)
+       ON CONFLICT (organization_id, key) DO UPDATE SET value_json=EXCLUDED.value_json`,
+      [orgId, key, JSON.stringify({ method, locked: true })]
+    );
+    throw new AppError(409, "inventoryCostMethod is now locked; cannot be changed after accounting activity begins");
+  }
+  // Validate payload
+  if (!value?.method || !["WEIGHTED_AVERAGE","FIFO"].includes(value.method)) throw new AppError(400, "inventoryCostMethod.method must be WEIGHTED_AVERAGE or FIFO");
+  value.locked = false;
+}
+
     const { rows: after } = await pool.query(
       `
       INSERT INTO system_settings(organization_id, key, value_json)
