@@ -17,7 +17,7 @@ async function nextPaymentNo(client, orgId) {
   return `VPAY-${String(no).padStart(6, "0")}`;
 }
 
-async function insertVendorPayment(client, { orgId, vendorId, paymentNo, paymentDate, paymentMethodId, cashAccountId, amountTotal }) {
+async function insertVendorPayment(client, { orgId, vendorId, paymentNo, paymentDate, paymentMethodId, cashAccountId, amountTotal, currencyCode }) {
   const { rows } = await client.query(
     `
     INSERT INTO vendor_payments(
@@ -25,10 +25,10 @@ async function insertVendorPayment(client, { orgId, vendorId, paymentNo, payment
       currency_code, fx_rate, payment_method_id, cash_account_id,
       amount_total, status
     )
-    VALUES ($1,$2,$3,$4,'GHS',1,$5,$6,$7,'draft')
+    VALUES ($1,$2,$3,$4,$5,1,$6,$7,$8,'draft')
     RETURNING *
     `,
-    [orgId, vendorId, paymentNo, paymentDate, paymentMethodId || null, cashAccountId, amountTotal]
+    [orgId, vendorId, paymentNo, paymentDate, currencyCode, paymentMethodId || null, cashAccountId, amountTotal]
   );
   return rows[0];
 }

@@ -5,6 +5,21 @@ const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 
+const {
+  multiplyQtyByUnitPriceToMoney,
+  bigIntToDecimalString,
+  parseDecimalToBigInt
+} = require("../../../shared/utils/money");
+
+async function getOrgBaseCurrency(client, orgId) {
+  const { rows } = await client.query(
+    `SELECT base_currency_code FROM organizations WHERE id=$1`,
+    [orgId]
+  );
+  if (!rows.length) throw new AppError(400, "Invalid organization");
+  return rows[0].base_currency_code;
+}
+
 const repo = require("./bills.repository");
 
 async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
@@ -18,13 +33,23 @@ async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
 }
 
 function calcTotals(lines) {
+  let subtotalCents = 0n;
+
   const computed = lines.map((l) => {
-    const qty = Number(l.quantity || 1);
-    const up = Number(l.unitPrice || 0);
-    const lineTotal = Number((qty * up).toFixed(2));
-    return { ...l, quantity: qty, unitPrice: up, lineTotal };
+    const qty = l.quantity ?? 1;
+    const unitPrice = l.unitPrice ?? 0;
+    const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
+    subtotalCents += lineCents;
+
+    return {
+      ...l,
+      quantity: qty,
+      unitPrice,
+      lineTotal: bigIntToDecimalString(lineCents, 2)
+    };
   });
-  const subtotal = Number(computed.reduce((s, l) => s + l.lineTotal, 0).toFixed(2));
+
+  const subtotal = bigIntToDecimalString(subtotalCents, 2);
   return { computed, subtotal, total: subtotal };
 }
 
@@ -44,6 +69,8 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+
     const billNo = await repo.nextBillNo(client, orgId);
     const bill = await repo.insertBill(client, {
       orgId,
@@ -53,7 +80,8 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       dueDate: payload.dueDate,
       memo: payload.memo,
       subtotal,
-      total
+      total,
+      currencyCode: baseCurrency
     });
 
     for (let i = 0; i < computed.length; i++) {

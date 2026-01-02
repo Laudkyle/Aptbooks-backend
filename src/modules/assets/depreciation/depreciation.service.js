@@ -1,11 +1,17 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 const journalIF = require("../../../interfaces/journalPosting.interface");
+const { parseDecimalToBigInt } = require("../../../shared/utils/money");
 
 function sum2(lines) {
-  const debit = Number(lines.reduce((s, l) => s + Number(l.debit || 0), 0).toFixed(2));
-  const credit = Number(lines.reduce((s, l) => s + Number(l.credit || 0), 0).toFixed(2));
-  return { debit, credit };
+  return lines.reduce(
+    (acc, l) => {
+      acc.debit += parseDecimalToBigInt(l.debit || 0, 2);
+      acc.credit += parseDecimalToBigInt(l.credit || 0, 2);
+      return acc;
+    },
+    { debit: 0n, credit: 0n }
+  );
 }
 async function createSchedule({ orgId, actorUserId, payload }) {
   const { rows: aRows } = await pool.query(

@@ -6,12 +6,16 @@ const { AppError } = require("../../../shared/errors/AppError");
 router.post("/", async (req, res, next) => {
   try {
     // If you want org creation locked down, add an admin bootstrap rule later.
-    const { name } = req.body || {};
+    const { name, baseCurrencyCode } = req.body || {};
     if (!name) throw new AppError(400, "name required");
 
+    const currencyCode = (baseCurrencyCode || "GHS").toUpperCase();
+    const { rows: cRows } = await pool.query(`SELECT code FROM currencies WHERE code=$1`, [currencyCode]);
+    if (!cRows.length) throw new AppError(400, "Invalid baseCurrencyCode");
+
     const { rows } = await pool.query(
-      `INSERT INTO organizations(name, base_currency_code) VALUES ($1,'GHS') RETURNING *`,
-      [name]
+      `INSERT INTO organizations(name, base_currency_code) VALUES ($1,$2) RETURNING *`,
+      [name, currencyCode]
     );
     res.status(201).json(rows[0]);
   } catch (e) { next(e); }

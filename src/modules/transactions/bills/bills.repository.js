@@ -17,17 +17,17 @@ async function nextBillNo(client, orgId) {
   return `BILL-${String(no).padStart(6, "0")}`;
 }
 
-async function insertBill(client, { orgId, vendorId, billNo, billDate, dueDate, memo, subtotal, total }) {
+async function insertBill(client, { orgId, vendorId, billNo, billDate, dueDate, memo, subtotal, total, currencyCode }) {
   const { rows } = await client.query(
     `
     INSERT INTO bills(
       organization_id, vendor_id, bill_no, bill_date, due_date,
       currency_code, fx_rate, status, memo, subtotal, total
     )
-    VALUES ($1,$2,$3,$4,$5,'GHS',1,'draft',$6,$7,$8)
+    VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9)
     RETURNING *
     `,
-    [orgId, vendorId, billNo, billDate, dueDate, memo || null, subtotal, total]
+    [orgId, vendorId, billNo, billDate, dueDate, currencyCode, memo || null, subtotal, total]
   );
   return rows[0];
 }

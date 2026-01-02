@@ -5,6 +5,20 @@ const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 
+const {
+  multiplyQtyByUnitPriceToMoney,
+  bigIntToDecimalString
+} = require("../../../shared/utils/money");
+
+async function getOrgBaseCurrency(client, orgId) {
+  const { rows } = await client.query(
+    `SELECT base_currency_code FROM organizations WHERE id=$1`,
+    [orgId]
+  );
+  if (!rows.length) throw new AppError(400, "Invalid organization");
+  return rows[0].base_currency_code;
+}
+
 async function assertRevenueAccount({ orgId, accountId }) {
   const { rows } = await pool.query(
     `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
@@ -16,13 +30,25 @@ async function assertRevenueAccount({ orgId, accountId }) {
 }
 
 function calcTotals(lines) {
+  let subtotalCents = 0n;
+
   const computed = lines.map((l) => {
-    const qty = Number(l.quantity || 1);
-    const up = Number(l.unitPrice || 0);
-    const lineTotal = Number((qty * up).toFixed(2));
-    return { ...l, quantity: qty, unitPrice: up, lineTotal };
+    const qty = l.quantity ?? 1;
+    const unitPrice = l.unitPrice ?? 0;
+
+    // quantity in NUMERIC(18,4), unit price in NUMERIC(18,2)
+    const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
+    subtotalCents += lineCents;
+
+    return {
+      ...l,
+      quantity: qty,
+      unitPrice,
+      lineTotal: bigIntToDecimalString(lineCents, 2)
+    };
   });
-  const subtotal = Number(computed.reduce((s, l) => s + l.lineTotal, 0).toFixed(2));
+
+  const subtotal = bigIntToDecimalString(subtotalCents, 2);
   return { computed, subtotal, total: subtotal };
 }
 
@@ -62,6 +88,8 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+
     const invoiceNo = await nextInvoiceNo(client, orgId);
 
     const { rows: invRows } = await client.query(
@@ -70,10 +98,10 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
         organization_id, customer_id, invoice_no, invoice_date, due_date,
         currency_code, fx_rate, status, memo, subtotal, total
       )
-      VALUES ($1,$2,$3,$4,$5,'GHS',1,'draft',$6,$7,$8)
+      VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9)
       RETURNING *
       `,
-      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, payload.memo || null, subtotal, total]
+      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, total]
     );
 
     const invoice = invRows[0];

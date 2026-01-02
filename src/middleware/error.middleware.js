@@ -8,9 +8,13 @@ function errorMiddleware(err, req, res, _next) {
     logger.error({ err, path: req.path }, "Unhandled error");
   }
 
+  // Do not leak internal error details on 5xx.
+  const safeMessage = status >= 500 ? "Internal Server Error" : (err.message || "Error");
+  const details = status >= 500 ? undefined : (err.details || undefined);
+
   res.status(status).json({
-    error: err.message || "Internal Server Error",
-    details: err.details || undefined
+    error: safeMessage,
+    details
   });
 }
 

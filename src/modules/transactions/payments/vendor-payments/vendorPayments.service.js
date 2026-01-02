@@ -5,6 +5,20 @@ const periodIF = require("../../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../../interfaces/journalPosting.interface");
 const partnerIF = require("../../../../interfaces/partnerManagement.interface");
 
+const {
+  parseDecimalToBigInt,
+  bigIntToDecimalString
+} = require("../../../../shared/utils/money");
+
+async function getOrgBaseCurrency(client, orgId) {
+  const { rows } = await client.query(
+    `SELECT base_currency_code FROM organizations WHERE id=$1`,
+    [orgId]
+  );
+  if (!rows.length) throw new AppError(400, "Invalid organization");
+  return rows[0].base_currency_code;
+}
+
 const repo = require("./vendorPayments.repository");
 
 async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
@@ -59,7 +73,7 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
   await assertPostableActiveAccount({ orgId, accountId: payload.cashAccountId, errMsg: "Invalid cashAccountId" });
 
   // Validate allocations: bills must be issued/paid (not voided/draft), same vendor, and not exceed outstanding
-  let sumAlloc = 0;
+  let sumAllocCents = 0n;
 
   for (const a of payload.allocations) {
     const bill = await getBillForAllocation(orgId, a.billId);
@@ -70,19 +84,24 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
 
     const outstanding = await getBillOutstanding(orgId, a.billId);
     if (outstanding === null) throw new AppError(400, `Invalid billId: ${a.billId}`);
-    if (Number(a.amountApplied) > outstanding) throw new AppError(409, "Allocation exceeds bill outstanding");
+    const appliedCents = parseDecimalToBigInt(a.amountApplied, 2);
+    const outstandingCents = parseDecimalToBigInt(outstanding, 2);
+    if (appliedCents > outstandingCents) throw new AppError(409, "Allocation exceeds bill outstanding");
 
-    sumAlloc += Number(a.amountApplied);
+    sumAllocCents += appliedCents;
   }
 
-  sumAlloc = Number(sumAlloc.toFixed(2));
-  const amountTotal = Number(payload.amountTotal.toFixed(2));
-  if (sumAlloc <= 0) throw new AppError(400, "allocations must sum to > 0");
-  if (sumAlloc > amountTotal) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
+  const amountTotalCents = parseDecimalToBigInt(payload.amountTotal, 2);
+  if (sumAllocCents <= 0n) throw new AppError(400, "allocations must sum to > 0");
+  if (sumAllocCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
+
+  const amountTotal = bigIntToDecimalString(amountTotalCents, 2);
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const paymentNo = await repo.nextPaymentNo(client, orgId);
     const vp = await repo.insertVendorPayment(client, {
@@ -92,14 +111,15 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
       paymentDate: payload.paymentDate,
       paymentMethodId: payload.paymentMethodId,
       cashAccountId: payload.cashAccountId,
-      amountTotal
+      amountTotal,
+      currencyCode: baseCurrency
     });
 
     for (const a of payload.allocations) {
-      await repo.insertAllocation(client, {
+      await repo.upsertAllocation(client, {
         vendorPaymentId: vp.id,
         billId: a.billId,
-        amountApplied: Number(a.amountApplied.toFixed(2))
+        amountApplied: bigIntToDecimalString(parseDecimalToBigInt(a.amountApplied, 2), 2)
       });
     }
 
@@ -135,7 +155,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
   await assertPostableActiveAccount({ orgId, accountId: vp.cash_account_id, errMsg: "Invalid cashAccountId" });
 
   // Re-validate allocations at post-time (race safety)
-  let sumAlloc = 0;
+  let sumAllocCents = 0n;
   for (const a of allocations) {
     const bill = await getBillForAllocation(orgId, a.bill_id);
     if (!bill) throw new AppError(400, `Invalid billId: ${a.bill_id}`);
@@ -144,15 +164,17 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
     if (bill.status === "voided") throw new AppError(409, "Cannot allocate to voided bill");
 
     const outstanding = await getBillOutstanding(orgId, a.bill_id);
-    if (Number(a.amount_applied) > outstanding) throw new AppError(409, "Allocation exceeds bill outstanding");
+    const appliedCents = parseDecimalToBigInt(a.amount_applied, 2);
+    const outstandingCents = parseDecimalToBigInt(outstanding, 2);
+    if (appliedCents > outstandingCents) throw new AppError(409, "Allocation exceeds bill outstanding");
 
-    sumAlloc += Number(a.amount_applied);
+    sumAllocCents += appliedCents;
   }
-  sumAlloc = Number(sumAlloc.toFixed(2));
+  const amountTotalCents = parseDecimalToBigInt(vp.amount_total, 2);
+  if (sumAllocCents <= 0n) throw new AppError(400, "allocations must sum to > 0");
+  if (sumAllocCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
 
-  const amountTotal = Number(vp.amount_total);
-  if (sumAlloc <= 0) throw new AppError(400, "allocations must sum to > 0");
-  if (sumAlloc > amountTotal) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
+  const sumAlloc = bigIntToDecimalString(sumAllocCents, 2);
 
   const period = await periodIF.findOpenPeriodForDate({ orgId, date: vp.payment_date });
 
@@ -160,8 +182,8 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
   const cashAccountId = vp.cash_account_id;
 
   const journalLines = [
-    { accountId: apAccountId, debit: sumAlloc, credit: 0, description: `A/P settlement ${vp.payment_no}` },
-    { accountId: cashAccountId, debit: 0, credit: sumAlloc, description: `Cash/Bank payment ${vp.payment_no}` }
+    { accountId: apAccountId, debit: sumAlloc, credit: "0.00", description: `A/P settlement ${vp.payment_no}` },
+    { accountId: cashAccountId, debit: "0.00", credit: sumAlloc, description: `Cash/Bank payment ${vp.payment_no}` }
   ];
 
   const idempotencyKey = `vendor_payment:${id}:post`;
