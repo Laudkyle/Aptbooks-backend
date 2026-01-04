@@ -13,6 +13,7 @@ const {
   runReversalsDaily,
 } = require("./utilities/scheduled-tasks/accruals.jobs");
 const { runPeriodEndDepreciationDaily } = require("./utilities/scheduled-tasks/assets.jobs");
+const { computeDeferredTaxDraftDaily, checkIas12ConfigDaily } = require("./utilities/scheduled-tasks/ias12.jobs");
 // after server starts listening:
 if (process.env.SCHEDULER_ENABLED !== "false") {
   startScheduler({
@@ -49,6 +50,19 @@ if (process.env.SCHEDULER_ENABLED !== "false") {
           dailyMinuteUtc: 40,
         },
         handler: async () => runPeriodEndDepreciationDaily(),
+      },
+
+      {
+        code: "ias12.deferred_tax.compute_draft.daily",
+        name: "Compute IAS12 deferred tax draft (period end)",
+        schedule: { type: "daily_at_utc", dailyHourUtc: 23, dailyMinuteUtc: 55 },
+        handler: async () => computeDeferredTaxDraftDaily(),
+      },
+      {
+        code: "ias12.config.check.daily",
+        name: "Check IAS12 configuration",
+        schedule: { type: "daily_at_utc", dailyHourUtc: 0, dailyMinuteUtc: 15 },
+        handler: async () => checkIas12ConfigDaily(),
       },
     ],
   }).catch(() => {});

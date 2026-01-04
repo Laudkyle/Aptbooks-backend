@@ -129,7 +129,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId }) {
     await client.query("BEGIN");
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
-
+console.log(journalId)
     const { rows: jRows } = await client.query(
       `
       SELECT id, status, period_id, entry_date

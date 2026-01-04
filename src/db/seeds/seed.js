@@ -524,6 +524,32 @@ async function run() {
 ["banking.statements.read", "Read bank statements"],
 ["banking.statements.manage", "Manage bank statements"],
 ["banking.reconciliation.run", "Run bank reconciliation"],
+
+      // Compliance (Tier 8) - IFRS 16 Leases
+      ["compliance.ifrs16.read", "Read IFRS16 leases and schedules"],
+      ["compliance.ifrs16.manage", "Create/update IFRS16 leases and schedules"],
+      ["compliance.ifrs16.post", "Post IFRS16 lease journals"],
+
+      // Compliance (Tier 8) - IAS 12 Income Taxes
+      ["compliance.ias12.read", "Read IAS12 tax authorities, rates, and settings"],
+      ["compliance.ias12.manage", "Manage IAS12 tax authorities, rates, and settings"],
+      ["compliance.ias12.post", "Post IAS12 tax journals"],
+
+      // Reporting (Tier 6)
+      ["reporting.statements.read", "Read and generate financial statements"],
+      ["reporting.kpis.read", "Read KPI definitions and values"],
+      ["reporting.kpis.manage", "Manage KPI definitions"],
+      ["reporting.budgets.read", "Read budgets"],
+      ["reporting.budgets.manage", "Manage budgets and budget lines"],
+      ["reporting.forecasts.read", "Read forecasts"],
+      ["reporting.forecasts.manage", "Manage forecasts and forecast lines"],
+      ["reporting.centers.read", "Read cost/profit/investment centers"],
+      ["reporting.centers.manage", "Manage cost/profit/investment centers"],
+      ["reporting.projects.read", "Read projects"],
+      ["reporting.projects.manage", "Manage projects"],
+      ["reporting.allocations.read", "Read allocation rules and results"],
+      ["reporting.allocations.manage", "Manage allocation bases and rules"],
+      ["reporting.exports.run", "Run report exports"],
 // Optional override
       ["accounting.period.force_close", "Force close period (override checks)"],
     ];

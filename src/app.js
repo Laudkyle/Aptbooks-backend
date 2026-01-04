@@ -20,6 +20,9 @@ const usersRoutes = require("./core/foundation/users/users.routes");
 const settingsRoutes = require("./core/foundation/system-settings/system-settings.routes");
 const accrualRoutes = require("./core/accounting/accruals/accruals.routes");
 
+// Tier 8: Compliance (IFRS/IAS)
+const complianceRoutes = require("./compliance/compliance.routes");
+
 const app = express();
 const swaggerUi = require("swagger-ui-express");
 const { swaggerDocument } = require("./docs/swagger");
@@ -52,6 +55,12 @@ app.use("/modules/transactions", transactionsModuleRoutes);
 app.use("/modules/assets", require("./modules/assets/assets.routes"));
 app.use("/modules/inventory", require("./modules/inventory/inventory.routes"));
 app.use("/modules/banking", require("./modules/banking/banking.routes"));
+
+// Tier 8: Compliance
+app.use("/compliance", complianceRoutes);
+
+// Tier 6: Reporting & Analytics
+app.use("/reporting", require("./reporting/reports.routes"));
 
 
 app.use(errorMiddleware);
