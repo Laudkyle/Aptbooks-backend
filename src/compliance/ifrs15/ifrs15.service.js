@@ -1268,9 +1268,6 @@ async function applyVariableConsideration({ orgId, actorUserId, contractId, payl
 // -------------------------
 // Stage 2: Financing component
 // -------------------------
-// -------------------------
-// Stage 2: Financing component
-// -------------------------
 
 async function setFinancingTerms({ orgId, actorUserId, contractId, payload }) {
   const client = await pool.connect();
