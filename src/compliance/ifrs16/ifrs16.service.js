@@ -40,12 +40,14 @@ function toCurrencyNumber(value, decimals = 2) {
 function calculatePresentValue({
   payment,
   annualDiscountRate,
-  termMonths,
+  periods,
+  paymentsPerYear = 12,
   paymentTiming = 'arrears',
 }) {
   const PMT = toDecimal(payment);
-  const r = toDecimal(annualDiscountRate).div(12); // Monthly rate
-  const n = toDecimal(termMonths);
+  const ppy = toDecimal(paymentsPerYear);
+  const r = toDecimal(annualDiscountRate).div(ppy); // periodic rate
+  const n = toDecimal(periods);
   
   // Handle zero interest rate
   if (r.equals(0)) {
@@ -85,6 +87,43 @@ function addMonths(date, months) {
 
 function toISODate(d) {
   return new Date(d).toISOString().slice(0, 10);
+}
+
+function buildIfrs16IdempotencyKey(parts) {
+  // Keep keys stable, short, and deterministic.
+  // Example: IFRS16:LEASE:<leaseId>:LINE:12:PAY
+  return ['IFRS16', ...parts].join(':');
+}
+
+async function recordLeasePostingLedger({ client, orgId, actorUserId, leaseId, scheduleLineId, modificationId, action, idempotencyKey, journalEntryId }) {
+  // Best-effort: do not block posting if ledger insert conflicts (journal idempotency already protects duplicates).
+  await client.query(
+    `
+    INSERT INTO lease_posting_ledger(
+      organization_id,
+      lease_id,
+      schedule_line_id,
+      modification_id,
+      action,
+      idempotency_key,
+      journal_entry_id,
+      created_by
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (organization_id, idempotency_key) DO NOTHING
+    `,
+    [orgId, leaseId, scheduleLineId || null, modificationId || null, action, idempotencyKey, journalEntryId, actorUserId]
+  );
+}
+
+async function recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType, payload = {} }) {
+  await client.query(
+    `
+    INSERT INTO lease_events(organization_id, lease_id, event_type, event_payload, created_by)
+    VALUES ($1,$2,$3,$4,$5)
+    `,
+    [orgId, leaseId, eventType, payload, actorUserId]
+  );
 }
 
 async function assertLeaseInOrg({ orgId, leaseId }) {
@@ -192,6 +231,9 @@ async function createLease({ orgId, actorUserId, payload }) {
       throw new AppError(400, "Term months must be greater than 0");
     }
 
+    // Force status to draft; activation must occur via initial recognition.
+    const enforcedStatus = 'draft';
+
     const { rows } = await client.query(
       `
       INSERT INTO leases(
@@ -220,7 +262,7 @@ async function createLease({ orgId, actorUserId, payload }) {
         orgId,
         payload.code,
         payload.name,
-        payload.status,
+        enforcedStatus,
         toISODate(payload.commencement_date),
         termMonths.toNumber(),
         paymentAmount.toNumber(),
@@ -236,6 +278,15 @@ async function createLease({ orgId, actorUserId, payload }) {
         actorUserId,
       ]
     );
+
+    await recordLeaseEvent({
+      client,
+      orgId,
+      actorUserId,
+      leaseId: rows[0].id,
+      eventType: "LEASE_CREATED",
+      payload: { code: rows[0].code, commencement_date: rows[0].commencement_date, payments_per_year: rows[0].payments_per_year },
+    });
 
     await client.query("COMMIT");
     return rows[0];
@@ -278,22 +329,44 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
     }
 
     // Convert to Decimal for precise calculations
-    const nPeriods = toDecimal(lease.term_months);
-    const periodicRate = toDecimal(lease.annual_discount_rate).div(12);
+    const termMonths = toDecimal(lease.term_months);
+    const paymentsPerYear = toDecimal(lease.payments_per_year || 12);
+    if (!paymentsPerYear.greaterThan(0) || paymentsPerYear.greaterThan(12)) {
+      throw new AppError(400, "payments_per_year must be between 1 and 12");
+    }
+
+    // Number of payment periods across the term.
+    // term_months is the contract length; payment frequency is derived from payments_per_year.
+    // Example: term_months=12, payments_per_year=4 -> 4 periods (quarterly).
+    const nPeriods = termMonths.times(paymentsPerYear).div(12);
+    if (!nPeriods.isInteger() || !nPeriods.greaterThan(0)) {
+      throw new AppError(400, "Term months and payments_per_year must produce a whole number of periods");
+    }
+
+    const periodicRate = toDecimal(lease.annual_discount_rate).div(paymentsPerYear);
     const payment = toDecimal(lease.payment_amount);
     const timing = lease.payment_timing || "arrears";
+
+    // Months between payments (e.g., quarterly = 3 months)
+    const monthsPerPeriod = new Decimal(12).div(paymentsPerYear);
+    if (!monthsPerPeriod.isInteger()) {
+      throw new AppError(400, "payments_per_year must divide 12 evenly (e.g., 1,2,3,4,6,12)");
+    }
 
     // Calculate present value using Decimal.js
     const initialLiability = calculatePresentValue({
       payment: payment,
       annualDiscountRate: toDecimal(lease.annual_discount_rate),
-      termMonths: nPeriods,
+      periods: nPeriods,
+      paymentsPerYear: paymentsPerYear,
       paymentTiming: timing,
     });
 
     // Store with 6 decimal places for calculation precision
     const preciseLiability = initialLiability.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-    const monthlyDepreciation = preciseLiability.div(nPeriods).toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+    // Depreciate over the number of payment periods (kept consistent with schedule granularity).
+    // If you later add an explicit depreciation frequency, this should be revisited.
+    const periodicDepreciation = preciseLiability.div(nPeriods).toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
 
     // Validate calculations
     if (!preciseLiability.greaterThan(0)) {
@@ -303,18 +376,23 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
     let opening = preciseLiability;
     const startDate = new Date(lease.commencement_date);
 
-    for (let i = 1; i <= nPeriods.toNumber(); i += 1) {
-      const dueDate = timing === "advance" ? addMonths(startDate, i - 1) : addMonths(startDate, i);
+    const totalPeriods = nPeriods.toNumber();
+    for (let i = 1; i <= totalPeriods; i += 1) {
+      const offsetPeriods = timing === "advance" ? (i - 1) : i;
+      const dueDate = addMonths(startDate, monthsPerPeriod.times(offsetPeriods).toNumber());
 
       let interest;
       let principal;
       let closing;
+      let currentPayment = payment;
 
       if (timing === "advance") {
         // Payment at the beginning of the period.
-        principal = payment;
+        // Final-period rounding fix: clear the remaining balance.
+        principal = (i === totalPeriods) ? opening : payment;
         const afterPayment = opening.minus(principal);
-        interest = afterPayment.times(periodicRate);
+        // If we clear balance on final advance payment, there should be no interest.
+        interest = (i === totalPeriods) ? new Decimal(0) : afterPayment.times(periodicRate);
         closing = afterPayment.plus(interest);
       } else {
         // Payment at the end of the period.
@@ -324,16 +402,37 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
         if (principal.lessThan(0)) {
           throw new AppError(400, "Payment amount is too low for the discount rate; schedule would go negative");
         }
-        closing = opening.minus(principal);
+
+        // Final-period rounding fix: clear the remaining balance by adjusting principal (and payment if needed).
+        if (i === totalPeriods) {
+          principal = opening;
+          // Adjust the payment for the last period so that closing balance is exactly zero.
+          // This mirrors real-world amortisation tables where the final payment clears rounding.
+          // If you model actual payments separately (recommended), this is only the theoretical amortisation amount.
+          // paymentRounded is computed later.
+          const adjustedPayment = principal.plus(interest);
+          closing = new Decimal(0);
+          // Override the schedule-line payment so that payment = interest + principal and closing = 0.
+          // This clears any residual rounding difference in the final period.
+          currentPayment = adjustedPayment;
+        } else {
+          closing = opening.minus(principal);
+        }
       }
 
       // Round all amounts to 6 decimal places for storage
       const openingRounded = opening.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-      const paymentRounded = payment.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+      const paymentRounded = currentPayment.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
       const interestRounded = interest.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
       const principalRounded = principal.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
       const closingRounded = closing.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-      const depreciationRounded = monthlyDepreciation.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+      // Depreciation rounding fix: allocate any residual to the final period.
+      let depreciationForPeriod = periodicDepreciation;
+      if (i === totalPeriods) {
+        const prior = periodicDepreciation.times(new Decimal(totalPeriods - 1));
+        depreciationForPeriod = preciseLiability.minus(prior);
+      }
+      const depreciationRounded = depreciationForPeriod.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
 
       await client.query(
         `
@@ -366,6 +465,7 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
       );
 
       opening = closing;
+
     }
 
     // Store derived metrics for reference
@@ -380,18 +480,27 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
       [
         leaseId,
         preciseLiability.toNumber(),  // Store with 6 decimal precision
-        monthlyDepreciation.toNumber(),
+        periodicDepreciation.toNumber(),
         orgId
       ]
     );
+
+    await recordLeaseEvent({
+      client,
+      orgId,
+      actorUserId,
+      leaseId,
+      eventType: "SCHEDULE_GENERATED",
+      payload: { periods: nPeriods.toNumber(), payments_per_year: paymentsPerYear.toNumber(), replaced: !!payload.replace },
+    });
 
     await client.query("COMMIT");
     return {
       lease_id: leaseId,
       initial_lease_liability: toCurrencyNumber(preciseLiability),
       precise_liability: preciseLiability.toNumber(),
-      monthly_depreciation_amount: toCurrencyNumber(monthlyDepreciation),
-      precise_depreciation: monthlyDepreciation.toNumber(),
+      monthly_depreciation_amount: toCurrencyNumber(periodicDepreciation),
+      precise_depreciation: periodicDepreciation.toNumber(),
       lines_created: nPeriods.toNumber(),
       calculation_decimals: 6,
       currency_decimals: 2,
@@ -478,6 +587,8 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           throw new AppError(400, `Schedule line does not balance (interest + principal != payment). Expected ${total}, got ${sum}`);
         }
 
+        const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'LINE', String(line.line_no), 'PAY']);
+
         const postedJournal = await postJournal({
           orgId,
           actorUserId,
@@ -485,6 +596,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
             periodId: period.id,
             entryDate: entryDate,
             memo: `IFRS16 Lease ${lease.code} - payment #${line.line_no}`,
+            idempotencyKey,
             lines: [
               // Dr Interest expense
               {
@@ -520,6 +632,18 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           [line.id, postedJournal.journalId]
         );
 
+        await recordLeasePostingLedger({
+          client,
+          orgId,
+          actorUserId,
+          leaseId,
+          scheduleLineId: line.id,
+          modificationId: null,
+          action: 'interest_payment',
+          idempotencyKey,
+          journalEntryId: postedJournal.journalId,
+        });
+
         journalIds.push(postedJournal.journalId);
         posted += 1;
       }
@@ -528,6 +652,8 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
       if (payload.post_depreciation && !line.posted_depreciation_journal_id) {
         const dep = toDecimal(line.depreciation_amount);
 
+        const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'LINE', String(line.line_no), 'DEP']);
+
         const postedJournal = await postJournal({
           orgId,
           actorUserId,
@@ -535,6 +661,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
             periodId: period.id,
             entryDate: entryDate,
             memo: `IFRS16 Lease ${lease.code} - depreciation #${line.line_no}`,
+            idempotencyKey,
             lines: [
               {
                 accountId: lease.depreciation_expense_account_id,
@@ -561,10 +688,31 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           [line.id, postedJournal.journalId]
         );
 
+        await recordLeasePostingLedger({
+          client,
+          orgId,
+          actorUserId,
+          leaseId,
+          scheduleLineId: line.id,
+          modificationId: null,
+          action: 'depreciation',
+          idempotencyKey,
+          journalEntryId: postedJournal.journalId,
+        });
+
         journalIds.push(postedJournal.journalId);
         posted += 1;
       }
     }
+
+    await recordLeaseEvent({
+      client,
+      orgId,
+      actorUserId,
+      leaseId,
+      eventType: "PERIOD_POSTED",
+      payload: { from_date: from, to_date: to, posted_entries: posted, journal_ids: journalIds },
+    });
 
     await client.query("COMMIT");
     return { posted, journal_ids: journalIds };
@@ -618,7 +766,9 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       };
     }
 
-    const entryDate = payload?.entryDate ? toISODate(payload.entryDate) : toISODate(lease.commencement_date);
+    // Accept both entryDate (camelCase) and entry_date (snake_case) to be compatible with validator/API payloads.
+    const providedEntryDate = payload?.entryDate || payload?.entry_date;
+    const entryDate = providedEntryDate ? toISODate(providedEntryDate) : toISODate(lease.commencement_date);
 
     // Ensure a period is open for the recognition date.
     const period = await findOpenPeriodForDate({ orgId, date: entryDate });
@@ -631,10 +781,18 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       initialLiability = toDecimal(lease.initial_lease_liability);
     } else {
       // Calculate present value using Decimal.js
+      const paymentsPerYear = toDecimal(lease.payments_per_year || 12);
+      const termMonths = toDecimal(lease.term_months);
+      const nPeriods = termMonths.times(paymentsPerYear).div(12);
+      if (!nPeriods.isInteger() || !nPeriods.greaterThan(0)) {
+        throw new AppError(400, "Term months and payments_per_year must produce a whole number of periods");
+      }
+
       initialLiability = calculatePresentValue({
         payment: lease.payment_amount,
         annualDiscountRate: lease.annual_discount_rate,
-        termMonths: lease.term_months,
+        periods: nPeriods,
+        paymentsPerYear: paymentsPerYear,
         paymentTiming: lease.payment_timing || "arrears",
       });
     }
@@ -656,6 +814,8 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
     }
 
     // Post the journal entry
+    const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'INIT']);
+
     const postedJournal = await postJournal({
       orgId,
       actorUserId,
@@ -663,6 +823,7 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
         periodId: period.id,
         entryDate: entryDate,
         memo: payload?.memo || `IFRS16 Lease ${lease.code} - initial recognition`,
+        idempotencyKey,
         lines: [
           {
             accountId: lease.rou_asset_account_id,
@@ -701,6 +862,27 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
         orgId
       ]
     );
+
+    await recordLeasePostingLedger({
+      client,
+      orgId,
+      actorUserId,
+      leaseId,
+      scheduleLineId: null,
+      modificationId: null,
+      action: 'initial_recognition',
+      idempotencyKey,
+      journalEntryId: postedJournal.journalId,
+    });
+
+    await recordLeaseEvent({
+      client,
+      orgId,
+      actorUserId,
+      leaseId,
+      eventType: "INITIAL_RECOGNITION_POSTED",
+      payload: { entry_date: entryDate, journal_id: postedJournal.journalId, amount: journalAmount },
+    });
 
     await client.query("COMMIT");
     
@@ -832,6 +1014,15 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
       `,
       [leaseId, orgId, nextStatus, reason, tsFields.terminated_at, tsFields.closed_at]
     );
+
+    await recordLeaseEvent({
+      client,
+      orgId,
+      actorUserId,
+      leaseId,
+      eventType: "STATUS_CHANGED",
+      payload: { from: current, to: nextStatus, reason, effective_date: effectiveDate },
+    });
 
     await client.query("COMMIT");
     return { changed: true, before: lease, after: afterRows[0] };

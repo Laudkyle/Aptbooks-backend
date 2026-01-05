@@ -80,7 +80,7 @@ test("imports temp differences and produces roll-forward + category breakdown re
     .post("/compliance/ias12/deferred-tax/compute")
     .set("Authorization", `Bearer ${token}`)
     .send({ period_id: periodId, rate_set_id: rateSetId, memo: "test compute" });
-  expect(compute.status).toBe(200);
+  expect(compute.status).toBe(201);
 
   // Roll-forward report
   const roll = await request(app)

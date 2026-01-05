@@ -1,7 +1,13 @@
 -- IAS 12 (Tier 8D) Stage 1: Temporary differences + deferred tax runs + movement-based postings
 
+BEGIN;
+
+-- Ensure UUID generators exist (deployment-safe)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 CREATE TABLE IF NOT EXISTS ias12_temp_difference_categories (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -14,7 +20,7 @@ CREATE TABLE IF NOT EXISTS ias12_temp_difference_categories (
 CREATE INDEX IF NOT EXISTS idx_ias12_tdc_org ON ias12_temp_difference_categories(organization_id);
 
 CREATE TABLE IF NOT EXISTS ias12_temp_differences (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   period_id UUID NOT NULL REFERENCES accounting_periods(id) ON DELETE RESTRICT,
   category_id UUID NOT NULL REFERENCES ias12_temp_difference_categories(id) ON DELETE RESTRICT,
@@ -35,7 +41,7 @@ CREATE INDEX IF NOT EXISTS idx_ias12_td_category ON ias12_temp_differences(categ
 
 -- A compute run is an immutable snapshot of the computed deferred tax based on temp differences + a resolved rate.
 CREATE TABLE IF NOT EXISTS ias12_deferred_tax_runs (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   period_id UUID NOT NULL REFERENCES accounting_periods(id) ON DELETE RESTRICT,
   rate_set_id UUID NOT NULL REFERENCES ias12_tax_rate_sets(id) ON DELETE RESTRICT,
@@ -48,7 +54,7 @@ CREATE TABLE IF NOT EXISTS ias12_deferred_tax_runs (
 CREATE INDEX IF NOT EXISTS idx_ias12_dtr_org_period ON ias12_deferred_tax_runs(organization_id, period_id);
 
 CREATE TABLE IF NOT EXISTS ias12_deferred_tax_run_lines (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   run_id UUID NOT NULL REFERENCES ias12_deferred_tax_runs(id) ON DELETE CASCADE,
   temp_difference_id UUID NOT NULL REFERENCES ias12_temp_differences(id) ON DELETE RESTRICT,
   applied_rate NUMERIC(9,6) NOT NULL,
@@ -87,3 +93,5 @@ CREATE TABLE IF NOT EXISTS ias12_deferred_tax_postings (
   posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (organization_id, period_id)
 );
+
+COMMIT;

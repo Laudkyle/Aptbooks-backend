@@ -220,7 +220,7 @@ async function addRateLine({ orgId, actorUserId, rateSetId, payload }) {
     WHERE rate_set_id=$1
       AND (
         (effective_to IS NULL OR effective_to >= $2)
-        AND ($3 IS NULL OR effective_from <= $3)
+        AND ($3::timestamp IS NULL OR effective_from <= $3)
       )
     LIMIT 1
     `,
@@ -432,11 +432,29 @@ async function listTempDifferences({ orgId, periodId }) {
     FROM ias12_temp_differences td
     JOIN ias12_temp_difference_categories c ON c.id = td.category_id
     WHERE td.organization_id=$1 AND td.period_id=$2
+      AND COALESCE(td.is_active, TRUE) = TRUE
     ORDER BY c.code ASC, td.created_at ASC
     `,
     [orgId, periodId]
   );
   return rows;
+}
+
+async function isTempDifferenceLocked(client, { orgId, tempDifferenceId }) {
+  const { rows } = await client.query(
+    `
+    SELECT 1
+    FROM ias12_deferred_tax_run_lines l
+    JOIN ias12_deferred_tax_runs r ON r.id = l.run_id
+    JOIN ias12_temp_differences td ON td.id = l.temp_difference_id
+    WHERE td.organization_id=$1
+      AND td.id=$2
+      AND COALESCE(r.run_status, r.status) IN ('final','posted')
+    LIMIT 1
+    `,
+    [orgId, tempDifferenceId]
+  );
+  return rows.length > 0;
 }
 
 async function createTempDifference({ orgId, actorUserId, payload }) {
@@ -461,9 +479,10 @@ async function createTempDifference({ orgId, actorUserId, payload }) {
       tax_base,
       recognisable,
       notes,
-      created_by
+      created_by,
+      is_active
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE)
     RETURNING id, period_id, category_id, source_type, source_id, diff_type, carrying_amount, tax_base, recognisable, notes, created_at, updated_at
     `,
     [
@@ -484,11 +503,18 @@ async function createTempDifference({ orgId, actorUserId, payload }) {
 }
 
 async function updateTempDifference({ orgId, actorUserId, tempDifferenceId, payload }) {
-  const { rows: existing } = await pool.query(
-    `SELECT id FROM ias12_temp_differences WHERE organization_id=$1 AND id=$2`,
-    [orgId, tempDifferenceId]
-  );
-  if (!existing.length) throw new AppError(404, "Temp difference not found");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const { rows: existing } = await client.query(
+      `SELECT id, period_id, category_id, source_type, source_id, diff_type, carrying_amount, tax_base, recognisable, notes, COALESCE(is_active, TRUE) AS is_active
+       FROM ias12_temp_differences
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, tempDifferenceId]
+    );
+    if (!existing.length) throw new AppError(404, "Temp difference not found");
+    if (!existing[0].is_active) throw new AppError(409, "Temp difference is inactive");
 
   if (payload.category_id) {
     const { rows: cat } = await pool.query(
@@ -498,47 +524,151 @@ async function updateTempDifference({ orgId, actorUserId, tempDifferenceId, payl
     if (!cat.length) throw new AppError(400, "Invalid category_id");
   }
 
-  const { rows } = await pool.query(
-    `
-    UPDATE ias12_temp_differences
-    SET
-      category_id = COALESCE($3, category_id),
-      source_type = COALESCE($4, source_type),
-      source_id = COALESCE($5, source_id),
-      diff_type = COALESCE($6, diff_type),
-      carrying_amount = COALESCE($7, carrying_amount),
-      tax_base = COALESCE($8, tax_base),
-      recognisable = COALESCE($9, recognisable),
-      notes = COALESCE($10, notes),
-      updated_at = NOW()
-    WHERE organization_id=$1 AND id=$2
-    RETURNING id, period_id, category_id, source_type, source_id, diff_type, carrying_amount, tax_base, recognisable, notes, created_at, updated_at
-    `,
-    [
-      orgId,
-      tempDifferenceId,
-      payload.category_id || null,
-      payload.source_type === undefined ? null : payload.source_type,
-      payload.source_id === undefined ? null : payload.source_id,
-      payload.diff_type || null,
-      payload.carrying_amount === undefined ? null : payload.carrying_amount,
-      payload.tax_base === undefined ? null : payload.tax_base,
-      payload.recognisable === undefined ? null : payload.recognisable,
-      payload.notes === undefined ? null : payload.notes,
-    ]
-  );
-  return rows[0];
+    if (payload.category_id) {
+      const { rows: cat } = await client.query(
+        `SELECT id FROM ias12_temp_difference_categories WHERE organization_id=$1 AND id=$2 AND status='active'`,
+        [orgId, payload.category_id]
+      );
+      if (!cat.length) throw new AppError(400, "Invalid category_id");
+    }
+
+    const locked = await isTempDifferenceLocked(client, { orgId, tempDifferenceId });
+
+    // If this temp difference has been used in a FINAL/POSTED run, preserve auditability by superseding it.
+    if (locked) {
+      const cur = existing[0];
+      const next = {
+        period_id: cur.period_id,
+        category_id: payload.category_id || cur.category_id,
+        source_type: payload.source_type === undefined ? cur.source_type : payload.source_type,
+        source_id: payload.source_id === undefined ? cur.source_id : payload.source_id,
+        diff_type: payload.diff_type || cur.diff_type,
+        carrying_amount: payload.carrying_amount === undefined ? cur.carrying_amount : payload.carrying_amount,
+        tax_base: payload.tax_base === undefined ? cur.tax_base : payload.tax_base,
+        recognisable: payload.recognisable === undefined ? cur.recognisable : payload.recognisable,
+        notes: payload.notes === undefined ? cur.notes : payload.notes,
+      };
+
+      const { rows: inserted } = await client.query(
+        `
+        INSERT INTO ias12_temp_differences(
+          organization_id, period_id, category_id,
+          source_type, source_id, diff_type,
+          carrying_amount, tax_base, recognisable,
+          notes, created_by, is_active
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE)
+        RETURNING id, period_id, category_id, source_type, source_id, diff_type, carrying_amount, tax_base, recognisable, notes, created_at, updated_at
+        `,
+        [
+          orgId,
+          next.period_id,
+          next.category_id,
+          next.source_type || null,
+          next.source_id || null,
+          next.diff_type,
+          next.carrying_amount,
+          next.tax_base,
+          next.recognisable !== false,
+          next.notes || null,
+          actorUserId || null,
+        ]
+      );
+
+      await client.query(
+        `
+        UPDATE ias12_temp_differences
+        SET is_active=FALSE, superseded_at=NOW(), superseded_by=$3, superseded_reason='superseded'
+        WHERE organization_id=$1 AND id=$2
+        `,
+        [orgId, tempDifferenceId, actorUserId || null]
+      );
+
+      await client.query("COMMIT");
+      return { ...inserted[0], superseded: true };
+    }
+
+    const { rows } = await client.query(
+      `
+      UPDATE ias12_temp_differences
+      SET
+        category_id = COALESCE($3, category_id),
+        source_type = COALESCE($4, source_type),
+        source_id = COALESCE($5, source_id),
+        diff_type = COALESCE($6, diff_type),
+        carrying_amount = COALESCE($7, carrying_amount),
+        tax_base = COALESCE($8, tax_base),
+        recognisable = COALESCE($9, recognisable),
+        notes = COALESCE($10, notes),
+        updated_at = NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id, period_id, category_id, source_type, source_id, diff_type, carrying_amount, tax_base, recognisable, notes, created_at, updated_at
+      `,
+      [
+        orgId,
+        tempDifferenceId,
+        payload.category_id || null,
+        payload.source_type === undefined ? null : payload.source_type,
+        payload.source_id === undefined ? null : payload.source_id,
+        payload.diff_type || null,
+        payload.carrying_amount === undefined ? null : payload.carrying_amount,
+        payload.tax_base === undefined ? null : payload.tax_base,
+        payload.recognisable === undefined ? null : payload.recognisable,
+        payload.notes === undefined ? null : payload.notes,
+      ]
+    );
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function deleteTempDifference({ orgId, actorUserId, tempDifferenceId }) {
-  const { rowCount } = await pool.query(
-    `DELETE FROM ias12_temp_differences WHERE organization_id=$1 AND id=$2`,
-    [orgId, tempDifferenceId]
-  );
-  if (!rowCount) throw new AppError(404, "Temp difference not found");
-  return { ok: true };
-}
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: existing } = await client.query(
+      `SELECT id, COALESCE(is_active, TRUE) AS is_active FROM ias12_temp_differences WHERE organization_id=$1 AND id=$2`,
+      [orgId, tempDifferenceId]
+    );
+    if (!existing.length) throw new AppError(404, "Temp difference not found");
+    if (!existing[0].is_active) {
+      await client.query("COMMIT");
+      return { ok: true, idempotent: true };
+    }
 
+    const locked = await isTempDifferenceLocked(client, { orgId, tempDifferenceId });
+    if (locked) {
+      await client.query(
+        `
+        UPDATE ias12_temp_differences
+        SET is_active=FALSE, superseded_at=NOW(), superseded_by=$3, superseded_reason='deleted'
+        WHERE organization_id=$1 AND id=$2
+        `,
+        [orgId, tempDifferenceId, actorUserId || null]
+      );
+      await client.query("COMMIT");
+      return { ok: true, soft_deleted: true };
+    }
+
+    const { rowCount } = await client.query(
+      `DELETE FROM ias12_temp_differences WHERE organization_id=$1 AND id=$2`,
+      [orgId, tempDifferenceId]
+    );
+    if (!rowCount) throw new AppError(404, "Temp difference not found");
+    await client.query("COMMIT");
+    return { ok: true };
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 async function resolveEffectiveRate({ orgId, rateSetId, asOfDate }) {
   // Ensure rate set belongs to org and is active
   const { rows: rs } = await pool.query(
@@ -548,22 +678,52 @@ async function resolveEffectiveRate({ orgId, rateSetId, asOfDate }) {
   if (!rs.length) throw new AppError(400, "Invalid rate_set_id");
   if (rs[0].status !== "active") throw new AppError(409, "Rate set is inactive");
 
+  // Convert to proper date object
+  const queryDate = asOfDate instanceof Date ? asOfDate : new Date(asOfDate);
+  
+  // Use date-only comparison (ignoring time)
+  const dateStr = queryDate.toISOString().split('T')[0];
+  
   const { rows } = await pool.query(
     `
-    SELECT rate
+    SELECT rate, effective_from, effective_to
     FROM ias12_tax_rate_lines
     WHERE rate_set_id=$1
-      AND effective_from <= $2
-      AND (effective_to IS NULL OR effective_to >= $2)
+      AND $2::date >= effective_from
+      AND (effective_to IS NULL OR $2::date <= effective_to)
     ORDER BY effective_from DESC
     LIMIT 1
     `,
-    [rateSetId, asOfDate]
+    [rateSetId, dateStr]
   );
-  if (!rows.length) throw new AppError(409, "No effective tax rate line found for period end date");
+  
+  if (!rows.length) {
+    // Try alternative logic - find the most recent rate that was in effect BEFORE the date
+    const { rows: fallbackRows } = await pool.query(
+      `
+      SELECT rate, effective_from, effective_to
+      FROM ias12_tax_rate_lines
+      WHERE rate_set_id=$1
+        AND effective_from <= $2::date
+      ORDER BY effective_from DESC
+      LIMIT 1
+      `,
+      [rateSetId, dateStr]
+    );
+    
+    if (!fallbackRows.length) {
+      throw new AppError(409, 
+        `No tax rate found for ${dateStr}. The rate set doesn't cover this date. ` +
+        `You may need to add a rate line for periods beyond ${new Date('2027-01-01').toISOString().split('T')[0]}`
+      );
+    }
+    
+    console.log(`Warning: Using rate from ${fallbackRows[0].effective_from} for date ${dateStr}`);
+    return new Decimal(fallbackRows[0].rate);
+  }
+  
   return new Decimal(rows[0].rate);
 }
-
 async function getPriorPeriodId({ orgId, period }) {
   const { rows } = await pool.query(
     `
@@ -704,6 +864,7 @@ async function copyForwardTempDifferences({ orgId, actorUserId, payload }) {
         carrying_amount, tax_base, recognisable, notes, $3
       FROM ias12_temp_differences
       WHERE organization_id=$1 AND period_id=$4
+        AND COALESCE(is_active, TRUE) = TRUE
       RETURNING id
       `,
       [orgId, payload.to_period_id, actorUserId, payload.from_period_id]
@@ -801,6 +962,7 @@ async function getUnrecognisedDtaReport({ orgId, periodId }) {
     FROM ias12_temp_differences td
     JOIN ias12_temp_difference_categories c ON c.id = td.category_id
     WHERE td.organization_id=$1 AND td.period_id=$2
+      AND COALESCE(td.is_active, TRUE) = TRUE
       AND td.diff_type='DEDUCTIBLE'
       AND td.recognisable = false
     ORDER BY c.code, td.id
@@ -811,33 +973,38 @@ async function getUnrecognisedDtaReport({ orgId, periodId }) {
 }
 
 async function computeDeferredTax({ orgId, actorUserId, payload }) {
-  const period = await assertPeriodExists({ orgId, periodId: payload.period_id });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-  // If the period already has an active posted deferred tax journal, require reversal first.
-  const { rows: activePosting } = await pool.query(
-    `SELECT journal_id, status FROM ias12_deferred_tax_postings WHERE organization_id=$1 AND period_id=$2`,
-    [orgId, payload.period_id]
-  );
-  if (activePosting.length && activePosting[0].journal_id && (activePosting[0].status || 'posted') === 'posted') {
-    throw new AppError(409, "Deferred tax is already posted for this period. Reverse before recomputing.");
-  }
+    const period = await assertPeriodExists({ orgId, periodId: payload.period_id });
 
-  const settings = await getSettings({ orgId });
-  const rateSetId = payload.rate_set_id || settings.default_rate_set_id;
-  if (!rateSetId) throw new AppError(409, "No rate_set_id provided and no default_rate_set_id configured");
+    // If the period already has an active posted deferred tax journal, require reversal first.
+    const { rows: activePosting } = await client.query(
+      `SELECT journal_id, status FROM ias12_deferred_tax_postings WHERE organization_id=$1 AND period_id=$2`,
+      [orgId, payload.period_id]
+    );
+    if (activePosting.length && activePosting[0].journal_id && (activePosting[0].status || 'posted') === 'posted') {
+      throw new AppError(409, "Deferred tax is already posted for this period. Reverse before recomputing.");
+    }
 
-  const effectiveRate = await resolveEffectiveRate({ orgId, rateSetId, asOfDate: period.end_date });
-  const rounding = settings.rounding_decimals ?? 2;
+    const settings = await getSettings({ orgId });
+    const rateSetId = payload.rate_set_id || settings.default_rate_set_id;
+    if (!rateSetId) throw new AppError(409, "No rate_set_id provided and no default_rate_set_id configured");
 
-  const { rows: tds } = await pool.query(
-    `
-    SELECT id, diff_type, carrying_amount, tax_base, recognisable
-    FROM ias12_temp_differences
-    WHERE organization_id=$1 AND period_id=$2
-    ORDER BY created_at ASC
-    `,
-    [orgId, payload.period_id]
-  );
+    const effectiveRate = await resolveEffectiveRate({ orgId, rateSetId, asOfDate: period.end_date });
+    const rounding = settings.rounding_decimals ?? 2;
+
+    const { rows: tds } = await client.query(
+      `
+      SELECT id, diff_type, carrying_amount, tax_base, recognisable
+      FROM ias12_temp_differences
+      WHERE organization_id=$1 AND period_id=$2
+        AND COALESCE(is_active, TRUE) = TRUE
+      ORDER BY created_at ASC
+      `,
+      [orgId, payload.period_id]
+    );
 
   // Opening balances:
   // - If a reversal has been performed for this period, we still roll-forward from prior period.
@@ -846,7 +1013,7 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
   let openingDTA = new Decimal(0);
   let openingDTL = new Decimal(0);
   if (prior) {
-    const { rows: b } = await pool.query(
+    const { rows: b } = await client.query(
       `SELECT closing_dta, closing_dtl FROM ias12_deferred_tax_balances WHERE organization_id=$1 AND period_id=$2`,
       [orgId, prior.id]
     );
@@ -880,7 +1047,7 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
     )
     .digest("hex");
 
-  const runId = (await pool.query(
+  const runId = (await client.query(
     `
     INSERT INTO ias12_deferred_tax_runs(
       organization_id, period_id, rate_set_id, effective_rate,
@@ -909,14 +1076,14 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
     if (td.diff_type === "DEDUCTIBLE") closingDTA = closingDTA.plus(taxRounded);
     else closingDTL = closingDTL.plus(taxRounded);
 
-    await pool.query(
+    await client.query(
       `
       INSERT INTO ias12_deferred_tax_run_lines(
         run_id, temp_difference_id, applied_rate, computed_tax_amount, diff_type, recognisable
       )
       VALUES ($1,$2,$3,$4,$5,$6)
       `,
-      [runId, td.id, effectiveRate.toFixed(6), taxRounded.toFixed(2), td.diff_type, recognisable]
+      [runId, td.id, effectiveRate.toFixed(6), taxRounded.toFixed(rounding), td.diff_type, recognisable]
     );
   }
 
@@ -924,7 +1091,7 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
   const movementDTL = closingDTL.minus(openingDTL);
   const deferredTaxExpense = movementDTL.minus(movementDTA);
 
-  await pool.query(
+  await client.query(
     `
     INSERT INTO ias12_deferred_tax_balances(
       organization_id, period_id, run_id,
@@ -948,26 +1115,33 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
       orgId,
       payload.period_id,
       runId,
-      openingDTA.toFixed(2),
-      openingDTL.toFixed(2),
-      closingDTA.toFixed(2),
-      closingDTL.toFixed(2),
-      movementDTA.toFixed(2),
-      movementDTL.toFixed(2),
-      deferredTaxExpense.toFixed(2),
+      openingDTA.toFixed(rounding),
+      openingDTL.toFixed(rounding),
+      closingDTA.toFixed(rounding),
+      closingDTL.toFixed(rounding),
+      movementDTA.toFixed(rounding),
+      movementDTL.toFixed(rounding),
+      deferredTaxExpense.toFixed(rounding),
     ]
   );
 
-  return {
-    run_id: runId,
-    period_id: payload.period_id,
-    rate_set_id: rateSetId,
-    effective_rate: effectiveRate.toFixed(6),
-    opening: { dta: openingDTA.toFixed(2), dtl: openingDTL.toFixed(2) },
-    closing: { dta: closingDTA.toFixed(2), dtl: closingDTL.toFixed(2) },
-    movement: { dta: movementDTA.toFixed(2), dtl: movementDTL.toFixed(2) },
-    deferred_tax_expense: deferredTaxExpense.toFixed(2),
-  };
+    await client.query("COMMIT");
+    return {
+      run_id: runId,
+      period_id: payload.period_id,
+      rate_set_id: rateSetId,
+      effective_rate: effectiveRate.toFixed(6),
+      opening: { dta: openingDTA.toFixed(rounding), dtl: openingDTL.toFixed(rounding) },
+      closing: { dta: closingDTA.toFixed(rounding), dtl: closingDTL.toFixed(rounding) },
+      movement: { dta: movementDTA.toFixed(rounding), dtl: movementDTL.toFixed(rounding) },
+      deferred_tax_expense: deferredTaxExpense.toFixed(rounding),
+    };
+  } catch (err) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function finalizeDeferredTaxRun({ orgId, actorUserId, runId }) {

@@ -30,8 +30,6 @@ const createLease = z.object({
   depreciation_expense_account_id: uuid,
   accumulated_depreciation_account_id: uuid,
   cash_account_id: uuid,
-
-  status: z.enum(["draft", "active", "terminated", "closed"]).optional().default("draft"),
 });
 
 const generateSchedule = z.object({

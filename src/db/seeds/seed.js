@@ -530,6 +530,11 @@ async function run() {
       ["compliance.ifrs16.manage", "Create/update IFRS16 leases and schedules"],
       ["compliance.ifrs16.post", "Post IFRS16 lease journals"],
 
+      // Compliance (Tier 8) - IFRS 15 Revenue
+      ["compliance.ifrs15.read", "Read IFRS15 contracts, obligations, and schedules"],
+      ["compliance.ifrs15.manage", "Manage IFRS15 contracts, obligations, and schedules"],
+      ["compliance.ifrs15.post", "Post IFRS15 revenue journals"],
+
       // Compliance (Tier 8) - IAS 12 Income Taxes
       ["compliance.ias12.read", "Read IAS12 tax authorities, rates, and settings"],
       ["compliance.ias12.manage", "Manage IAS12 tax authorities, rates, and settings"],
