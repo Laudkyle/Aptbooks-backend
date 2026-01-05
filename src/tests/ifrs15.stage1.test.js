@@ -7,6 +7,7 @@ let orgId;
 let p1;
 let p2;
 let accounts;
+let customerBpId;
 
 beforeAll(async () => {
   const login = await request(app).post("/auth/login").send({
@@ -44,6 +45,10 @@ beforeAll(async () => {
     [orgId]
   );
   accounts = rows.map(r => r.id);
+
+  const bp = await pool.query(`SELECT id FROM business_partners WHERE organization_id=$1 AND type='customer' AND status='active' ORDER BY created_at ASC LIMIT 1`, [orgId]);
+  customerBpId = bp.rows[0]?.id;
+  if (!customerBpId) throw new Error("No customer business_partner found for tests");
 });
 
 afterAll(async () => {
@@ -76,6 +81,7 @@ test("IFRS15 Stage 1: contract -> obligations -> activate (upfront bill) -> sche
     .set("Authorization", `Bearer ${token}`)
     .send({
       code: "C-IFRS15-001",
+      business_partner_id: customerBpId,
       contract_date: "2026-01-01",
       transaction_price: 12000,
       billing_policy: "UPFRONT",

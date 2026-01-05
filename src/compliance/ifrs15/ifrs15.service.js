@@ -33,8 +33,6 @@ function overlapDays(aStart, aEnd, bStart, bEnd) {
 }
 
 async function getSettings(client, orgId) {
-  console.log(`Debug: Getting IFRS15 settings for orgId: ${orgId}`);
-  
   const { rows } = await client.query(
     `SELECT organization_id, revenue_account_id, contract_asset_account_id, contract_liability_account_id,
             default_billing_account_id, rounding_decimals
@@ -42,17 +40,9 @@ async function getSettings(client, orgId) {
      WHERE organization_id=$1`,
     [orgId]
   );
-  
-  console.log(`Debug: Found ${rows.length} rows`);
-  if (rows.length > 0) {
-    console.log('Debug: Row data:', rows[0]);
-    console.log('Debug: revenue_account_id:', rows[0].revenue_account_id);
-    console.log('Debug: contract_asset_account_id:', rows[0].contract_asset_account_id);
-    console.log('Debug: contract_liability_account_id:', rows[0].contract_liability_account_id);
-  }
-  
   return rows[0] || null;
 }
+
 
 async function getSettingsOrThrow(client, orgId) {
 
@@ -64,6 +54,19 @@ async function getSettingsOrThrow(client, orgId) {
   return s;
 }
 
+
+async function getCustomerBusinessPartnerOrThrow(client, orgId, businessPartnerId) {
+  const { rows } = await client.query(
+    `SELECT id, type, status
+     FROM business_partners
+     WHERE organization_id=$1 AND id=$2`,
+    [orgId, businessPartnerId]
+  );
+  if (!rows.length) throw new AppError(404, "Business partner not found");
+  if (rows[0].type !== 'customer') throw new AppError(409, "Business partner must be of type 'customer'");
+  if (rows[0].status !== 'active') throw new AppError(409, "Business partner is not active");
+  return rows[0];
+}
 async function getContractOrThrow(client, orgId, contractId) {
   const { rows } = await client.query(
     `SELECT * FROM ifrs15_contracts WHERE organization_id=$1 AND id=$2`,
@@ -195,7 +198,7 @@ async function upsertSettings({ orgId, actorUserId, payload }) {
         payload.revenue_account_id,
         payload.contract_asset_account_id,
         payload.contract_liability_account_id,
-        payload.default_billing_account_id || null,
+        (payload.default_billing_account_id || payload.billing_account_id || null),
         payload.rounding_decimals ?? 2,
       ]
     );
@@ -239,6 +242,11 @@ async function createContract({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
+    const businessPartnerId = payload.business_partner_id || payload.customer_id;
+    if (!businessPartnerId) throw new AppError(400, "business_partner_id is required");
+    await getCustomerBusinessPartnerOrThrow(client, orgId, businessPartnerId);
+
+
     // If billing_account_id is omitted, allow settings default later.
     const { rows } = await client.query(
       `INSERT INTO ifrs15_contracts(
@@ -249,7 +257,7 @@ async function createContract({ orgId, actorUserId, payload }) {
        RETURNING *`,
       [
         orgId,
-        payload.business_partner_id || payload.customer_id || null,
+        businessPartnerId,
         payload.code,
         asDateOnly(payload.contract_date),
         payload.currency_code || null,
@@ -1152,7 +1160,6 @@ async function approveVariableConsideration({ orgId, actorUserId, contractId, va
     await getContractOrThrow(client, orgId, contractId);
 
     const vc = await getVariableConsiderationOrThrow(client, orgId, contractId, variableConsiderationId);
-    console.log(vc)
     if (vc.status === "APPROVED") throw new AppError(409, "Already approved");
 
     // IFRS 15 constraint governance gate.

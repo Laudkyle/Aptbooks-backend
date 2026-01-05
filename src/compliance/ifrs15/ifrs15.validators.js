@@ -9,6 +9,8 @@ const upsertSettings = z.object({
   contract_asset_account_id: uuid,
   contract_liability_account_id: uuid,
   default_billing_account_id: uuid.optional(),
+  // Alias for compatibility with clients that send billing_account_id
+  billing_account_id: uuid.optional(),
   financing_interest_income_account_id: uuid.optional(),
   financing_interest_expense_account_id: uuid.optional(),
   default_cost_asset_account_id: uuid.optional(),
