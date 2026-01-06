@@ -535,6 +535,11 @@ async function run() {
       ["compliance.ifrs15.manage", "Manage IFRS15 contracts, obligations, and schedules"],
       ["compliance.ifrs15.post", "Post IFRS15 revenue journals"],
 
+      // Compliance (Tier 8) - IFRS 9 Financial Instruments (Stage 1: Simplified ECL)
+      ["compliance.ifrs9.read", "Read IFRS9 ECL models, runs, and reports"],
+      ["compliance.ifrs9.manage", "Manage IFRS9 ECL models, buckets, and runs"],
+      ["compliance.ifrs9.post", "Post IFRS9 impairment journals"],
+
       // Compliance (Tier 8) - IAS 12 Income Taxes
       ["compliance.ias12.read", "Read IAS12 tax authorities, rates, and settings"],
       ["compliance.ias12.manage", "Manage IAS12 tax authorities, rates, and settings"],

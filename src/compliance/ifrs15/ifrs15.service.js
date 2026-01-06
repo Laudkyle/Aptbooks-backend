@@ -396,7 +396,7 @@ async function activateContract({ orgId, actorUserId, contractId, payload }) {
       const ratioStored = new Decimal(o.standalone_selling_price).div(totalSSP).toFixed(12);
       await client.query(
         `UPDATE ifrs15_performance_obligations
-         SET allocation_ratio=$2, allocated_amount=$3, updated_at=NOW()
+         SET allocated_ratio=$2, allocated_amount=$3, updated_at=NOW()
          WHERE id=$1 AND contract_id=$4`,
         [o.id, ratioStored, alloc.toFixed(6), contractId]
       );

@@ -23,4 +23,7 @@ router.use("/ifrs15", require("./ifrs15/ifrs15.routes"));
 // IAS 12: Income Taxes
 router.use("/ias12", require("./ias12/ias12.routes"));
 
+// IFRS 9: Financial Instruments (Stage 1: Simplified ECL for trade receivables)
+router.use("/ifrs9", require("./ifrs9/ifrs9.routes"));
+
 module.exports = router;
