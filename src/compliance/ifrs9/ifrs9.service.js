@@ -167,7 +167,6 @@ async function getIfrs9Settings({ orgId }) {
 
 async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
-  console.log(payload)
   try {
     await client.query("BEGIN");
 
@@ -458,28 +457,43 @@ async function computeEcl({ orgId, actorUserId, payload }) {
     const asOfDate = parseAsOfDate(period, payload.as_of_date);
 
     // Build exposures from:
-    //  (1) Trade receivables (issued invoices)
+    //  (1) Trade receivables (invoices) net of posted customer receipt allocations
     //  (2) IFRS 15 contract assets (recognized-but-unbilled amounts)
     //
     // Notes:
-    // - This codebase currently does not model partial customer receipts/allocations.
-    //   Therefore, invoices are treated as fully outstanding while status='issued'.
+    // - For trade receivables, exposure is computed as:
+    //     invoice.total - SUM(posted customer receipt allocations as-of asOfDate)
+    //   (floored at 0).
     // - Contract assets are treated as due as of their recognition_date (conservative).
 
     const { rows: invRows } = await client.query(
       `
       SELECT
-        id,
-        customer_id,
-        invoice_no AS doc_no,
-        invoice_date AS doc_date,
-        due_date,
-        total AS amount,
+        i.id,
+        i.customer_id,
+        i.invoice_no AS doc_no,
+        i.invoice_date AS doc_date,
+        i.due_date,
+        GREATEST(
+          0,
+          COALESCE(i.total, 0) - COALESCE(SUM(a.amount_applied) FILTER (WHERE r.status = 'posted'), 0)
+        ) AS amount,
         'INVOICE'::text AS source_type
-      FROM invoices
-      WHERE organization_id=$1
-        AND status='issued'
-        AND invoice_date <= $2::date
+      FROM invoices i
+      LEFT JOIN customer_receipt_allocations a
+        ON a.invoice_id = i.id
+      LEFT JOIN customer_receipts r
+        ON r.id = a.customer_receipt_id
+       AND r.organization_id = i.organization_id
+       AND r.receipt_date <= $2::date
+      WHERE i.organization_id=$1
+        AND i.status='issued'
+        AND i.invoice_date <= $2::date
+      GROUP BY i.id, i.customer_id, i.invoice_no, i.invoice_date, i.due_date, i.total
+      HAVING GREATEST(
+          0,
+          COALESCE(i.total, 0) - COALESCE(SUM(a.amount_applied) FILTER (WHERE r.status = 'posted'), 0)
+        ) > 0
       `,
       [orgId, asOfDate]
     );
@@ -645,7 +659,6 @@ async function computeEcl({ orgId, actorUserId, payload }) {
         actorUserId
       ]
     );
-
     for (const l of computedLines) {
       await client.query(
         `

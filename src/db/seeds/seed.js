@@ -497,6 +497,12 @@ async function run() {
       ["transactions.vendor_payment.manage", "Create vendor payments"],
       ["transactions.vendor_payment.post", "Post vendor payments"],
       ["transactions.vendor_payment.void", "Void vendor payments"],
+
+      // Tier 3 (Customer receipts)
+      ["transactions.customer_receipt.read", "Read customer receipts"],
+      ["transactions.customer_receipt.manage", "Create customer receipts"],
+      ["transactions.customer_receipt.post", "Post customer receipts"],
+      ["transactions.customer_receipt.void", "Void customer receipts"],
       // Assets (Tier 4)
       ["assets.categories.read", "Read asset categories"],
       ["assets.categories.manage", "Manage asset categories"],

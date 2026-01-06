@@ -45,6 +45,29 @@ const voidVendorPaymentSchema = z.object({
   reason: z.string().min(2)
 });
 
+/** =========================
+ * Customer Receipts (partial allocations)
+ * ========================= */
+
+const customerReceiptAllocationSchema = z.object({
+  invoiceId: z.string().uuid(),
+  amountApplied: z.number().positive()
+});
+
+const createCustomerReceiptSchema = z.object({
+  customerId: z.string().uuid(),
+  receiptDate: z.string().min(8), // YYYY-MM-DD
+  paymentMethodId: z.string().uuid().optional().nullable(),
+  cashAccountId: z.string().uuid(),
+  amountTotal: z.number().nonnegative(),
+  memo: z.string().optional().nullable(),
+  allocations: z.array(customerReceiptAllocationSchema).min(1)
+});
+
+const voidCustomerReceiptSchema = z.object({
+  reason: z.string().min(2)
+});
+
 module.exports = {
   // bills
   createBillSchema,
@@ -52,5 +75,9 @@ module.exports = {
 
   // vendor payments
   createVendorPaymentSchema,
-  voidVendorPaymentSchema
+  voidVendorPaymentSchema,
+
+  // customer receipts
+  createCustomerReceiptSchema,
+  voidCustomerReceiptSchema
 };
