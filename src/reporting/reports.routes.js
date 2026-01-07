@@ -20,6 +20,8 @@ router.use("/forecasts", require("./forecasts/forecasts.routes"));
 router.use("/centers", require("./dimensions/centers.routes"));
 router.use("/projects", require("./dimensions/projects.routes"));
 router.use("/allocations", require("./allocations/allocations.routes"));
+router.use("/tax", require("./tax/tax.routes"));
+router.use("/audit", require("./audit/audit.routes"));
 router.use("/exports", require("./exports/exports.routes"));
 
 module.exports = router;

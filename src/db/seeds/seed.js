@@ -566,11 +566,14 @@ async function run() {
       ["reporting.allocations.read", "Read allocation rules and results"],
       ["reporting.allocations.manage", "Manage allocation bases and rules"],
       ["reporting.exports.run", "Run report exports"],
-
+      
       // Reporting - Operational reports
       ["reporting.ar.read", "Read accounts receivable reports"],
       ["reporting.ap.read", "Read accounts payable reports"],
       ["reporting.banking.read", "Read banking reconciliation reports"],
+      ["reporting.audit.read", "Run audit exports"],
+      ["reporting.tax.read", "Read tax reports"],
+      
       ["reporting.inventory.read", "Read inventory reports"],
 // Optional override
       ["accounting.period.force_close", "Force close period (override checks)"],
