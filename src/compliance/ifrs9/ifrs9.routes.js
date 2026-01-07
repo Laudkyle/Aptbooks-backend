@@ -239,4 +239,38 @@ router.post(
   }
 );
 
+// --------------------------------------
+// Reports (Disclosures)
+// --------------------------------------
+
+router.get(
+  "/reports/allowance-movement",
+  requirePermission("compliance.ifrs9.read"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const periodId = req.query.period_id;
+      const out = await svc.getAllowanceMovementReport({ orgId, periodId });
+      res.json(out);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+router.get(
+  "/reports/disclosures",
+  requirePermission("compliance.ifrs9.read"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const runId = req.query.run_id;
+      const out = await svc.getDisclosuresReport({ orgId, runId });
+      res.json(out);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
 module.exports = router;

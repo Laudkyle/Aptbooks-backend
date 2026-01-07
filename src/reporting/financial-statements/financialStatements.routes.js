@@ -20,8 +20,8 @@ router.get("/trial-balance", async (req, res, next) => {
 router.get("/income-statement", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
-    const { periodId } = req.query;
-    const data = await svc.incomeStatement({ orgId, periodId });
+    const { periodId, comparePeriodId, mode } = req.query;
+    const data = await svc.incomeStatement({ orgId, periodId, comparePeriodId, mode });
     res.json({ data });
   } catch (err) {
     next(err);
@@ -31,8 +31,30 @@ router.get("/income-statement", async (req, res, next) => {
 router.get("/balance-sheet", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
-    const { periodId } = req.query;
-    const data = await svc.balanceSheet({ orgId, periodId });
+    const { periodId, comparePeriodId } = req.query;
+    const data = await svc.balanceSheet({ orgId, periodId, comparePeriodId });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/cash-flow", async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { periodId, comparePeriodId } = req.query;
+    const data = await svc.cashFlowStatement({ orgId, periodId, comparePeriodId });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/changes-in-equity", async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { periodId, comparePeriodId } = req.query;
+    const data = await svc.changesInEquityStatement({ orgId, periodId, comparePeriodId });
     res.json({ data });
   } catch (err) {
     next(err);
@@ -42,8 +64,8 @@ router.get("/balance-sheet", async (req, res, next) => {
 router.post("/generate", async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
-    const { periodId, statementType } = req.body;
-    const created = await svc.generateAndPersist({ orgId, periodId, statementType, actorUserId, req });
+    const { periodId, statementType, comparePeriodId, mode } = req.body;
+    const created = await svc.generateAndPersist({ orgId, periodId, statementType, comparePeriodId, mode, actorUserId, req });
     res.status(201).json({ data: created });
   } catch (err) {
     next(err);

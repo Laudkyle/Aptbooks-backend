@@ -10,6 +10,10 @@ router.use(
   "/financial-statements",
   require("./financial-statements/financialStatements.routes")
 );
+router.use("/ar", require("./ar/ar.routes"));
+router.use("/ap", require("./ap/ap.routes"));
+router.use("/banking", require("./banking/banking.routes"));
+router.use("/inventory", require("./inventory/inventory.routes"));
 router.use("/kpis", require("./kpis/kpis.routes"));
 router.use("/budgets", require("./budgets/budgets.routes"));
 router.use("/forecasts", require("./forecasts/forecasts.routes"));

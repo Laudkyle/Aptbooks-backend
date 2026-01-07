@@ -167,6 +167,7 @@ async function getIfrs9Settings({ orgId }) {
 
 async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
+  console.log(payload)
   try {
     await client.query("BEGIN");
 
@@ -659,6 +660,7 @@ async function computeEcl({ orgId, actorUserId, payload }) {
         actorUserId
       ]
     );
+
     for (const l of computedLines) {
       await client.query(
         `
@@ -911,6 +913,200 @@ async function reverseEclPosting({ orgId, actorUserId, payload }) {
   }
 }
 
+// --------------------------------------
+// Reports
+// --------------------------------------
+
+async function getAllowanceMovementReport({ orgId, periodId }) {
+  if (!periodId) throw new AppError(400, "period_id is required");
+  const client = await pool.connect();
+  try {
+    const period = await getPeriodOrThrow(client, orgId, periodId);
+
+    // Opening allowance: last posted run before this period starts (by posted_at)
+    const { rows: openingRows } = await client.query(
+      `
+      SELECT total_ecl, posted_at, id
+      FROM ifrs9_ecl_runs
+      WHERE organization_id=$1
+        AND status='posted'
+        AND posted_at < ($2::date::timestamptz)
+      ORDER BY posted_at DESC
+      LIMIT 1
+      `,
+      [orgId, period.start_date]
+    );
+    const openingAllowance = openingRows.length ? Number(openingRows[0].total_ecl) : 0;
+
+    // Posted runs in the target period
+    const { rows: runRows } = await client.query(
+      `
+      SELECT id, as_of_date, approach, status,
+             total_exposure, total_ecl, prior_posted_ecl, delta_allowance,
+             posted_at, journal_entry_id,
+             reversal_journal_entry_id, reversed_at
+      FROM ifrs9_ecl_runs
+      WHERE organization_id=$1
+        AND period_id=$2
+        AND status IN ('posted','reversed')
+      ORDER BY posted_at ASC NULLS LAST, created_at ASC
+      `,
+      [orgId, periodId]
+    );
+
+    // Movement should only consider active posted runs (exclude reversed)
+    const effectiveRuns = runRows.filter((r) => r.status === "posted" && !r.reversed_at);
+
+    const additions = effectiveRuns
+      .map((r) => Number(r.delta_allowance))
+      .filter((d) => d > 0)
+      .reduce((a, b) => a + b, 0);
+
+    const releases = effectiveRuns
+      .map((r) => Number(r.delta_allowance))
+      .filter((d) => d < 0)
+      .reduce((a, b) => a + Math.abs(b), 0);
+
+    const netMovement = additions - releases;
+    const closingAllowance = openingAllowance + netMovement;
+
+    return {
+      period: {
+        id: period.id,
+        start_date: period.start_date,
+        end_date: period.end_date,
+        status: period.status
+      },
+      opening_allowance: openingAllowance,
+      additions,
+      releases,
+      net_movement: netMovement,
+      closing_allowance: closingAllowance,
+      runs: effectiveRuns.map((r) => ({
+        id: r.id,
+        as_of_date: r.as_of_date,
+        approach: r.approach,
+        total_exposure: Number(r.total_exposure),
+        total_ecl: Number(r.total_ecl),
+        prior_posted_ecl: Number(r.prior_posted_ecl),
+        delta_allowance: Number(r.delta_allowance),
+        posted_at: r.posted_at,
+        journal_entry_id: r.journal_entry_id
+      }))
+    };
+  } finally {
+    client.release();
+  }
+}
+
+async function getDisclosuresReport({ orgId, runId }) {
+  if (!runId) throw new AppError(400, "run_id is required");
+  const client = await pool.connect();
+  try {
+    const { rows: runRows } = await client.query(
+      `SELECT * FROM ifrs9_ecl_runs WHERE organization_id=$1 AND id=$2`,
+      [orgId, runId]
+    );
+    if (!runRows.length) throw new AppError(404, "Run not found");
+    const run = runRows[0];
+
+    const { rows: byStage } = await client.query(
+      `
+      SELECT COALESCE(stage, 1) AS stage,
+             COUNT(*)::INT AS line_count,
+             COALESCE(SUM(invoice_count),0)::INT AS invoice_count,
+             COALESCE(SUM(contract_asset_count),0)::INT AS contract_asset_count,
+             COALESCE(SUM(exposure_amount),0) AS exposure_amount,
+             COALESCE(SUM(ecl_amount),0) AS ecl_amount
+      FROM ifrs9_ecl_run_lines
+      WHERE run_id=$1
+      GROUP BY COALESCE(stage, 1)
+      ORDER BY stage
+      `,
+      [runId]
+    );
+
+    const { rows: byBucket } = await client.query(
+      `
+      SELECT bucket_label,
+             COALESCE(SUM(invoice_count),0)::INT AS invoice_count,
+             COALESCE(SUM(contract_asset_count),0)::INT AS contract_asset_count,
+             COALESCE(SUM(exposure_amount),0) AS exposure_amount,
+             COALESCE(SUM(ecl_amount),0) AS ecl_amount
+      FROM ifrs9_ecl_run_lines
+      WHERE run_id=$1
+        AND bucket_id IS NOT NULL
+      GROUP BY bucket_label
+      ORDER BY MIN(days_past_due_from) ASC
+      `,
+      [runId]
+    );
+
+    const { rows: topCounterparties } = await client.query(
+      `
+      SELECT rl.customer_id,
+             bp.name AS customer_name,
+             COALESCE(SUM(rl.exposure_amount),0) AS exposure_amount,
+             COALESCE(SUM(rl.ecl_amount),0) AS ecl_amount,
+             COALESCE(SUM(rl.invoice_count),0)::INT AS invoice_count,
+             COALESCE(SUM(rl.contract_asset_count),0)::INT AS contract_asset_count
+      FROM ifrs9_ecl_run_lines rl
+      JOIN business_partners bp ON bp.id = rl.customer_id
+      WHERE rl.run_id=$1
+      GROUP BY rl.customer_id, bp.name
+      ORDER BY exposure_amount DESC
+      LIMIT 10
+      `,
+      [runId]
+    );
+
+    return {
+      run: {
+        id: run.id,
+        period_id: run.period_id,
+        model_id: run.model_id,
+        approach: run.approach,
+        as_of_date: run.as_of_date,
+        status: run.status,
+        total_exposure: Number(run.total_exposure),
+        total_ecl: Number(run.total_ecl),
+        prior_posted_ecl: Number(run.prior_posted_ecl),
+        delta_allowance: Number(run.delta_allowance),
+        memo: run.memo,
+        posted_at: run.posted_at,
+        journal_entry_id: run.journal_entry_id
+      },
+      breakdown: {
+        by_stage: byStage.map((r) => ({
+          stage: Number(r.stage),
+          line_count: Number(r.line_count),
+          invoice_count: Number(r.invoice_count),
+          contract_asset_count: Number(r.contract_asset_count),
+          exposure_amount: Number(r.exposure_amount),
+          ecl_amount: Number(r.ecl_amount)
+        })),
+        by_bucket: byBucket.map((r) => ({
+          bucket_label: r.bucket_label,
+          invoice_count: Number(r.invoice_count),
+          contract_asset_count: Number(r.contract_asset_count),
+          exposure_amount: Number(r.exposure_amount),
+          ecl_amount: Number(r.ecl_amount)
+        })),
+        top_counterparties: topCounterparties.map((r) => ({
+          customer_id: r.customer_id,
+          customer_name: r.customer_name,
+          exposure_amount: Number(r.exposure_amount),
+          ecl_amount: Number(r.ecl_amount),
+          invoice_count: Number(r.invoice_count),
+          contract_asset_count: Number(r.contract_asset_count)
+        }))
+      }
+    };
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   getIfrs9Settings,
   upsertIfrs9Settings,
@@ -925,5 +1121,7 @@ module.exports = {
   listRuns,
   finalizeRun,
   postEcl,
-  reverseEclPosting
+  reverseEclPosting,
+  getAllowanceMovementReport,
+  getDisclosuresReport
 };
