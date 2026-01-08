@@ -17,7 +17,7 @@ const {
   createDocumentTypeSchema,
   createApprovalLevelSchema,
   setDocumentTypeApprovalLevelsSchema
-} = require("./documents.validators");
+} = require("../../shared/validators/documents.validators");
 
 router.use(authRequired);
 
