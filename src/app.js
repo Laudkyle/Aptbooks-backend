@@ -20,6 +20,9 @@ const usersRoutes = require("./core/foundation/users/users.routes");
 const settingsRoutes = require("./core/foundation/system-settings/system-settings.routes");
 const accrualRoutes = require("./core/accounting/accruals/accruals.routes");
 
+// Tier 10: Documents & Workflow
+const documentsWorkflowRoutes = require("./workflow/documents/documents.routes");
+
 // Tier 8: Compliance (IFRS/IAS)
 const complianceRoutes = require("./compliance/compliance.routes");
 
@@ -61,6 +64,9 @@ app.use("/compliance", complianceRoutes);
 
 // Tier 6: Reporting & Analytics
 app.use("/reporting", require("./reporting/reports.routes"));
+
+// Tier 10: Documents & Workflow
+app.use("/workflow/documents", documentsWorkflowRoutes);
 
 
 app.use(errorMiddleware);
