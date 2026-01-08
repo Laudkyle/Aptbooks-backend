@@ -7,6 +7,7 @@ const { validate } = require("../../shared/validators/validate");
 const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { env } = require("../../config/env");
+const entityResolver = require("../../interfaces/entityResolver.interface");
 
 const svc = require("./documents.service");
 const {
@@ -20,6 +21,11 @@ const {
 } = require("../../shared/validators/documents.validators");
 
 router.use(authRequired);
+
+// Supported entity types for document linking (informational)
+router.get("/entity-types", requirePermission("documents.read"), async (req, res) => {
+  res.json({ supported: entityResolver.listSupportedEntityTypes() });
+});
 
 // -----------------------------------------------------------------------------
 // Configuration (org-scoped)

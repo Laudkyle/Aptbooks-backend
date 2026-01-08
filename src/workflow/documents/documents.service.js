@@ -3,6 +3,7 @@ const { AppError } = require("../../shared/errors/AppError");
 const { env } = require("../../config/env");
 const repo = require("./documents.repository");
 const storage = require("./documentStorage.local");
+const entityResolver = require("../../interfaces/entityResolver.interface");
 
 function safeFilename(name) {
   // prevent path traversal; keep only basename
@@ -14,7 +15,24 @@ function buildRelPath({ orgId, documentId, versionId, filename }) {
 }
 
 async function createDocument({ orgId, userId, payload }) {
-  return repo.createDocument({ orgId, userId, payload });
+  // Validate entity references via interface (do not query other module tables here)
+  const resolution = await entityResolver.resolveEntity({
+    orgId,
+    entityType: payload.entity_type,
+    entityId: payload.entity_id
+  });
+
+  if (!resolution.exists) {
+    throw new AppError(400, "Invalid entity reference (entity_type/entity_id)");
+  }
+
+  // If caller did not provide an entity_ref, fill from resolver when available
+  const enriched = {
+    ...payload,
+    entity_ref: payload.entity_ref || resolution.entity_ref || null
+  };
+
+  return repo.createDocument({ orgId, userId, payload: enriched });
 }
 
 async function listDocuments({ orgId, query }) {

@@ -17,7 +17,12 @@ const env = {
   // Root directory for local filesystem storage.
   // In production this should point to a persistent volume.
   FILE_STORAGE_ROOT: process.env.FILE_STORAGE_ROOT || "storage",
-  FILE_UPLOAD_MAX_MB: parseInt(process.env.FILE_UPLOAD_MAX_MB || "50", 10)
+  FILE_UPLOAD_MAX_MB: parseInt(process.env.FILE_UPLOAD_MAX_MB || "50", 10),
+
+  // Tier 10: Entity reference validation
+  // When true, documents must link to a known entity_type and a real entity record.
+  // When false, unknown entity_type values are allowed (no validation), but known types are validated.
+  ENTITY_RESOLVER_STRICT: (process.env.ENTITY_RESOLVER_STRICT || "false").toLowerCase() === "true"
 };
 
 module.exports = { env };
