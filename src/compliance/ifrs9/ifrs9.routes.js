@@ -4,7 +4,7 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 const { validate } = require("../../shared/validators/validate");
 
 const svc = require("./ifrs9.service");
-const v = require("../../shared/validators/ifrs9.validators");
+const v = require("./ifrs9.validators");
 
 const router = express.Router();
 

@@ -2,6 +2,7 @@ const { pool } = require("../../db/pool");
 const { AppError } = require("../../shared/errors/AppError");
 const Decimal = require("decimal.js");
 const crypto = require("crypto");
+const logger = require("../../config/logger");
 
 const journalPosting = require("../../interfaces/journalPosting.interface");
 
@@ -167,7 +168,7 @@ async function getIfrs9Settings({ orgId }) {
 
 async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
-  console.log(payload)
+  logger.debug({ orgId, actorUserId }, "Upserting IFRS9 settings");
   try {
     await client.query("BEGIN");
 

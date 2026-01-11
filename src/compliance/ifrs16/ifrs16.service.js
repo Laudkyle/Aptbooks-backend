@@ -2,6 +2,7 @@ const { pool } = require("../../db/pool");
 const { AppError } = require("../../shared/errors/AppError");
 const { findOpenPeriodForDate } = require("../../interfaces/periodManagement.interface");
 const { postJournal } = require("../../interfaces/journalPosting.interface");
+const logger = require("../../config/logger");
 const Decimal = require('decimal.js');
 
 // Configure Decimal.js for financial calculations
@@ -23,8 +24,10 @@ function toDecimal(value, defaultValue = new Decimal(0)) {
   try {
     return new Decimal(value);
   } catch (error) {
-    console.warn(`Failed to convert value to Decimal: ${value}`, error);
-    return defaultValue;
+    // In compliance flows, silent coercion can lead to materially incorrect journals.
+    // Fail fast and log safely.
+    logger.warn({ err: error, value: String(value).slice(0, 128) }, "Failed to convert value to Decimal");
+    throw new AppError(400, "Invalid numeric value in IFRS16 calculation");
   }
 }
 
