@@ -1,13 +1,14 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const { createDepreciationScheduleSchema, runDepreciationSchema } = require("../../../shared/validators/assets.validators");
 const svc = require("./depreciation.service");
 
 router.use(authRequired);
 
-router.post("/schedules", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+router.post("/schedules", idempotency({ required: true }), requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -23,7 +24,7 @@ router.get("/schedules", requirePermission("assets.fixed_assets.read"), async (r
   } catch (e) { next(e); }
 });
 
-router.post("/run/period-end", requirePermission("assets.depreciation.run"), async (req, res, next) => {
+router.post("/run/period-end", idempotency({ required: true }), requirePermission("assets.depreciation.run"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;

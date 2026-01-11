@@ -1,11 +1,12 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const svc = require("./transactions.service");
 
 router.use(authRequired);
 
-router.post("/", requirePermission("inventory.transactions.post"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("inventory.transactions.post"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;

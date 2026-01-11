@@ -670,10 +670,9 @@ async function deleteTempDifference({ orgId, actorUserId, tempDifferenceId }) {
     client.release();
   }
 }
-async function resolveEffectiveRate({ orgId, rateSetId, asOfDate, client }) {
-  const q = client || pool;
+async function resolveEffectiveRate({ orgId, rateSetId, asOfDate }) {
   // Ensure rate set belongs to org and is active
-  const { rows: rs } = await q.query(
+  const { rows: rs } = await pool.query(
     `SELECT id, status FROM ias12_tax_rate_sets WHERE organization_id=$1 AND id=$2`,
     [orgId, rateSetId]
   );
@@ -686,7 +685,7 @@ async function resolveEffectiveRate({ orgId, rateSetId, asOfDate, client }) {
   // Use date-only comparison (ignoring time)
   const dateStr = queryDate.toISOString().split('T')[0];
   
-  const { rows } = await q.query(
+  const { rows } = await pool.query(
     `
     SELECT rate, effective_from, effective_to
     FROM ias12_tax_rate_lines
@@ -701,7 +700,7 @@ async function resolveEffectiveRate({ orgId, rateSetId, asOfDate, client }) {
   
   if (!rows.length) {
     // Try alternative logic - find the most recent rate that was in effect BEFORE the date
-    const { rows: fallbackRows } = await q.query(
+    const { rows: fallbackRows } = await pool.query(
       `
       SELECT rate, effective_from, effective_to
       FROM ias12_tax_rate_lines
@@ -716,22 +715,18 @@ async function resolveEffectiveRate({ orgId, rateSetId, asOfDate, client }) {
     if (!fallbackRows.length) {
       throw new AppError(409, 
         `No tax rate found for ${dateStr}. The rate set doesn't cover this date. ` +
-        `Add a rate line that is effective on or before ${dateStr}.`
+        `You may need to add a rate line for periods beyond ${new Date('2027-01-01').toISOString().split('T')[0]}`
       );
     }
-
-    logger.warn(
-      { orgId, rateSetId, asOfDate: dateStr, effective_from: fallbackRows[0].effective_from },
-      "IAS12: Using most recent prior tax rate because no covering rate line was found"
-    );
+    
+    logger.warn({ fallback_effective_from: fallbackRows[0].effective_from, date: dateStr }, "IAS12: Using fallback exchange rate");
     return new Decimal(fallbackRows[0].rate);
   }
   
   return new Decimal(rows[0].rate);
 }
-async function getPriorPeriodId({ orgId, period, client }) {
-  const q = client || pool;
-  const { rows } = await q.query(
+async function getPriorPeriodId({ orgId, period }) {
+  const { rows } = await pool.query(
     `
     SELECT id, start_date, end_date
     FROM accounting_periods
@@ -998,7 +993,7 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
     const rateSetId = payload.rate_set_id || settings.default_rate_set_id;
     if (!rateSetId) throw new AppError(409, "No rate_set_id provided and no default_rate_set_id configured");
 
-    const effectiveRate = await resolveEffectiveRate({ orgId, rateSetId, asOfDate: period.end_date, client });
+    const effectiveRate = await resolveEffectiveRate({ orgId, rateSetId, asOfDate: period.end_date });
     const rounding = settings.rounding_decimals ?? 2;
 
     const { rows: tds } = await client.query(
@@ -1015,7 +1010,7 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
   // Opening balances:
   // - If a reversal has been performed for this period, we still roll-forward from prior period.
   // - Otherwise, roll-forward from prior period.
-  const prior = await getPriorPeriodId({ orgId, period, client });
+  const prior = await getPriorPeriodId({ orgId, period });
   let openingDTA = new Decimal(0);
   let openingDTL = new Decimal(0);
   if (prior) {

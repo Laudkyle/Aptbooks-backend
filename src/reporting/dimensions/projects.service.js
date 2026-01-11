@@ -21,13 +21,16 @@ async function listProjects({ orgId }) {
 async function createProject({ orgId, code, name, startDate, endDate, status, actorUserId, req }) {
   assertCode(code);
   assertName(name);
+  // Schema constraint (db/migrations/sql/019_tier6_reporting.sql):
+  // projects.status IN ('active','completed','archived')
+  const normalizedStatus = status || "active";
   const { rows } = await pool.query(
     `
     INSERT INTO projects(organization_id, code, name, start_date, end_date, status)
     VALUES ($1,$2,$3,$4,$5,$6)
     RETURNING id, code, name, status, start_date, end_date, created_at, updated_at
     `,
-    [orgId, code, name, startDate || null, endDate || null, status || 'open']
+    [orgId, code, name, startDate || null, endDate || null, normalizedStatus]
   );
 
   await writeAudit({
@@ -52,18 +55,17 @@ async function assertProject({ orgId, projectId }) {
   if (!rows.length) throw new AppError(404, "Project not found");
 }
 
-async function createPhase({ orgId, projectId, code, name, status, sortOrder, actorUserId, req }) {
+async function createPhase({ orgId, projectId, name, sortOrder, actorUserId, req }) {
   await assertProject({ orgId, projectId });
-  assertCode(code);
   assertName(name);
 
   const { rows } = await pool.query(
     `
-    INSERT INTO project_phases(organization_id, project_id, code, name, status, sort_order)
-    VALUES ($1,$2,$3,$4,$5,$6)
-    RETURNING id, project_id, code, name, status, sort_order
+    INSERT INTO project_phases(organization_id, project_id, name, sort_order)
+    VALUES ($1,$2,$3,$4)
+    RETURNING id, project_id, name, sort_order
     `,
-    [orgId, projectId, code, name, status || 'open', Number(sortOrder || 0)]
+    [orgId, projectId, name, Number(sortOrder || 0)]
   );
 
   await writeAudit({
@@ -92,19 +94,18 @@ async function assertPhase({ orgId, projectId, phaseId }) {
   if (!rows.length) throw new AppError(404, "Project phase not found");
 }
 
-async function createTask({ orgId, projectId, phaseId, code, name, status, sortOrder, actorUserId, req }) {
+async function createTask({ orgId, projectId, phaseId, name, status, sortOrder, actorUserId, req }) {
   await assertProject({ orgId, projectId });
   await assertPhase({ orgId, projectId, phaseId });
-  assertCode(code);
   assertName(name);
 
   const { rows } = await pool.query(
     `
-    INSERT INTO project_tasks(organization_id, project_id, phase_id, code, name, status, sort_order)
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
-    RETURNING id, project_id, phase_id, code, name, status, sort_order
+    INSERT INTO project_tasks(organization_id, project_id, phase_id, name, status, sort_order)
+    VALUES ($1,$2,$3,$4,$5,$6)
+    RETURNING id, project_id, phase_id, name, status, sort_order
     `,
-    [orgId, projectId, phaseId, code, name, status || 'open', Number(sortOrder || 0)]
+    [orgId, projectId, phaseId, name, status || "open", Number(sortOrder || 0)]
   );
 
   await writeAudit({

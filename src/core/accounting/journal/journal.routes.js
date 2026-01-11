@@ -53,8 +53,7 @@ router.post("/:id/post", requirePermission("accounting.journal.post"), async (re
     );
     const before = beforeRows[0] || null;
 
-    console.log('this: ',req.params.id)
-    const out = await svc.postDraftJournal({ orgId, journalId: req.params.id, actorUserId });
+    // removed noisy debug log    const out = await svc.postDraftJournal({ orgId, journalId: req.params.id, actorUserId });
     const { rows: afterRows } = await pool.query(
       `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
       [orgId, req.params.id]

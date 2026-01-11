@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const svc = require("./itemUnits.service");
 
 router.use(authRequired);
@@ -12,7 +13,7 @@ router.get("/", requirePermission("inventory.units.read"), async (req, res, next
   } catch (e) { next(e); }
 });
 
-router.post("/", requirePermission("inventory.units.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("inventory.units.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const created = await svc.createUnit(orgId, req.body);

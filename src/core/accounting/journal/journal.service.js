@@ -38,10 +38,11 @@ function assertEntryDateWithinPeriod(entryDate, period) {
   if (d < s || d > e) throw new AppError(409, "entryDate must be within the selected period");
 }
 
-async function createDraftJournal({ orgId, actorUserId, payload }) {
-  const client = await pool.connect();
+async function createDraftJournal({ orgId, actorUserId, payload, client: existingClient = null }) {
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    await client.query("BEGIN");
+    if (managesTx) await client.query("BEGIN");
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
@@ -52,7 +53,7 @@ async function createDraftJournal({ orgId, actorUserId, payload }) {
         [orgId, payload.idempotencyKey]
       );
       if (existing.length) {
-        await client.query("COMMIT");
+        if (managesTx) await client.query("COMMIT");
         return { journalId: existing[0].id, status: existing[0].status, idempotent: true };
       }
     }
@@ -113,23 +114,26 @@ async function createDraftJournal({ orgId, actorUserId, payload }) {
       );
     }
 
-    await client.query("COMMIT");
+    if (managesTx) await client.query("COMMIT");
     return { journalId, status: "draft" };
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (managesTx) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     throw e;
   } finally {
-    client.release();
+    if (managesTx) client.release();
   }
 }
 
-async function postDraftJournal({ orgId, journalId, actorUserId }) {
-  const client = await pool.connect();
+async function postDraftJournal({ orgId, journalId, actorUserId, client: existingClient = null }) {
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    await client.query("BEGIN");
+    if (managesTx) await client.query("BEGIN");
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
-console.log(journalId)
+    // NOTE: avoid console logging in production paths (keep silent here)
     const { rows: jRows } = await client.query(
       `
       SELECT id, status, period_id, entry_date
@@ -199,13 +203,15 @@ console.log(journalId)
       [orgId, journalId, actorUserId]
     );
 
-    await client.query("COMMIT");
+    if (managesTx) await client.query("COMMIT");
     return { journalId, status: "posted" };
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (managesTx) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     throw e;
   } finally {
-    client.release();
+    if (managesTx) client.release();
   }
 }
 
@@ -215,10 +221,11 @@ console.log(journalId)
  * - Reversal journal is posted immediately in the SAME period.
  * - Original journal is marked voided with link via memo and void_reason.
  */
-async function voidByReversal({ orgId, journalId, actorUserId, reason }) {
-  const client = await pool.connect();
+async function voidByReversal({ orgId, journalId, actorUserId, reason, client: existingClient = null }) {
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    await client.query("BEGIN");
+    if (managesTx) await client.query("BEGIN");
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
@@ -347,19 +354,22 @@ await client.query(
 );
 
 
-    await client.query("COMMIT");
+    if (managesTx) await client.query("COMMIT");
     return { journalId, status: "voided", reversalJournalId: reversalId };
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (managesTx) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     throw e;
   } finally {
-    client.release();
+    if (managesTx) client.release();
   }
 }
-async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey }) {
-  const client = await pool.connect();
+async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey, client: existingClient = null }) {
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    await client.query("BEGIN");
+    if (managesTx) await client.query("BEGIN");
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
@@ -393,7 +403,7 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
         [orgId, idempotencyKey]
       );
       if (existing.length) {
-        await client.query("COMMIT");
+        if (managesTx) await client.query("COMMIT");
         return { reversalJournalId: existing[0].id, alreadyExisted: true };
       }
     }
@@ -483,13 +493,15 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
     );
 
     // 8) IMPORTANT: Do NOT modify original journal status
-    await client.query("COMMIT");
+    if (managesTx) await client.query("COMMIT");
     return { reversalJournalId: reversalId, alreadyExisted: false };
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (managesTx) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     throw e;
   } finally {
-    client.release();
+    if (managesTx) client.release();
   }
 }
 

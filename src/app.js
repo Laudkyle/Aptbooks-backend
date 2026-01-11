@@ -4,6 +4,9 @@ const cors = require("cors");
 
 const { errorMiddleware } = require("./middleware/error.middleware");
 const { auditMiddleware } = require("./middleware/audit.middleware");
+const { requestIdMiddleware } = require("./middleware/requestId.middleware");
+const { globalRateLimit, authRateLimit } = require("./middleware/rateLimit.middleware");
+const { env } = require("./config/env");
 
 const authRoutes = require("./core/foundation/users/auth.routes");
 const orgRoutes = require("./core/foundation/organizations/organizations.routes");
@@ -27,6 +30,11 @@ const documentsWorkflowRoutes = require("./workflow/documents/documents.routes")
 const complianceRoutes = require("./compliance/compliance.routes");
 
 const app = express();
+
+// Trust reverse proxy headers (set TRUST_PROXY=true when behind a proxy / load balancer)
+if (env.TRUST_PROXY) {
+  app.set("trust proxy", 1);
+}
 const swaggerUi = require("swagger-ui-express");
 const { swaggerDocument } = require("./docs/swagger");
 
@@ -34,13 +42,43 @@ const { swaggerDocument } = require("./docs/swagger");
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
 
-app.use(helmet());
-app.use(cors());
+app.use(helmet({
+  // API-first backend; Swagger UI uses inline scripts/styles.
+  contentSecurityPolicy: false
+}));
+
+const corsOptions = {
+  origin: function (origin, cb) {
+    // Allow non-browser tools (no Origin header)
+    if (!origin) return cb(null, true);
+
+    // If allowlist is empty, block in production; allow in non-production.
+    if (!env.CORS_ALLOWED_ORIGINS || env.CORS_ALLOWED_ORIGINS.length === 0) {
+      if (env.NODE_ENV === "production") return cb(new Error("CORS origin not allowed"));
+      return cb(null, true);
+    }
+
+    if (env.CORS_ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error("CORS origin not allowed"));
+  },
+  credentials: env.CORS_ALLOW_CREDENTIALS,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type", "x-request-id", "x-filename"],
+  exposedHeaders: ["x-request-id", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset"]
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
 app.use(express.json({ limit: "1mb" }));
+
+app.use(requestIdMiddleware);
+app.use(globalRateLimit);
+
 
 app.use(auditMiddleware);
 
-app.use("/auth", authRoutes);
+app.use("/auth", authRateLimit, authRoutes);
 app.use("/core/users", usersRoutes);
 app.use("/core/roles", rolesRoutes);
 app.use("/core/organizations", orgRoutes);

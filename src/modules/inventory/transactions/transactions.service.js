@@ -43,22 +43,10 @@ async function assertPeriodOpen(client, orgId, periodId, date) {
   
   // Or if you want to include the entire end date:
   // end.setHours(23, 59, 59, 999);
-  
-  console.log("Comparison:", {
-    dd: dd.toISOString(),
-    start: start.toISOString(),
-    end: end.toISOString(),
-    ddTime: dd.getTime(),
-    startTime: start.getTime(),
-    endTime: end.getTime()
-  });
-
   if (dd < start || dd > end) {
-    console.log("FAILED: Date is outside range");
     throw new AppError(409, "Transaction date outside open period");
   }
   
-  console.log("SUCCESS: Date is within range");
   return p;
 }
 

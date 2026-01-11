@@ -1,5 +1,6 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./forecasts.service");
 
 const router = express.Router();
@@ -14,7 +15,7 @@ router.get("/", requirePermission("reporting.forecasts.read"), async (req, res, 
   }
 });
 
-router.post("/", requirePermission("reporting.forecasts.manage"), async (req, res, next) => {
+router.post("/", requirePermission("reporting.forecasts.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.createForecast({ orgId, actorUserId, req, ...req.body });
@@ -24,7 +25,7 @@ router.post("/", requirePermission("reporting.forecasts.manage"), async (req, re
   }
 });
 
-router.post("/:id/lines", requirePermission("reporting.forecasts.manage"), async (req, res, next) => {
+router.post("/:id/lines", requirePermission("reporting.forecasts.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.upsertLines({

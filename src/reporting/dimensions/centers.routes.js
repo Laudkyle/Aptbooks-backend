@@ -1,5 +1,6 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./centers.service");
 
 const router = express.Router();
@@ -15,7 +16,7 @@ router.get("/:type", requirePermission("reporting.centers.read"), async (req, re
   }
 });
 
-router.post("/:type", requirePermission("reporting.centers.manage"), async (req, res, next) => {
+router.post("/:type", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { type } = req.params;
@@ -26,7 +27,7 @@ router.post("/:type", requirePermission("reporting.centers.manage"), async (req,
   }
 });
 
-router.put("/:type/:id", requirePermission("reporting.centers.manage"), async (req, res, next) => {
+router.put("/:type/:id", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { type, id: centerId } = req.params;
@@ -37,7 +38,7 @@ router.put("/:type/:id", requirePermission("reporting.centers.manage"), async (r
   }
 });
 
-router.delete("/:type/:id", requirePermission("reporting.centers.manage"), async (req, res, next) => {
+router.delete("/:type/:id", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { type, id: centerId } = req.params;

@@ -1,5 +1,6 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./kpis.service");
 
 const router = express.Router();
@@ -14,7 +15,7 @@ router.get("/definitions", requirePermission("reporting.kpis.read"), async (req,
   }
 });
 
-router.post("/definitions", requirePermission("reporting.kpis.manage"), async (req, res, next) => {
+router.post("/definitions", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const created = await svc.createDefinition({ orgId, actorUserId, req, ...req.body });
@@ -24,7 +25,7 @@ router.post("/definitions", requirePermission("reporting.kpis.manage"), async (r
   }
 });
 
-router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), async (req, res, next) => {
+router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const updated = await svc.updateDefinition({ orgId, actorUserId, req, id: req.params.id, ...req.body });
@@ -34,7 +35,7 @@ router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), async
   }
 });
 
-router.delete("/definitions/:id", requirePermission("reporting.kpis.manage"), async (req, res, next) => {
+router.delete("/definitions/:id", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     await svc.deleteDefinition({ orgId, actorUserId, req, id: req.params.id });
@@ -55,7 +56,7 @@ router.get("/values", requirePermission("reporting.kpis.read"), async (req, res,
   }
 });
 
-router.post("/values/compute", requirePermission("reporting.kpis.read"), async (req, res, next) => {
+router.post("/values/compute", requirePermission("reporting.kpis.read"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { periodId } = req.body;

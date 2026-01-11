@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 
 const {
@@ -13,7 +14,7 @@ const { writeAudit } = require("../../../core/foundation/audit-logs/audit.servic
 
 router.use(authRequired);
 
-router.post("/", requirePermission("transactions.bill.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("transactions.bill.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -50,7 +51,7 @@ router.get("/:id", requirePermission("transactions.bill.read"), async (req, res,
   } catch (e) { next(e); }
 });
 
-router.post("/:id/issue", requirePermission("transactions.bill.issue"), async (req, res, next) => {
+router.post("/:id/issue", idempotency({ required: true }), requirePermission("transactions.bill.issue"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -72,7 +73,7 @@ router.post("/:id/issue", requirePermission("transactions.bill.issue"), async (r
   } catch (e) { next(e); }
 });
 
-router.post("/:id/void", requirePermission("transactions.bill.void"), async (req, res, next) => {
+router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.bill.void"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;

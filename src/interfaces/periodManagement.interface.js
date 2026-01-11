@@ -4,7 +4,6 @@
  * - closePeriod(orgId, periodId, actorUserId)
  * - reopenPeriod(orgId, periodId, actorUserId)  // optional
  */
-module.exports = {};
 /**
  * Period Management API (Tier 1)
  * Tier >= 2 modules use this to validate dates / open periods.
@@ -12,8 +11,9 @@ module.exports = {};
 const { pool } = require("../db/pool");
 const { AppError } = require("../shared/errors/AppError");
 
-async function findOpenPeriodForDate({ orgId, date }) {
-  const { rows } = await pool.query(
+async function findOpenPeriodForDate({ orgId, date, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `
     SELECT id, start_date, end_date, status
     FROM accounting_periods

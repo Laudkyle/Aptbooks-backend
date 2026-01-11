@@ -1,5 +1,6 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./budgets.service");
 
 const router = express.Router();
@@ -14,7 +15,7 @@ router.get("/", requirePermission("reporting.budgets.read"), async (req, res, ne
   }
 });
 
-router.post("/", requirePermission("reporting.budgets.manage"), async (req, res, next) => {
+router.post("/", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const created = await svc.createBudget({ orgId, actorUserId, req, ...req.body });
@@ -34,7 +35,7 @@ router.get("/:id", requirePermission("reporting.budgets.read"), async (req, res,
   }
 });
 
-router.put("/:id", requirePermission("reporting.budgets.manage"), async (req, res, next) => {
+router.put("/:id", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.updateBudget({ orgId, actorUserId, req, id: req.params.id, ...req.body });
@@ -45,7 +46,7 @@ router.put("/:id", requirePermission("reporting.budgets.manage"), async (req, re
 });
 
 // Versions
-router.post("/:id/versions", requirePermission("reporting.budgets.manage"), async (req, res, next) => {
+router.post("/:id/versions", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.createVersion({ orgId, budgetId: req.params.id, actorUserId, req, ...req.body });
@@ -55,7 +56,7 @@ router.post("/:id/versions", requirePermission("reporting.budgets.manage"), asyn
   }
 });
 
-router.post("/:id/versions/:versionId/lines", requirePermission("reporting.budgets.manage"), async (req, res, next) => {
+router.post("/:id/versions/:versionId/lines", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.upsertLines({

@@ -162,82 +162,103 @@ async function listInvoices({ orgId, query }) {
 }
 
 async function issueInvoice({ orgId, actorUserId, invoiceId }) {
-  const { invoice, lines } = await getInvoiceDetails({ orgId, invoiceId });
-  if (invoice.status !== "draft") throw new AppError(409, "Only draft invoices can be issued");
-  if (!lines.length) throw new AppError(400, "Invoice has no lines");
+  const { withTransaction } = require("../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: invRows } = await client.query(
+      `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, invoiceId]
+    );
+    if (!invRows.length) throw new AppError(404, "Invoice not found");
+    const invoice = invRows[0];
+    if (invoice.status !== "draft") throw new AppError(409, "Only draft invoices can be issued");
 
-  // CHANGED: validate customer fully (active + type) via interface
-  const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: invoice.customer_id });
+    const { rows: lines } = await client.query(
+      `SELECT * FROM invoice_lines WHERE invoice_id=$1 ORDER BY line_no`,
+      [invoiceId]
+    );
+    if (!lines.length) throw new AppError(400, "Invoice has no lines");
 
-  if (!customer.default_receivable_account_id) {
-    throw new AppError(400, "Customer missing defaultReceivableAccountId");
-  }
-
-  const period = await periodIF.findOpenPeriodForDate({ orgId, date: invoice.invoice_date });
-
-  // Aggregate revenue by account
-  const revenueMap = new Map();
-  for (const l of lines) {
-    await assertRevenueAccount({ orgId, accountId: l.revenue_account_id });
-    revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + Number(l.line_total));
-  }
-
-  const total = Number(invoice.total);
-  const arAccountId = customer.default_receivable_account_id;
-
-  const journalLines = [{ accountId: arAccountId, debit: total, credit: 0, description: `A/R for ${invoice.invoice_no}` }];
-  for (const [accountId, amt] of revenueMap.entries()) {
-    journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Revenue for ${invoice.invoice_no}` });
-  }
-
-  const idempotencyKey = `invoice:${invoiceId}:issue`;
-
-  const draft = await journalIF.createDraftJournal({
-    orgId,
-    actorUserId,
-    payload: {
-      periodId: period.id,
-      entryDate: invoice.invoice_date,
-      typeCode: "GENERAL",
-      memo: `Invoice ${invoice.invoice_no}` + (invoice.memo ? `: ${invoice.memo}` : ""),
-      idempotencyKey,
-      lines: journalLines
+    const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: invoice.customer_id, client });
+    if (!customer.default_receivable_account_id) {
+      throw new AppError(400, "Customer missing defaultReceivableAccountId");
     }
+
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: invoice.invoice_date, client });
+
+    const revenueMap = new Map();
+    for (const l of lines) {
+      await assertRevenueAccount({ orgId, accountId: l.revenue_account_id });
+      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + Number(l.line_total));
+    }
+
+    const total = Number(invoice.total);
+    const arAccountId = customer.default_receivable_account_id;
+
+    const journalLines = [
+      { accountId: arAccountId, debit: total, credit: 0, description: `A/R for ${invoice.invoice_no}` }
+    ];
+    for (const [accountId, amt] of revenueMap.entries()) {
+      journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Revenue for ${invoice.invoice_no}` });
+    }
+
+    const idempotencyKey = `invoice:${invoiceId}:issue`;
+
+    const draft = await journalIF.createDraftJournal({
+      orgId,
+      actorUserId,
+      client,
+      payload: {
+        periodId: period.id,
+        entryDate: invoice.invoice_date,
+        typeCode: "GENERAL",
+        memo: `Invoice ${invoice.invoice_no}` + (invoice.memo ? `: ${invoice.memo}` : ""),
+        idempotencyKey,
+        lines: journalLines
+      }
+    });
+
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+
+    const { rows: afterRows } = await client.query(
+      `
+      UPDATE invoices
+      SET status='issued',
+          period_id=$3,
+          journal_entry_id=$4,
+          issued_at=NOW(),
+          issued_by=$5,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *
+      `,
+      [orgId, invoiceId, period.id, posted.journalId, actorUserId]
+    );
+
+    return afterRows[0];
   });
-
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
-
-  const { rows: afterRows } = await pool.query(
-    `
-    UPDATE invoices
-    SET status='issued',
-        period_id=$3,
-        journal_entry_id=$4,
-        issued_at=NOW(),
-        issued_by=$5,
-        updated_at=NOW()
-    WHERE organization_id=$1 AND id=$2
-    RETURNING *
-    `,
-    [orgId, invoiceId, period.id, posted.journalId, actorUserId]
-  );
-
-  return afterRows[0];
 }
 
 async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
-  const { invoice } = await getInvoiceDetails({ orgId, invoiceId });
-  if (invoice.status !== "issued") throw new AppError(409, "Only issued invoices can be voided");
-  if (!invoice.journal_entry_id) throw new AppError(500, "Invoice missing journal reference");
+  const { withTransaction } = require("../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: invRows } = await client.query(
+      `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, invoiceId]
+    );
+    if (!invRows.length) throw new AppError(404, "Invoice not found");
+    const invoice = invRows[0];
+    if (invoice.status !== "issued") throw new AppError(409, "Only issued invoices can be voided");
+    if (!invoice.journal_entry_id) throw new AppError(500, "Invoice missing journal reference");
 
-  const out = await journalIF.voidPostedJournal({
-    orgId,
-    journalId: invoice.journal_entry_id,
-    actorUserId,
-    reason
-  });
+    const out = await journalIF.voidPostedJournal({
+      orgId,
+      journalId: invoice.journal_entry_id,
+      actorUserId,
+      reason,
+      client
+    });
 
-  const { rows } = await pool.query(
+    const { rows } = await client.query(
     `
     UPDATE invoices
     SET status='voided',
@@ -249,10 +270,11 @@ async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
     WHERE organization_id=$1 AND id=$2
     RETURNING *
     `,
-    [orgId, invoiceId, actorUserId, reason, out.reversalJournalId || null]
-  );
+      [orgId, invoiceId, actorUserId, reason, out.reversalJournalId || null]
+    );
 
-  return { invoice: rows[0], reversalJournalId: out.reversalJournalId };
+    return { invoice: rows[0], reversalJournalId: out.reversalJournalId };
+  });
 }
 
 module.exports = {

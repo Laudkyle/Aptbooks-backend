@@ -137,14 +137,26 @@ async function listBills({ orgId, query }) {
 }
 
 async function issueBill({ orgId, actorUserId, billId }) {
-  const { bill, lines } = await getBillDetails({ orgId, billId });
-  if (bill.status !== "draft") throw new AppError(409, "Only draft bills can be issued");
-  if (!lines.length) throw new AppError(400, "Bill has no lines");
+  const { withTransaction } = require("../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: billRows } = await client.query(
+      `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, billId]
+    );
+    if (!billRows.length) throw new AppError(404, "Bill not found");
+    const bill = billRows[0];
+    if (bill.status !== "draft") throw new AppError(409, "Only draft bills can be issued");
 
-  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: bill.vendor_id });
-  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+    const { rows: lines } = await client.query(
+      `SELECT * FROM bill_lines WHERE bill_id=$1 ORDER BY line_no`,
+      [billId]
+    );
+    if (!lines.length) throw new AppError(400, "Bill has no lines");
 
-  const period = await periodIF.findOpenPeriodForDate({ orgId, date: bill.bill_date });
+    const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: bill.vendor_id, client });
+    if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: bill.bill_date, client });
 
   const expenseMap = new Map();
   for (const l of lines) {
@@ -166,6 +178,7 @@ async function issueBill({ orgId, actorUserId, billId }) {
   const draft = await journalIF.createDraftJournal({
     orgId,
     actorUserId,
+    client,
     payload: {
       periodId: period.id,
       entryDate: bill.bill_date,
@@ -176,9 +189,9 @@ async function issueBill({ orgId, actorUserId, billId }) {
     }
   });
 
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
+  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
-  const { rows } = await pool.query(
+  const { rows } = await client.query(
     `
     UPDATE bills
     SET status='issued',
@@ -194,17 +207,24 @@ async function issueBill({ orgId, actorUserId, billId }) {
   );
 
   return rows[0];
+  });
 }
 
 async function voidBill({ orgId, actorUserId, billId, reason }) {
-  const bill = await repo.getBillById(orgId, billId);
-  if (!bill) throw new AppError(404, "Bill not found");
-  if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Only issued/paid bills can be voided");
-  if (!bill.journal_entry_id) throw new AppError(500, "Bill missing journal reference");
+  const { withTransaction } = require("../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: billRows } = await client.query(
+      `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, billId]
+    );
+    if (!billRows.length) throw new AppError(404, "Bill not found");
+    const bill = billRows[0];
+    if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Only issued/paid bills can be voided");
+    if (!bill.journal_entry_id) throw new AppError(500, "Bill missing journal reference");
 
-  const out = await journalIF.voidPostedJournal({ orgId, journalId: bill.journal_entry_id, actorUserId, reason });
+    const out = await journalIF.voidPostedJournal({ orgId, journalId: bill.journal_entry_id, actorUserId, reason, client });
 
-  const { rows } = await pool.query(
+    const { rows } = await client.query(
     `
     UPDATE bills
     SET status='voided',
@@ -219,7 +239,8 @@ async function voidBill({ orgId, actorUserId, billId, reason }) {
     [orgId, billId, actorUserId, reason, out.reversalJournalId || null]
   );
 
-  return { bill: rows[0], reversalJournalId: out.reversalJournalId };
+    return { bill: rows[0], reversalJournalId: out.reversalJournalId };
+  });
 }
 
 module.exports = { createDraftBill, getBillDetails, listBills, issueBill, voidBill };

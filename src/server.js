@@ -14,7 +14,6 @@ const {
 } = require("./utilities/scheduled-tasks/accruals.jobs");
 const { runPeriodEndDepreciationDaily } = require("./utilities/scheduled-tasks/assets.jobs");
 const { computeDeferredTaxDraftDaily, checkIas12ConfigDaily } = require("./utilities/scheduled-tasks/ias12.jobs");
-const { postDueLeaseSchedulesDaily } = require("./utilities/scheduled-tasks/ifrs16.jobs");
 // after server starts listening:
 if (process.env.SCHEDULER_ENABLED !== "false") {
   startScheduler({
@@ -65,14 +64,6 @@ if (process.env.SCHEDULER_ENABLED !== "false") {
         schedule: { type: "daily_at_utc", dailyHourUtc: 0, dailyMinuteUtc: 15 },
         handler: async () => checkIas12ConfigDaily(),
       },
-      {
-        code: "ifrs16.leases.post_due.daily",
-        name: "Post due IFRS16 lease schedule lines",
-        schedule: { type: "daily_at_utc", dailyHourUtc: 0, dailyMinuteUtc: 30 },
-        handler: async () => postDueLeaseSchedulesDaily(),
-      },
     ],
-  }).catch((e) => {
-    logger.error({ err: e }, "Scheduler failed to start");
-  });
+  }).catch(() => {});
 }

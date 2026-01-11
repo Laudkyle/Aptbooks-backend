@@ -1,5 +1,6 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./financialStatements.service");
 
 const router = express.Router();
@@ -61,7 +62,7 @@ router.get("/changes-in-equity", async (req, res, next) => {
   }
 });
 
-router.post("/generate", async (req, res, next) => {
+router.post("/generate", idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { periodId, statementType, comparePeriodId, mode } = req.body;

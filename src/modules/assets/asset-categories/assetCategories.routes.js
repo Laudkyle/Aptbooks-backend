@@ -1,13 +1,14 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const { createAssetCategorySchema } = require("../../../shared/validators/assets.validators");
 const svc = require("./assetCategories.service");
 
 router.use(authRequired);
 
-router.post("/", requirePermission("assets.categories.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("assets.categories.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;

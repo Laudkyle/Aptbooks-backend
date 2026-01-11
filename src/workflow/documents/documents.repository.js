@@ -1,5 +1,9 @@
 const { pool } = require("../../db/pool");
 
+function q(client) {
+  return client || pool;
+}
+
 async function createDocument({ orgId, userId, payload }) {
   const r = await pool.query(
     `
@@ -22,9 +26,10 @@ async function createDocument({ orgId, userId, payload }) {
   return r.rows[0];
 }
 
-async function getDocumentById({ orgId, documentId }) {
-  const r = await pool.query(
-    `SELECT * FROM documents WHERE organization_id=$1 AND id=$2`,
+async function getDocumentById({ orgId, documentId, client = null, forUpdate = false }) {
+  const lock = forUpdate ? " FOR UPDATE" : "";
+  const r = await q(client).query(
+    `SELECT * FROM documents WHERE organization_id=$1 AND id=$2${lock}`,
     [orgId, documentId]
   );
   return r.rows[0] || null;
@@ -123,8 +128,8 @@ async function getVersion({ orgId, documentId, versionId }) {
   return r.rows[0] || null;
 }
 
-async function setDocumentState({ orgId, documentId, stateCode }) {
-  const r = await pool.query(
+async function setDocumentState({ orgId, documentId, stateCode, client = null }) {
+  const r = await q(client).query(
     `
     UPDATE documents SET workflow_state_code=$3
     WHERE organization_id=$1 AND id=$2
@@ -135,8 +140,8 @@ async function setDocumentState({ orgId, documentId, stateCode }) {
   return r.rows[0] || null;
 }
 
-async function listApprovalLadderForDocumentType({ orgId, documentTypeId }) {
-  const r = await pool.query(
+async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client = null }) {
+  const r = await q(client).query(
     `
     SELECT al.*
     FROM document_type_approval_levels dtal
@@ -150,33 +155,23 @@ async function listApprovalLadderForDocumentType({ orgId, documentTypeId }) {
   return r.rows;
 }
 
-async function createApprovals({ documentId, ladder }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    for (let i = 0; i < ladder.length; i += 1) {
-      const level = ladder[i];
-      const status = i === 0 ? "PENDING" : "QUEUED";
-      await client.query(
-        `
-        INSERT INTO document_approvals (document_id, approval_level_id, sequence, status)
-        VALUES ($1,$2,$3,$4)
-        ON CONFLICT (document_id, approval_level_id) DO NOTHING
-        `,
-        [documentId, level.id, level.sequence, status]
-      );
-    }
-    await client.query("COMMIT");
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
+async function createApprovals({ documentId, ladder, client = null }) {
+  for (let i = 0; i < ladder.length; i += 1) {
+    const level = ladder[i];
+    const status = i === 0 ? "PENDING" : "QUEUED";
+    await q(client).query(
+      `
+      INSERT INTO document_approvals (document_id, approval_level_id, sequence, status)
+      VALUES ($1,$2,$3,$4)
+      ON CONFLICT (document_id, approval_level_id) DO NOTHING
+      `,
+      [documentId, level.id, level.sequence, status]
+    );
   }
 }
 
-async function getCurrentPendingApproval({ documentId }) {
-  const r = await pool.query(
+async function getCurrentPendingApproval({ documentId, client = null }) {
+  const r = await q(client).query(
     `
     SELECT da.*, al.code as approval_level_code, al.name as approval_level_name
     FROM document_approvals da
@@ -190,20 +185,16 @@ async function getCurrentPendingApproval({ documentId }) {
   return r.rows[0] || null;
 }
 
-async function approveCurrentLevel({ documentId, approverUserId, comment }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const cur = await client.query(
+async function approveCurrentLevel({ documentId, approverUserId, comment, client = null }) {
+  const cur = await q(client).query(
       `SELECT * FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
       [documentId]
     );
     const current = cur.rows[0];
     if (!current) {
-      await client.query("ROLLBACK");
       return { updated: null, next: null };
     }
-    const updated = await client.query(
+    const updated = await q(client).query(
       `
       UPDATE document_approvals
       SET status='APPROVED', acted_by_user_id=$2, acted_at=NOW(), comment=COALESCE($3, comment)
@@ -213,7 +204,7 @@ async function approveCurrentLevel({ documentId, approverUserId, comment }) {
       [current.id, approverUserId || null, comment || null]
     );
 
-    const nxt = await client.query(
+    const nxt = await q(client).query(
       `
       SELECT * FROM document_approvals
       WHERE document_id=$1 AND status='QUEUED'
@@ -225,32 +216,29 @@ async function approveCurrentLevel({ documentId, approverUserId, comment }) {
     );
     const next = nxt.rows[0] || null;
     if (next) {
-      await client.query(
+      await q(client).query(
         `UPDATE document_approvals SET status='PENDING' WHERE id=$1`,
         [next.id]
       );
     }
-    await client.query("COMMIT");
     return { updated: updated.rows[0], next };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
 }
 
-async function rejectCurrentLevel({ documentId, approverUserId, comment }) {
-  const r = await pool.query(
+async function rejectCurrentLevel({ documentId, approverUserId, comment, client = null }) {
+  // Lock current PENDING row to prevent races
+  const cur = await q(client).query(
+    `SELECT id FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
+    [documentId]
+  );
+  if (!cur.rows.length) return null;
+  const r = await q(client).query(
     `
     UPDATE document_approvals
     SET status='REJECTED', acted_by_user_id=$2, acted_at=NOW(), comment=$3
-    WHERE id = (
-      SELECT id FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1
-    )
+    WHERE id=$1
     RETURNING *
     `,
-    [documentId, approverUserId || null, comment || null]
+    [cur.rows[0].id, approverUserId || null, comment || null]
   );
   return r.rows[0] || null;
 }

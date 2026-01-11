@@ -1,13 +1,14 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const { createFixedAssetSchema, acquireFixedAssetSchema, disposeFixedAssetSchema } = require("../../../shared/validators/assets.validators");
 const svc = require("./fixedAssets.service");
 
 router.use(authRequired);
 
-router.post("/", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -23,7 +24,7 @@ router.get("/", requirePermission("assets.fixed_assets.read"), async (req, res, 
   } catch (e) { next(e); }
 });
 
-router.post("/:id/acquire", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+router.post("/:id/acquire", idempotency({ required: true }), requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -32,7 +33,7 @@ router.post("/:id/acquire", requirePermission("assets.fixed_assets.manage"), asy
   } catch (e) { next(e); }
 });
 
-router.post("/:id/retire", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+router.post("/:id/retire", idempotency({ required: true }), requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -40,7 +41,7 @@ router.post("/:id/retire", requirePermission("assets.fixed_assets.manage"), asyn
   } catch (e) { next(e); }
 });
 
-router.post("/:id/dispose", requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+router.post("/:id/dispose", idempotency({ required: true }), requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;

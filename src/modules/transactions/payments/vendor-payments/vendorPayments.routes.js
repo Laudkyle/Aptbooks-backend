@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../../middleware/permission.middleware");
+const { idempotency } = require("../../../../middleware/idempotency.middleware");
 const { validate } = require("../../../../shared/validators/validate");
 
 const {
@@ -13,7 +14,7 @@ const { writeAudit } = require("../../../../core/foundation/audit-logs/audit.ser
 
 router.use(authRequired);
 
-router.post("/", requirePermission("transactions.vendor_payment.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("transactions.vendor_payment.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -50,7 +51,7 @@ router.get("/:id", requirePermission("transactions.vendor_payment.read"), async 
   } catch (e) { next(e); }
 });
 
-router.post("/:id/post", requirePermission("transactions.vendor_payment.post"), async (req, res, next) => {
+router.post("/:id/post", idempotency({ required: true }), requirePermission("transactions.vendor_payment.post"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -72,7 +73,7 @@ router.post("/:id/post", requirePermission("transactions.vendor_payment.post"), 
   } catch (e) { next(e); }
 });
 
-router.post("/:id/void", requirePermission("transactions.vendor_payment.void"), async (req, res, next) => {
+router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.vendor_payment.void"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;

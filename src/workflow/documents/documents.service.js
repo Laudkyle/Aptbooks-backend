@@ -4,6 +4,7 @@ const { env } = require("../../config/env");
 const repo = require("./documents.repository");
 const storage = require("./documentStorage.local");
 const entityResolver = require("../../interfaces/entityResolver.interface");
+const { withTransaction } = require("../../db/tx");
 
 function safeFilename(name) {
   // prevent path traversal; keep only basename
@@ -76,48 +77,56 @@ async function addVersionFromBuffer({ orgId, documentId, userId, originalFilenam
 }
 
 async function submitDocument({ orgId, documentId }) {
-  const doc = await repo.getDocumentById({ orgId, documentId });
-  if (!doc) throw new AppError(404, "Document not found");
-  if (doc.workflow_state_code !== "DRAFT") throw new AppError(409, "Only DRAFT documents can be submitted");
-  if ((doc.current_version_no || 0) < 1) throw new AppError(409, "Upload at least one document version before submitting");
-  if (!doc.document_type_id) throw new AppError(409, "Document type is required to submit for approval");
+  return withTransaction(async (client) => {
+    // Lock document to prevent double-submit races
+    const doc = await repo.getDocumentById({ orgId, documentId, client, forUpdate: true });
+    if (!doc) throw new AppError(404, "Document not found");
+    if (doc.workflow_state_code !== "DRAFT") throw new AppError(409, "Only DRAFT documents can be submitted");
+    if ((doc.current_version_no || 0) < 1) throw new AppError(409, "Upload at least one document version before submitting");
+    if (!doc.document_type_id) throw new AppError(409, "Document type is required to submit for approval");
 
-  const ladder = await repo.listApprovalLadderForDocumentType({ orgId, documentTypeId: doc.document_type_id });
-  if (!ladder.length) throw new AppError(409, "No approval levels configured for this document type");
+    const ladder = await repo.listApprovalLadderForDocumentType({ orgId, documentTypeId: doc.document_type_id, client });
+    if (!ladder.length) throw new AppError(409, "No approval levels configured for this document type");
 
-  await repo.createApprovals({ documentId, ladder });
-  const updated = await repo.setDocumentState({ orgId, documentId, stateCode: "SUBMITTED" });
-  return { document: updated };
+    await repo.createApprovals({ documentId, ladder, client });
+    const updated = await repo.setDocumentState({ orgId, documentId, stateCode: "SUBMITTED", client });
+    return { document: updated };
+  });
 }
 
 async function approveDocument({ orgId, documentId, userId, comment }) {
-  const doc = await repo.getDocumentById({ orgId, documentId });
-  if (!doc) throw new AppError(404, "Document not found");
-  if (doc.workflow_state_code !== "SUBMITTED") throw new AppError(409, "Only SUBMITTED documents can be approved");
+  return withTransaction(async (client) => {
+    // Lock document row first to ensure single writer for state transitions
+    const doc = await repo.getDocumentById({ orgId, documentId, client, forUpdate: true });
+    if (!doc) throw new AppError(404, "Document not found");
+    if (doc.workflow_state_code !== "SUBMITTED") throw new AppError(409, "Only SUBMITTED documents can be approved");
 
-  const cur = await repo.getCurrentPendingApproval({ documentId });
-  if (!cur) throw new AppError(409, "No pending approval step for this document");
+    const cur = await repo.getCurrentPendingApproval({ documentId, client });
+    if (!cur) throw new AppError(409, "No pending approval step for this document");
 
-  const { updated, next } = await repo.approveCurrentLevel({ documentId, approverUserId: userId, comment });
-  if (!updated) throw new AppError(409, "No pending approval step for this document");
+    const { updated, next } = await repo.approveCurrentLevel({ documentId, approverUserId: userId, comment, client });
+    if (!updated) throw new AppError(409, "No pending approval step for this document");
 
-  if (!next) {
-    const fin = await repo.setDocumentState({ orgId, documentId, stateCode: "APPROVED" });
-    return { document: fin, approval: updated, next: null };
-  }
-  const fresh = await repo.getDocumentById({ orgId, documentId });
-  return { document: fresh, approval: updated, next: { sequence: next.sequence } };
+    if (!next) {
+      const fin = await repo.setDocumentState({ orgId, documentId, stateCode: "APPROVED", client });
+      return { document: fin, approval: updated, next: null };
+    }
+    const fresh = await repo.getDocumentById({ orgId, documentId, client });
+    return { document: fresh, approval: updated, next: { sequence: next.sequence } };
+  });
 }
 
 async function rejectDocument({ orgId, documentId, userId, comment }) {
-  const doc = await repo.getDocumentById({ orgId, documentId });
-  if (!doc) throw new AppError(404, "Document not found");
-  if (doc.workflow_state_code !== "SUBMITTED") throw new AppError(409, "Only SUBMITTED documents can be rejected");
+  return withTransaction(async (client) => {
+    const doc = await repo.getDocumentById({ orgId, documentId, client, forUpdate: true });
+    if (!doc) throw new AppError(404, "Document not found");
+    if (doc.workflow_state_code !== "SUBMITTED") throw new AppError(409, "Only SUBMITTED documents can be rejected");
 
-  const rejected = await repo.rejectCurrentLevel({ documentId, approverUserId: userId, comment });
-  if (!rejected) throw new AppError(409, "No pending approval step for this document");
-  const fin = await repo.setDocumentState({ orgId, documentId, stateCode: "REJECTED" });
-  return { document: fin, approval: rejected };
+    const rejected = await repo.rejectCurrentLevel({ documentId, approverUserId: userId, comment, client });
+    if (!rejected) throw new AppError(409, "No pending approval step for this document");
+    const fin = await repo.setDocumentState({ orgId, documentId, stateCode: "REJECTED", client });
+    return { document: fin, approval: rejected };
+  });
 }
 
 async function getVersionStream({ orgId, documentId, versionId }) {

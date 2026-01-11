@@ -8,21 +8,14 @@ function computeNextRunAt(task) {
   const now = utcNow();
 
   if (task.schedule_type === "interval_seconds") {
-    const seconds = Number(task.interval_seconds ?? task.intervalSeconds ?? 0);
+    const seconds = Number(task.interval_seconds || 0);
     if (!seconds) throw new AppError(500, `Task ${task.code} missing interval_seconds`);
     return new Date(now.getTime() + seconds * 1000);
   }
 
   if (task.schedule_type === "daily_at_utc") {
-    const h = Number(task.daily_hour_utc ?? task.dailyHourUtc);
-    const m = Number(task.daily_minute_utc ?? task.dailyMinuteUtc);
-
-    if (!Number.isFinite(h) || !Number.isFinite(m)) {
-      throw new AppError(500, `Task ${task.code} missing dailyHourUtc/dailyMinuteUtc`);
-    }
-    if (h < 0 || h > 23 || m < 0 || m > 59) {
-      throw new AppError(500, `Task ${task.code} invalid daily time: ${h}:${m}`);
-    }
+    const h = Number(task.daily_hour_utc);
+    const m = Number(task.daily_minute_utc);
 
     const next = new Date(Date.UTC(
       now.getUTCFullYear(),

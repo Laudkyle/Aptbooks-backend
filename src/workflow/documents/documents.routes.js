@@ -3,6 +3,7 @@ const router = express.Router();
 
 const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const { validate } = require("../../shared/validators/validate");
 const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
@@ -18,7 +19,7 @@ const {
   createDocumentTypeSchema,
   createApprovalLevelSchema,
   setDocumentTypeApprovalLevelsSchema
-} = require("../../shared/validators/documents.validators");
+} = require("./documents.validators");
 
 router.use(authRequired);
 
@@ -30,7 +31,7 @@ router.get("/entity-types", requirePermission("documents.read"), async (req, res
 // -----------------------------------------------------------------------------
 // Configuration (org-scoped)
 // -----------------------------------------------------------------------------
-router.post("/types", requirePermission("documents.manage"), async (req, res, next) => {
+router.post("/types", idempotency({ required: true }), requirePermission("documents.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const payload = validate(createDocumentTypeSchema, req.body);
@@ -59,7 +60,7 @@ router.get("/types", requirePermission("documents.read"), async (req, res, next)
   } catch (e) { next(e); }
 });
 
-router.post("/approval-levels", requirePermission("documents.manage"), async (req, res, next) => {
+router.post("/approval-levels", idempotency({ required: true }), requirePermission("documents.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const payload = validate(createApprovalLevelSchema, req.body);
@@ -112,7 +113,7 @@ router.put("/types/:typeId/approval-levels", requirePermission("documents.manage
 });
 
 // Create document metadata (DRAFT)
-router.post("/", requirePermission("documents.create"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("documents.create"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const payload = validate(createDocumentSchema, req.body);
@@ -153,6 +154,7 @@ router.get("/:id", requirePermission("documents.read"), async (req, res, next) =
 // Upload new version (application/octet-stream)
 router.post(
   "/:id/versions",
+  idempotency({ required: true }),
   requirePermission("documents.create"),
   express.raw({ type: "application/octet-stream", limit: `${env.FILE_UPLOAD_MAX_MB}mb` }),
   async (req, res, next) => {
@@ -206,7 +208,7 @@ router.get("/:id/versions/:versionId/download", requirePermission("documents.rea
 });
 
 // Submit for approval (creates multi-level approval records)
-router.post("/:id/submit", requirePermission("documents.create"), async (req, res, next) => {
+router.post("/:id/submit", idempotency({ required: true }), requirePermission("documents.create"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     validate(submitDocumentSchema, req.body || {});
@@ -228,7 +230,7 @@ router.post("/:id/submit", requirePermission("documents.create"), async (req, re
 });
 
 // Approve current level
-router.post("/:id/approve", requirePermission("approvals.act"), async (req, res, next) => {
+router.post("/:id/approve", idempotency({ required: true }), requirePermission("approvals.act"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const body = validate(approvalActionSchema, req.body || {});
@@ -255,7 +257,7 @@ router.post("/:id/approve", requirePermission("approvals.act"), async (req, res,
 });
 
 // Reject current level
-router.post("/:id/reject", requirePermission("approvals.act"), async (req, res, next) => {
+router.post("/:id/reject", idempotency({ required: true }), requirePermission("approvals.act"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const body = validate(approvalActionSchema, req.body || {});

@@ -21,8 +21,9 @@ async function getOrgBaseCurrency(client, orgId) {
 
 const repo = require("./vendorPayments.repository");
 
-async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
-  const { rows } = await pool.query(
+async function assertPostableActiveAccount({ orgId, accountId, errMsg, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, accountId]
   );
@@ -31,16 +32,18 @@ async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
 }
 
-async function getBillForAllocation(orgId, billId) {
-  const { rows } = await pool.query(
+async function getBillForAllocation(orgId, billId, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT * FROM bills WHERE organization_id=$1 AND id=$2`,
     [orgId, billId]
   );
   return rows[0] || null;
 }
 
-async function getBillOutstanding(orgId, billId) {
-  const { rows: billRows } = await pool.query(
+async function getBillOutstanding(orgId, billId, client = null) {
+  const db = client || pool;
+  const { rows: billRows } = await db.query(
     `SELECT total FROM bills WHERE organization_id=$1 AND id=$2`,
     [orgId, billId]
   );
@@ -48,7 +51,7 @@ async function getBillOutstanding(orgId, billId) {
 
   const total = Number(billRows[0].total);
 
-  const { rows: paidRows } = await pool.query(
+  const { rows: paidRows } = await db.query(
     `
     SELECT COALESCE(SUM(vpa.amount_applied),0) AS paid
     FROM vendor_payment_allocations vpa
@@ -145,112 +148,133 @@ async function listVendorPayments({ orgId, query }) {
 }
 
 async function postVendorPayment({ orgId, actorUserId, id }) {
-  const { vendorPayment: vp, allocations } = await getVendorPaymentDetails({ orgId, id });
-  if (vp.status !== "draft") throw new AppError(409, "Only draft vendor payments can be posted");
-  if (!allocations.length) throw new AppError(400, "Vendor payment has no allocations");
+  const { withTransaction } = require("../../../db/tx");
+  return withTransaction(async (client) => {
+    // Lock vendor payment row
+    const { rows: vpRows } = await client.query(
+      `SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, id]
+    );
+    if (!vpRows.length) throw new AppError(404, "Vendor payment not found");
+    const vp = vpRows[0];
+    if (vp.status !== "draft") throw new AppError(409, "Only draft vendor payments can be posted");
 
-  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: vp.vendor_id });
-  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+    const { rows: allocations } = await client.query(
+      `SELECT * FROM vendor_payment_allocations WHERE vendor_payment_id=$1 ORDER BY created_at ASC`,
+      [id]
+    );
+    if (!allocations.length) throw new AppError(400, "Vendor payment has no allocations");
 
-  await assertPostableActiveAccount({ orgId, accountId: vp.cash_account_id, errMsg: "Invalid cashAccountId" });
+    const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: vp.vendor_id, client });
+    if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
 
-  // Re-validate allocations at post-time (race safety)
-  let sumAllocCents = 0n;
-  for (const a of allocations) {
-    const bill = await getBillForAllocation(orgId, a.bill_id);
-    if (!bill) throw new AppError(400, `Invalid billId: ${a.bill_id}`);
-    if (bill.vendor_id !== vp.vendor_id) throw new AppError(400, "Allocation bill vendor mismatch");
-    if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Can only allocate to issued/paid bills");
-    if (bill.status === "voided") throw new AppError(409, "Cannot allocate to voided bill");
+    await assertPostableActiveAccount({ orgId, accountId: vp.cash_account_id, errMsg: "Invalid cashAccountId", client });
 
-    const outstanding = await getBillOutstanding(orgId, a.bill_id);
-    const appliedCents = parseDecimalToBigInt(a.amount_applied, 2);
-    const outstandingCents = parseDecimalToBigInt(outstanding, 2);
-    if (appliedCents > outstandingCents) throw new AppError(409, "Allocation exceeds bill outstanding");
+    // Re-validate allocations at post-time (race safety)
+    let sumAllocCents = 0n;
+    for (const a of allocations) {
+      const bill = await getBillForAllocation(orgId, a.bill_id, client);
+      if (!bill) throw new AppError(400, `Invalid billId: ${a.bill_id}`);
+      if (bill.vendor_id !== vp.vendor_id) throw new AppError(400, "Allocation bill vendor mismatch");
+      if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Can only allocate to issued/paid bills");
+      if (bill.status === "voided") throw new AppError(409, "Cannot allocate to voided bill");
 
-    sumAllocCents += appliedCents;
-  }
-  const amountTotalCents = parseDecimalToBigInt(vp.amount_total, 2);
-  if (sumAllocCents <= 0n) throw new AppError(400, "allocations must sum to > 0");
-  if (sumAllocCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
-
-  const sumAlloc = bigIntToDecimalString(sumAllocCents, 2);
-
-  const period = await periodIF.findOpenPeriodForDate({ orgId, date: vp.payment_date });
-
-  const apAccountId = vendor.default_payable_account_id;
-  const cashAccountId = vp.cash_account_id;
-
-  const journalLines = [
-    { accountId: apAccountId, debit: sumAlloc, credit: "0.00", description: `A/P settlement ${vp.payment_no}` },
-    { accountId: cashAccountId, debit: "0.00", credit: sumAlloc, description: `Cash/Bank payment ${vp.payment_no}` }
-  ];
-
-  const idempotencyKey = `vendor_payment:${id}:post`;
-
-  const draft = await journalIF.createDraftJournal({
-    orgId,
-    actorUserId,
-    payload: {
-      periodId: period.id,
-      entryDate: vp.payment_date,
-      typeCode: "GENERAL",
-      memo: `Vendor payment ${vp.payment_no}`,
-      idempotencyKey,
-      lines: journalLines
+      const outstanding = await getBillOutstanding(orgId, a.bill_id, client);
+      const appliedCents = parseDecimalToBigInt(a.amount_applied, 2);
+      const outstandingCents = parseDecimalToBigInt(outstanding, 2);
+      if (appliedCents > outstandingCents) throw new AppError(409, "Allocation exceeds bill outstanding");
+      sumAllocCents += appliedCents;
     }
+
+    const amountTotalCents = parseDecimalToBigInt(vp.amount_total, 2);
+    if (sumAllocCents <= 0n) throw new AppError(400, "allocations must sum to > 0");
+    if (sumAllocCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
+
+    const sumAlloc = bigIntToDecimalString(sumAllocCents, 2);
+
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: vp.payment_date, client });
+
+    const apAccountId = vendor.default_payable_account_id;
+    const cashAccountId = vp.cash_account_id;
+
+    const journalLines = [
+      { accountId: apAccountId, debit: sumAlloc, credit: "0.00", description: `A/P settlement ${vp.payment_no}` },
+      { accountId: cashAccountId, debit: "0.00", credit: sumAlloc, description: `Cash/Bank payment ${vp.payment_no}` }
+    ];
+
+    const idempotencyKey = `vendor_payment:${id}:post`;
+
+    const draft = await journalIF.createDraftJournal({
+      orgId,
+      actorUserId,
+      client,
+      payload: {
+        periodId: period.id,
+        entryDate: vp.payment_date,
+        typeCode: "GENERAL",
+        memo: `Vendor payment ${vp.payment_no}`,
+        idempotencyKey,
+        lines: journalLines
+      }
+    });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+
+    // Update vendor payment as posted
+    const { rows: updatedVP } = await client.query(
+      `
+      UPDATE vendor_payments
+      SET status='posted',
+          period_id=$3,
+          journal_entry_id=$4,
+          posted_at=NOW(),
+          posted_by=$5,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *
+      `,
+      [orgId, id, period.id, posted.journalId, actorUserId]
+    );
+
+    // Update each bill status to paid if fully settled (based on all posted allocations)
+    for (const a of allocations) {
+      const outstandingAfter = await getBillOutstanding(orgId, a.bill_id, client);
+      if (outstandingAfter !== null && outstandingAfter <= 0) {
+        await client.query(
+          `
+          UPDATE bills
+          SET status='paid', updated_at=NOW()
+          WHERE organization_id=$1 AND id=$2 AND status IN ('issued','paid')
+          `,
+          [orgId, a.bill_id]
+        );
+      }
+    }
+
+    return updatedVP[0];
   });
-
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
-
-  // Update vendor payment as posted
-  const { rows: vpRows } = await pool.query(
-    `
-    UPDATE vendor_payments
-    SET status='posted',
-        period_id=$3,
-        journal_entry_id=$4,
-        posted_at=NOW(),
-        posted_by=$5,
-        updated_at=NOW()
-    WHERE organization_id=$1 AND id=$2
-    RETURNING *
-    `,
-    [orgId, id, period.id, posted.journalId, actorUserId]
-  );
-
-  // Update each bill status to paid if fully settled (based on all posted allocations)
-  for (const a of allocations) {
-    const outstandingAfter = await getBillOutstanding(orgId, a.bill_id);
-    if (outstandingAfter !== null && outstandingAfter <= 0) {
-      await pool.query(
-        `
-        UPDATE bills
-        SET status='paid', updated_at=NOW()
-        WHERE organization_id=$1 AND id=$2 AND status IN ('issued','paid')
-        `,
-        [orgId, a.bill_id]
-      );
-    }
-  }
-
-  return vpRows[0];
 }
 
 async function voidVendorPayment({ orgId, actorUserId, id, reason }) {
-  const vp = await repo.getVendorPaymentById(orgId, id);
-  if (!vp) throw new AppError(404, "Vendor payment not found");
-  if (vp.status !== "posted") throw new AppError(409, "Only posted vendor payments can be voided");
-  if (!vp.journal_entry_id) throw new AppError(500, "Vendor payment missing journal reference");
+  const { withTransaction } = require("../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: vpRows } = await client.query(
+      `SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, id]
+    );
+    if (!vpRows.length) throw new AppError(404, "Vendor payment not found");
+    const vp = vpRows[0];
+    if (vp.status !== "posted") throw new AppError(409, "Only posted vendor payments can be voided");
+    if (!vp.journal_entry_id) throw new AppError(500, "Vendor payment missing journal reference");
 
-  const out = await journalIF.voidPostedJournal({
-    orgId,
-    journalId: vp.journal_entry_id,
-    actorUserId,
-    reason
-  });
+    const out = await journalIF.voidPostedJournal({
+      orgId,
+      journalId: vp.journal_entry_id,
+      actorUserId,
+      reason,
+      client
+    });
 
-  const { rows } = await pool.query(
+    const { rows } = await client.query(
     `
     UPDATE vendor_payments
     SET status='voided',
@@ -263,29 +287,30 @@ async function voidVendorPayment({ orgId, actorUserId, id, reason }) {
     RETURNING *
     `,
     [orgId, id, actorUserId, reason, out.reversalJournalId || null]
-  );
+    );
 
-  // After void, bills may no longer be fully paid. Recompute status for affected bills.
-  const { rows: affectedBills } = await pool.query(
-    `SELECT bill_id FROM vendor_payment_allocations WHERE vendor_payment_id=$1`,
-    [id]
-  );
+    // After void, bills may no longer be fully paid. Recompute status for affected bills.
+    const { rows: affectedBills } = await client.query(
+      `SELECT bill_id FROM vendor_payment_allocations WHERE vendor_payment_id=$1`,
+      [id]
+    );
 
-  for (const r of affectedBills) {
-    const outstanding = await getBillOutstanding(orgId, r.bill_id);
-    if (outstanding !== null && outstanding > 0) {
-      await pool.query(
-        `
-        UPDATE bills
-        SET status='issued', updated_at=NOW()
-        WHERE organization_id=$1 AND id=$2 AND status IN ('paid','issued')
-        `,
-        [orgId, r.bill_id]
-      );
+    for (const r of affectedBills) {
+      const outstanding = await getBillOutstanding(orgId, r.bill_id, client);
+      if (outstanding !== null && outstanding > 0) {
+        await client.query(
+          `
+          UPDATE bills
+          SET status='issued', updated_at=NOW()
+          WHERE organization_id=$1 AND id=$2 AND status IN ('paid','issued')
+          `,
+          [orgId, r.bill_id]
+        );
+      }
     }
-  }
 
-  return { vendorPayment: rows[0], reversalJournalId: out.reversalJournalId };
+    return { vendorPayment: rows[0], reversalJournalId: out.reversalJournalId };
+  });
 }
 
 module.exports = {

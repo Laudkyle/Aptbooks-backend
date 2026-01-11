@@ -1,5 +1,6 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./allocations.service");
 
 const router = express.Router();
@@ -15,7 +16,7 @@ router.get("/bases", requirePermission("reporting.allocations.read"), async (req
   }
 });
 
-router.post("/bases", requirePermission("reporting.allocations.manage"), async (req, res, next) => {
+router.post("/bases", requirePermission("reporting.allocations.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.createBase({ orgId, actorUserId, req, ...req.body });
@@ -36,7 +37,7 @@ router.get("/rules", requirePermission("reporting.allocations.read"), async (req
   }
 });
 
-router.post("/rules", requirePermission("reporting.allocations.manage"), async (req, res, next) => {
+router.post("/rules", requirePermission("reporting.allocations.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.createRule({ orgId, actorUserId, req, ...req.body });
@@ -47,7 +48,7 @@ router.post("/rules", requirePermission("reporting.allocations.manage"), async (
 });
 
 // Compute allocations snapshot
-router.post("/compute", requirePermission("reporting.allocations.read"), async (req, res, next) => {
+router.post("/compute", requirePermission("reporting.allocations.read"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { ruleId, periodId } = req.body;

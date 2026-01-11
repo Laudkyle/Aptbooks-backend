@@ -168,8 +168,7 @@ async function getIfrs9Settings({ orgId }) {
 
 async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
-  logger.debug({ orgId, actorUserId }, "Upserting IFRS9 settings");
-  try {
+  logger.debug({ keys: Object.keys(payload || {}) }, "IFRS9: received payload");  try {
     await client.query("BEGIN");
 
     // Validate accounts if provided

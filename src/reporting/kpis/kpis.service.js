@@ -20,12 +20,12 @@ async function listDefinitions({ orgId }) {
   return repo.listDefinitions({ orgId });
 }
 
-async function createDefinition({ orgId, code, name, description, dataType = "numeric", definitionJson = {}, status = "active", actorUserId, req }) {
+async function createDefinition({ orgId, code, name, description, expression, unit, status = "active", actorUserId, req }) {
   assertCode(code);
   assertName(name);
-  if (!['numeric','text'].includes(dataType)) throw new AppError(400, "Invalid dataType");
+  if (!expression || typeof expression !== "string") throw new AppError(400, "expression is required");
 
-  const created = await repo.createDefinition({ orgId, code, name, description, dataType, definitionJson, status });
+  const created = await repo.createDefinition({ orgId, code, name, description, expression, unit, status });
 
   await writeAudit({
     organizationId: orgId,
@@ -42,11 +42,11 @@ async function createDefinition({ orgId, code, name, description, dataType = "nu
   return created;
 }
 
-async function updateDefinition({ orgId, id, code, name, description, dataType, definitionJson, status, actorUserId, req }) {
+async function updateDefinition({ orgId, id, code, name, description, expression, unit, status, actorUserId, req }) {
   const before = await repo.getDefinition({ orgId, id });
   if (!before) throw new AppError(404, "KPI definition not found");
 
-  const updated = await repo.updateDefinition({ orgId, id, code, name, description, dataType, definitionJson, status });
+  const updated = await repo.updateDefinition({ orgId, id, code, name, description, expression, unit, status });
   if (!updated) throw new AppError(404, "KPI definition not found");
 
   await writeAudit({
@@ -81,10 +81,60 @@ async function deleteDefinition({ orgId, id, actorUserId, req }) {
   });
 }
 
-// Supported calculation kinds (safe):
-// 1) { kind: 'income_statement', metric: 'netIncome'|'totalRevenue'|'totalExpenses' }
-// 2) { kind: 'account_type_sum', accountType: 'ASSET'|'LIABILITY'|'EQUITY'|'REVENUE'|'EXPENSE', normal: 'debit'|'credit' }
-// 3) { kind: 'account_code_prefix_sum', prefix: '1'|'4000', normal: 'debit'|'credit' }
+// Supported expression formats (stored in kpi_definitions.expression):
+// A) JSON string:
+//    {"kind":"income_statement","metric":"netIncome"}
+//    {"kind":"account_type_sum","accountType":"ASSET","normal":"debit"}
+//    {"kind":"account_code_prefix_sum","prefix":"4000","normal":"credit"}
+// B) Lightweight DSL:
+//    income_statement.netIncome
+//    account_type_sum:ASSET:debit
+//    account_code_prefix_sum:4000:credit
+function parseKpiExpression(expression) {
+  if (!expression || typeof expression !== "string") return null;
+  const expr = expression.trim();
+  if (!expr) return null;
+
+  // JSON format
+  if (expr.startsWith("{")) {
+    try {
+      const obj = JSON.parse(expr);
+      return obj && typeof obj === "object" ? obj : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // DSL format
+  if (expr.startsWith("income_statement.")) {
+    const metric = expr.split(".").slice(1).join(".");
+    return metric ? { kind: "income_statement", metric } : null;
+  }
+
+  const parts = expr.split(":").map((p) => p.trim()).filter(Boolean);
+  if (parts[0] === "account_type_sum") {
+    const accountType = parts[1];
+    const normal = parts[2] || undefined;
+    return accountType ? { kind: "account_type_sum", accountType, normal } : null;
+  }
+  if (parts[0] === "account_code_prefix_sum") {
+    const prefix = parts[1];
+    const normal = parts[2] || undefined;
+    return prefix ? { kind: "account_code_prefix_sum", prefix, normal } : null;
+  }
+  return null;
+}
+
+async function getPeriodAsOfDate({ orgId, periodId }) {
+  const { pool } = require("../../db/pool");
+  const { rows } = await pool.query(
+    `SELECT end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, periodId]
+  );
+  if (!rows.length) throw new AppError(404, "Accounting period not found");
+  return rows[0].end_date;
+}
+
 async function computeValues({ orgId, periodId }) {
   assertPeriodId(periodId);
   const defs = await repo.listDefinitions({ orgId });
@@ -98,19 +148,20 @@ async function computeValues({ orgId, periodId }) {
   };
 
   const compute = (def) => {
-    const d = def.definition_json || {};
+    const d = parseKpiExpression(def.expression);
+    if (!d) return null;
     switch (d.kind) {
       case "income_statement": {
         const metric = d.metric;
         if (!metric || !is.totals || is.totals[metric] === undefined) return null;
-        return { value_numeric: Number(is.totals[metric]), payload: { kind: d.kind, metric } };
+        return { value: Number(is.totals[metric]), payload: { kind: d.kind, metric } };
       }
       case "account_type_sum": {
         const accountType = d.accountType;
         const normal = d.normal || (accountType === "ASSET" || accountType === "EXPENSE" ? "debit" : "credit");
         const rows = tb.filter((r) => r.account_type === accountType);
         const sum = rows.reduce((s, r) => s + getNormalAmount(r, normal), 0);
-        return { value_numeric: sum, payload: { kind: d.kind, accountType, normal } };
+        return { value: sum, payload: { kind: d.kind, accountType, normal } };
       }
       case "account_code_prefix_sum": {
         const prefix = String(d.prefix || "");
@@ -118,7 +169,7 @@ async function computeValues({ orgId, periodId }) {
         if (!prefix) return null;
         const rows = tb.filter((r) => String(r.code).startsWith(prefix));
         const sum = rows.reduce((s, r) => s + getNormalAmount(r, normal), 0);
-        return { value_numeric: sum, payload: { kind: d.kind, prefix, normal } };
+        return { value: sum, payload: { kind: d.kind, prefix, normal } };
       }
       default:
         return null;
@@ -130,27 +181,28 @@ async function computeValues({ orgId, periodId }) {
     .map((d) => {
       const c = compute(d);
       return {
-        kpi_id: d.id,
+        kpi_definition_id: d.id,
         code: d.code,
         name: d.name,
         period_id: periodId,
-        value_numeric: c ? c.value_numeric : null,
+        value: c ? c.value : null,
         payload_json: c ? c.payload : null,
       };
     });
 }
 
 async function computeAndPersistValues({ orgId, periodId, actorUserId, req }) {
+  const asOfDate = await getPeriodAsOfDate({ orgId, periodId });
   const computed = await computeValues({ orgId, periodId });
   const saved = [];
 
   for (const item of computed) {
     const row = await repo.upsertValue({
       orgId,
-      kpiId: item.kpi_id,
+      kpiDefinitionId: item.kpi_definition_id,
       periodId,
-      valueNumeric: item.value_numeric,
-      valueText: null,
+      asOfDate,
+      value: item.value,
       payloadJson: item.payload_json || {},
     });
     saved.push(row);
