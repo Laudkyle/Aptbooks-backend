@@ -148,7 +148,7 @@ async function listVendorPayments({ orgId, query }) {
 }
 
 async function postVendorPayment({ orgId, actorUserId, id }) {
-  const { withTransaction } = require("../../../db/tx");
+  const { withTransaction } = require("../../../../db/tx");
   return withTransaction(async (client) => {
     // Lock vendor payment row
     const { rows: vpRows } = await client.query(

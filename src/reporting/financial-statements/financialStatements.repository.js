@@ -1,38 +1,38 @@
 const { pool } = require("../../db/pool");
 
 async function insertFinancialStatement({ orgId, periodId, statementType, templateId, asOfDate, comparePeriodId, mode, parameters, generatedByUserId, payload }) {
-  const { rows } = await pool.query(
-    `
-    INSERT INTO financial_statements(
-      organization_id,
-      period_id,
-      template_id,
-      statement_type,
-      as_of_date,
-      compare_period_id,
-      mode,
-      parameters_json,
-      generated_by_user_id,
-      generated_by,
-      payload_json
-    )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10)
-    RETURNING id, organization_id, period_id, template_id, statement_type, as_of_date,
-              compare_period_id, mode, generated_by_user_id, generated_by, generated_at, payload_json
-    `,
-    [
-      orgId,
-      periodId || null,
-      templateId || null,
-      statementType,
-      asOfDate || null,
-      comparePeriodId || null,
-      mode || "period",
-      parameters || {},
-      generatedByUserId || null,
-      payload
-    ]
-  );
+  const { rows } =  await pool.query(
+  `
+  INSERT INTO financial_statements(
+    organization_id,
+    period_id,
+    template_id,
+    statement_type,
+    as_of_date,
+    compare_period_id,
+    mode,
+    parameters_json,
+    generated_by_user_id,
+    generated_by,
+    payload_json
+  )
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$9,$10::jsonb)
+  RETURNING id, organization_id, period_id, template_id, statement_type, as_of_date,
+            compare_period_id, mode, generated_by_user_id, generated_by, generated_at, payload_json
+  `,
+  [
+    orgId,
+    periodId || null,
+    templateId || null,
+    statementType,
+    asOfDate || null,
+    comparePeriodId || null,
+    mode || "period",
+    JSON.stringify(parameters || {}),  // Convert to JSON string
+    generatedByUserId || null,
+    JSON.stringify(payload || {})      // Convert to JSON string
+  ]
+);
   return rows[0];
 }
 

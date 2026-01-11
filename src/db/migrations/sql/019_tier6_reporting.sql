@@ -197,6 +197,8 @@ CREATE TABLE IF NOT EXISTS cost_centers (
   code TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code)
 );
 
@@ -206,6 +208,8 @@ CREATE TABLE IF NOT EXISTS profit_centers (
   code TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code)
 );
 
@@ -215,6 +219,8 @@ CREATE TABLE IF NOT EXISTS investment_centers (
   code TEXT NOT NULL,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code)
 );
 
@@ -228,6 +234,8 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','completed','archived')),
   start_date DATE,
   end_date DATE,
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code)
 );
 
@@ -258,6 +266,8 @@ CREATE TABLE IF NOT EXISTS allocation_bases (
   basis_type TEXT NOT NULL CHECK (basis_type IN ('headcount','area','revenue','custom')),
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code)
 );
 
@@ -271,6 +281,8 @@ CREATE TABLE IF NOT EXISTS allocation_rules (
   allocation_base_id UUID REFERENCES allocation_bases(id) ON DELETE RESTRICT,
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
+   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code)
 );
 

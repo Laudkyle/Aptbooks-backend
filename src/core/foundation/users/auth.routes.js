@@ -91,7 +91,7 @@ function clearRefreshCookie(res) {
   if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
   res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, opts);
 }
-}
+
 
 
 function jwtVerifyOpts() {
