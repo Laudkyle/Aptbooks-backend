@@ -1,5 +1,4 @@
 const { pool } = require("../../db/pool");
-const periodIF = require("../../interfaces/periodManagement.interface");
 const ias12 = require("../../compliance/ias12/ias12.service");
 const { getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
 
@@ -15,7 +14,6 @@ function yyyyMmDdUTC(d) {
 // Does NOT finalize or post.
 async function computeDeferredTaxDraftDaily() {
   const today = yyyyMmDdUTC(new Date());
-  const actorUserId = await getSystemActorUserId();
 
   const { rows: orgs } = await pool.query(`SELECT id FROM organizations ORDER BY created_at ASC`);
 
@@ -24,6 +22,7 @@ async function computeDeferredTaxDraftDaily() {
   let reasons = {};
 
   for (const o of orgs) {
+    const actorUserId = await getSystemActorUserId({ orgId: o.id });
     // find open periods ending today
     const { rows: periods } = await pool.query(
       `SELECT id FROM accounting_periods WHERE organization_id=$1 AND status='open' AND end_date=$2`,
@@ -70,12 +69,12 @@ async function computeDeferredTaxDraftDaily() {
 
 // Simple configuration check: reports orgs missing IAS12 settings or rate coverage for their open period end date.
 async function checkIas12ConfigDaily() {
-  const actorUserId = await getSystemActorUserId();
   const { rows: orgs } = await pool.query(`SELECT id FROM organizations ORDER BY created_at ASC`);
 
   let issues = 0;
 
   for (const o of orgs) {
+    const actorUserId = await getSystemActorUserId({ orgId: o.id });
     // take the latest open period (by end_date)
     const { rows: periods } = await pool.query(
       `SELECT id, end_date FROM accounting_periods WHERE organization_id=$1 AND status='open' ORDER BY end_date DESC LIMIT 1`,

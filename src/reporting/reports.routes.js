@@ -24,4 +24,7 @@ router.use("/tax", require("./tax/tax.routes"));
 router.use("/audit", require("./audit/audit.routes"));
 router.use("/exports", require("./exports/exports.routes"));
 
+// Operational visibility (scheduler health KPIs, etc.)
+router.use("/system", require("./system/system.routes"));
+
 module.exports = router;

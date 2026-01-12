@@ -28,8 +28,12 @@ const documentsWorkflowRoutes = require("./workflow/documents/documents.routes")
 
 // Tier 8: Compliance (IFRS/IAS)
 const complianceRoutes = require("./compliance/compliance.routes");
+const { healthRouter } = require("./health/health.routes");
 
 const app = express();
+
+// Liveness / readiness / comprehensive health report
+app.use("/", healthRouter);
 
 // Trust reverse proxy headers (set TRUST_PROXY=true when behind a proxy / load balancer)
 if (env.TRUST_PROXY) {
