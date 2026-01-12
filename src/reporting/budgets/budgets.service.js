@@ -6,6 +6,44 @@ function assertName(name) {
   if (!name || typeof name !== "string") throw new AppError(400, "name is required");
 }
 
+
+function assertBudgetStatus(status) {
+  if (!status) return;
+  const allowed = new Set(["draft", "active", "archived"]);
+  if (!allowed.has(status)) throw new AppError(400, `Invalid budget status. Allowed: ${Array.from(allowed).join(", ")}`);
+}
+
+function assertVersionStatus(status) {
+  if (!status) return;
+  const allowed = new Set(["draft", "final", "archived"]);
+  if (!allowed.has(status)) throw new AppError(400, `Invalid version status. Allowed: ${Array.from(allowed).join(", ")}`);
+}
+
+function roundMoney(v, decimals = 2) {
+  const m = Math.pow(10, decimals);
+  return Math.round((Number(v) + Number.EPSILON) * m) / m;
+}
+
+async function resolveAndValidatePeriods({ orgId, budget, periodIds }) {
+  if (Array.isArray(periodIds) && periodIds.length) {
+    // validate each period exists in org
+    const periods = [];
+    for (const pid of periodIds) {
+      const p = await repo.getAccountingPeriod({ orgId, periodId: pid });
+      if (!p) throw new AppError(400, `Invalid periodId: ${pid}`);
+      periods.push(p);
+    }
+    return periods.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+  }
+
+  if (!budget.fiscal_year) {
+    throw new AppError(400, "periodIds is required when budget.fiscalYear is not set");
+  }
+
+  const periods = await repo.listPeriodsByStartYear({ orgId, year: Number(budget.fiscal_year) });
+  if (!periods.length) throw new AppError(400, `No accounting periods found for fiscalYear ${budget.fiscal_year}`);
+  return periods;
+}
 async function listBudgets({ orgId }) {
   return repo.listBudgets({ orgId });
 }
@@ -13,7 +51,8 @@ async function listBudgets({ orgId }) {
 async function createBudget({ orgId, name, fiscalYear, currencyCode, status, actorUserId, req }) {
   assertName(name);
   if (!currencyCode) throw new AppError(400, "currencyCode is required");
-  const created = await repo.createBudget({ orgId, name, fiscalYear, currencyCode, status });
+  assertBudgetStatus(status);
+  const created = await repo.createBudget({ orgId, name, fiscalYear, currencyCode, status: status || "draft" });
 
   await writeAudit({
     organizationId: orgId,
@@ -40,6 +79,7 @@ async function updateBudget({ orgId, id, name, fiscalYear, currencyCode, status,
   const before = await repo.getBudget({ orgId, id });
   if (!before) throw new AppError(404, "Budget not found");
 
+  assertBudgetStatus(status);
   const updated = await repo.updateBudget({ orgId, id, name, fiscalYear, currencyCode, status });
 
   await writeAudit({
@@ -60,6 +100,7 @@ async function updateBudget({ orgId, id, name, fiscalYear, currencyCode, status,
 async function createVersion({ orgId, budgetId, versionNo, name, status, actorUserId, req }) {
   await getBudget({ orgId, id: budgetId });
   if (typeof versionNo !== "number") throw new AppError(400, "versionNo must be a number");
+  assertVersionStatus(status);
   const created = await repo.createVersion({ orgId, budgetId, versionNo, name, status, createdByUserId: actorUserId });
 
   await writeAudit({
@@ -80,6 +121,8 @@ async function createVersion({ orgId, budgetId, versionNo, name, status, actorUs
 async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req }) {
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
+  if (v.status !== "draft") throw new AppError(409, "Budget version is not editable (status must be draft)");
+  const budget = await getBudget({ orgId, id: budgetId });
   if (!Array.isArray(lines)) throw new AppError(400, "lines must be an array");
 
   const saved = [];
@@ -87,6 +130,15 @@ async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req
     if (!line.accountId) throw new AppError(400, "Each line requires accountId");
     if (!line.periodId) throw new AppError(400, "Each line requires periodId");
     if (line.amount === undefined || line.amount === null) throw new AppError(400, "Each line requires amount");
+
+    const p = await repo.getAccountingPeriod({ orgId, periodId: line.periodId });
+    if (!p) throw new AppError(400, `Invalid periodId: ${line.periodId}`);
+    if (budget.fiscal_year) {
+      const y = new Date(p.start_date).getUTCFullYear();
+      if (Number(y) !== Number(budget.fiscal_year)) {
+        throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}`);
+      }
+    }
     const row = await repo.upsertLine({
       orgId,
       versionId,
@@ -117,6 +169,8 @@ async function getVariance({ orgId, budgetId, versionId, periodId }) {
   if (!periodId) throw new AppError(400, "periodId is required");
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
+  if (v.status !== "draft") throw new AppError(409, "Budget version is not editable (status must be draft)");
+  const budget = await getBudget({ orgId, id: budgetId });
 
   const rows = await repo.getVariance({ orgId, budgetVersionId: versionId, periodId });
   // Provide simple totals for convenience
@@ -132,6 +186,118 @@ async function getVariance({ orgId, budgetId, versionId, periodId }) {
   return { periodId, budgetId, versionId, totals, lines: rows };
 }
 
+
+async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId, req }) {
+  const v = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!v) throw new AppError(404, "Budget version not found");
+  if (v.status !== "draft") throw new AppError(409, "Budget version is not editable (status must be draft)");
+
+  const budget = await getBudget({ orgId, id: budgetId });
+  const payloadItems = Array.isArray(items) ? items : [];
+  if (!payloadItems.length) throw new AppError(400, "items must be a non-empty array");
+
+  const saved = [];
+  for (const it of payloadItems) {
+    const { accountId, annualAmount, method, periodIds, weights, amounts, dimensionJson } = it || {};
+    if (!accountId) throw new AppError(400, "Each item requires accountId");
+    if (annualAmount === undefined || annualAmount === null) throw new AppError(400, "Each item requires annualAmount");
+    const m = (method || "even").toLowerCase();
+    if (!["even", "weighted", "custom"].includes(m)) throw new AppError(400, "method must be one of: even, weighted, custom");
+
+    const periods = await resolveAndValidatePeriods({ orgId, budget, periodIds });
+    const n = periods.length;
+
+    let perPeriodAmounts = [];
+
+    if (m === "even") {
+      const total = Number(annualAmount);
+      const raw = total / n;
+      let running = 0;
+      for (let i = 0; i < n; i++) {
+        const a = (i === n - 1) ? roundMoney(total - running, 2) : roundMoney(raw, 2);
+        running = roundMoney(running + a, 2);
+        perPeriodAmounts.push(a);
+      }
+    } else if (m === "weighted") {
+      if (!Array.isArray(weights) || weights.length !== n) throw new AppError(400, "weights must be an array aligned to periodIds (same length)");
+      const wsum = weights.reduce((acc, w) => acc + Number(w || 0), 0);
+      if (!wsum) throw new AppError(400, "weights sum must be > 0");
+      const total = Number(annualAmount);
+      let running = 0;
+      for (let i = 0; i < n; i++) {
+        const share = total * (Number(weights[i]) / wsum);
+        const a = (i === n - 1) ? roundMoney(total - running, 2) : roundMoney(share, 2);
+        running = roundMoney(running + a, 2);
+        perPeriodAmounts.push(a);
+      }
+    } else {
+      if (!Array.isArray(amounts) || amounts.length !== n) throw new AppError(400, "amounts must be an array aligned to periodIds (same length)");
+      perPeriodAmounts = amounts.map((x) => roundMoney(x, 2));
+    }
+
+    // upsert per period
+    for (let i = 0; i < n; i++) {
+      const p = periods[i];
+      const row = await repo.upsertLine({
+        orgId,
+        versionId,
+        accountId,
+        periodId: p.id,
+        amount: perPeriodAmounts[i],
+        dimensionJson: dimensionJson || {},
+      });
+      saved.push(row);
+    }
+  }
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.lines.distribute",
+    entityType: "budget_lines",
+    entityId: null,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: { budgetId, versionId, count: saved.length },
+  });
+
+  return saved;
+}
+
+async function finalizeVersion({ orgId, budgetId, versionId, actorUserId, req }) {
+  const v = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!v) throw new AppError(404, "Budget version not found");
+  if (v.status !== "draft") throw new AppError(409, "Only draft versions can be finalized");
+
+  const { pool } = require("../../db/pool");
+  const { rows } = await pool.query(
+    `
+    UPDATE budget_versions
+    SET status='final', updated_at=NOW()
+    WHERE organization_id=$1 AND budget_id=$2 AND id=$3 AND status='draft'
+    RETURNING id, budget_id, version_no, name, status, updated_at
+    `,
+    [orgId, budgetId, versionId]
+  );
+
+  const updated = rows[0];
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.version.finalize",
+    entityType: "budget_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+
+  return updated;
+}
+
 module.exports = {
   listBudgets,
   createBudget,
@@ -140,4 +306,6 @@ module.exports = {
   createVersion,
   upsertLines,
   getVariance,
+  distributeAnnual,
+  finalizeVersion,
 };

@@ -20,7 +20,7 @@ async function createBudget({ orgId, name, fiscalYear, currencyCode, status }) {
     VALUES ($1,$2,$3,$4,$5)
     RETURNING id, name, fiscal_year, currency_code, status, created_at, updated_at
     `,
-    [orgId, name, fiscalYear || null, currencyCode, status || "active"]
+    [orgId, name, fiscalYear || null, currencyCode, status || "draft"]
   );
   return rows[0];
 }
@@ -92,6 +92,29 @@ async function upsertLine({ orgId, versionId, accountId, periodId, amount, dimen
   return rows[0];
 }
 
+
+async function getAccountingPeriod({ orgId, periodId }) {
+  const { rows } = await pool.query(
+    `SELECT id, organization_id, start_date, end_date, status FROM accounting_periods WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, periodId]
+  );
+  return rows.length ? rows[0] : null;
+}
+
+async function listPeriodsByStartYear({ orgId, year }) {
+  const { rows } = await pool.query(
+    `
+    SELECT id, start_date, end_date, code, status
+    FROM accounting_periods
+    WHERE organization_id=$1
+      AND EXTRACT(YEAR FROM start_date) = $2
+    ORDER BY start_date ASC
+    `,
+    [orgId, year]
+  );
+  return rows;
+}
+
 module.exports = {
   listBudgets,
   createBudget,
@@ -101,6 +124,8 @@ module.exports = {
   getVersion,
   upsertLine,
   getVariance,
+  getAccountingPeriod,
+  listPeriodsByStartYear,
 };
 
 // Variance: Budget vs Actual (uses GL balances for speed/consistency)
@@ -128,13 +153,25 @@ async function getVariance({ orgId, budgetVersionId, periodId }) {
     SELECT b.account_id,
            coa.code AS account_code,
            coa.name AS account_name,
+           at.normal_balance AS normal_balance,
            b.budget_amount,
            COALESCE(a.debit_total, 0) AS actual_debit_total,
            COALESCE(a.credit_total, 0) AS actual_credit_total,
            COALESCE(a.actual_net, 0) AS actual_net,
-           (COALESCE(a.actual_net, 0) - b.budget_amount) AS variance
+           CASE
+             WHEN at.normal_balance = 'credit' THEN -COALESCE(a.actual_net, 0)
+             ELSE COALESCE(a.actual_net, 0)
+           END AS actual_normalized,
+           (
+             CASE
+               WHEN at.normal_balance = 'credit' THEN -COALESCE(a.actual_net, 0)
+               ELSE COALESCE(a.actual_net, 0)
+             END
+             - b.budget_amount
+           ) AS variance
     FROM budget b
     JOIN chart_of_accounts coa ON coa.id = b.account_id
+    JOIN account_types at ON at.id = coa.account_type_id
     LEFT JOIN actual a ON a.account_id = b.account_id
     ORDER BY coa.code
     `,

@@ -73,6 +73,55 @@ router.post("/:id/versions/:versionId/lines", requirePermission("reporting.budge
   }
 });
 
+
+// Distribute annual amounts across periods (standard budgeting helper)
+// POST /reporting/budgets/:id/versions/:versionId/distribute
+// body: { items: [{ accountId, annualAmount, method: 'even'|'weighted'|'custom', periodIds?, weights?, amounts?, dimensionJson? }] }
+router.post(
+  "/:id/versions/:versionId/distribute",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.distributeAnnual({
+        orgId,
+        budgetId: req.params.id,
+        versionId: req.params.versionId,
+        items: req.body.items || [],
+        actorUserId,
+        req,
+      });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Finalize a draft budget version (locks it for edits)
+// POST /reporting/budgets/:id/versions/:versionId/finalize
+router.post(
+  "/:id/versions/:versionId/finalize",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.finalizeVersion({
+        orgId,
+        budgetId: req.params.id,
+        versionId: req.params.versionId,
+        actorUserId,
+        req,
+      });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Variance (Budget vs Actual)
 // GET /reporting/budgets/:id/versions/:versionId/variance?periodId=<accounting_period_id>
 router.get("/:id/versions/:versionId/variance", requirePermission("reporting.budgets.read"), async (req, res, next) => {
