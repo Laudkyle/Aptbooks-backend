@@ -32,6 +32,9 @@ const { healthRouter } = require("./health/health.routes");
 
 const app = express();
 
+// Correct client IP/Proto when behind a reverse proxy (e.g., Nginx, ALB).
+app.set("trust proxy", env.TRUST_PROXY);
+
 // Liveness / readiness / comprehensive health report
 app.use("/", healthRouter);
 
@@ -63,11 +66,19 @@ const corsOptions = {
     }
 
     if (env.CORS_ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    logger.warn({ origin }, "CORS origin not allowed");
     return cb(new Error("CORS origin not allowed"));
   },
   credentials: env.CORS_ALLOW_CREDENTIALS,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Authorization", "Content-Type", "x-request-id", "x-filename"],
+  allowedHeaders: [
+    "Authorization",
+    "Content-Type",
+    "Idempotency-Key",
+    "x-request-id",
+    "x-filename",
+    "x-refresh-token"
+  ],
   exposedHeaders: ["x-request-id", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset"]
 };
 

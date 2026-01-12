@@ -23,7 +23,7 @@ const env = {
   // Optional server-side safety: set a statement timeout for all DB sessions (ms). 0 disables.
   PG_STATEMENT_TIMEOUT_MS: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS || "0", 10),
   JWT_SECRET: must("JWT_SECRET"),
-    JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "12h",
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "12h",
 
   // Optional JWT claims enforcement
   JWT_ISSUER: process.env.JWT_ISSUER || "",
@@ -54,6 +54,9 @@ const env = {
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10), // 60s
   RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || "300", 10), // 300 req / min / IP
 
+  // Rate limit store: "memory" (single instance) or "postgres" (shared, multi-instance)
+  RATE_LIMIT_STORE: (process.env.RATE_LIMIT_STORE || "memory").toLowerCase(),
+
   // Auth rate limiting (additional layer; login endpoint also has its own limiter)
   AUTH_RATE_LIMIT_WINDOW_MS: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || "900000", 10), // 15m
   AUTH_RATE_LIMIT_MAX: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "50", 10), // 50 req / 15m / IP
@@ -77,4 +80,26 @@ const env = {
   ALLOW_DESTRUCTIVE_MIGRATIONS: (process.env.ALLOW_DESTRUCTIVE_MIGRATIONS || "false").toLowerCase() === "true"
 };
 
-module.exports = { env };
+function validateRuntimeEnv() {
+  // Harden production defaults and fail fast on dangerous configuration.
+  if (env.NODE_ENV === "production") {
+    if (!env.CORS_ALLOWED_ORIGINS || env.CORS_ALLOWED_ORIGINS.length === 0) {
+      throw new Error("CORS_ALLOWED_ORIGINS must be set in production");
+    }
+    if (env.REFRESH_TOKEN_USE_COOKIE && !env.COOKIE_SECURE) {
+      throw new Error("COOKIE_SECURE must be true when REFRESH_TOKEN_USE_COOKIE is enabled in production");
+    }
+    const s = String(env.COOKIE_SAMESITE || "").toLowerCase();
+    if (!(["lax", "strict", "none"].includes(s))) {
+      throw new Error("COOKIE_SAMESITE must be one of: lax, strict, none");
+    }
+    if (env.JWT_REFRESH_SECRET === env.JWT_SECRET) {
+      throw new Error("JWT_REFRESH_SECRET must be different from JWT_SECRET in production");
+    }
+    if (env.RATE_LIMIT_STORE !== "memory" && env.RATE_LIMIT_STORE !== "postgres") {
+      throw new Error("RATE_LIMIT_STORE must be either 'memory' or 'postgres'");
+    }
+  }
+}
+
+module.exports = { env, validateRuntimeEnv };

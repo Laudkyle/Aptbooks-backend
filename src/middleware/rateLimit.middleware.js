@@ -1,12 +1,39 @@
 const { env } = require("../config/env");
+const { pool } = require("../db/pool");
+const logger = require("../config/logger");
 
 // Simple in-memory rate limiter with a fixed window per key.
 // NOTE: This is NOT horizontally scalable. For production multi-instance,
 // back this with a shared store (e.g., Redis) using the same interface.
 function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
+  // In production with multiple instances, the in-memory store will not be consistent.
+  // Support a Postgres-backed store to keep behaviour deterministic across replicas.
+  const storeMode = (env.RATE_LIMIT_STORE || "memory").toLowerCase();
+
   const store = new Map(); // key -> { resetAt, count }
   const WINDOW = windowMs ?? env.RATE_LIMIT_WINDOW_MS;
   const MAX = max ?? env.RATE_LIMIT_MAX;
+
+  async function hitPostgres(key, nowMs) {
+    // Fixed window keyed by UTC epoch window start.
+    const windowStartMs = Math.floor(nowMs / WINDOW) * WINDOW;
+    const resetAtMs = windowStartMs + WINDOW;
+    const windowStartIso = new Date(windowStartMs).toISOString();
+    const resetAtIso = new Date(resetAtMs).toISOString();
+
+    // Upsert counter. Requires migration 059_rate_limit_windows.sql.
+    const q = `
+      INSERT INTO rate_limit_windows (key, window_start, reset_at, count)
+      VALUES ($1, $2::timestamptz, $3::timestamptz, 1)
+      ON CONFLICT (key, window_start)
+      DO UPDATE SET count = rate_limit_windows.count + 1
+      RETURNING count, EXTRACT(EPOCH FROM reset_at)::bigint AS reset_epoch
+    `;
+    const { rows } = await pool.query(q, [key, windowStartIso, resetAtIso]);
+    const count = Number(rows?.[0]?.count || 1);
+    const resetEpoch = Number(rows?.[0]?.reset_epoch || Math.ceil(resetAtMs / 1000));
+    return { count, resetEpoch };
+  }
 
   function cleanup(now) {
     // Opportunistic cleanup
@@ -16,7 +43,7 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
     }
   }
 
-  return function rateLimitMiddleware(req, res, next) {
+  return async function rateLimitMiddleware(req, res, next) {
     try {
       if (skipFn && skipFn(req)) return next();
 
@@ -24,6 +51,25 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
       cleanup(now);
 
       const key = keyFn ? keyFn(req) : (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown");
+
+      // Postgres mode (shared across instances)
+      if (storeMode === "postgres") {
+        const { count, resetEpoch } = await hitPostgres(key, now);
+        const remaining = Math.max(0, MAX - count);
+
+        res.setHeader("x-ratelimit-limit", String(MAX));
+        res.setHeader("x-ratelimit-remaining", String(remaining));
+        res.setHeader("x-ratelimit-reset", String(resetEpoch));
+
+        if (count > MAX) {
+          res.status(429).json({
+            error: "Too Many Requests",
+            message: "Rate limit exceeded. Please try again later."
+          });
+          return;
+        }
+        return next();
+      }
       const current = store.get(key);
 
       if (!current || current.resetAt <= now) {
@@ -52,6 +98,7 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
       next();
     } catch (err) {
       // Fail-open to avoid taking the API down due to limiter errors.
+      logger.warn({ err: err?.message }, "Rate limiter failed open");
       next();
     }
   };

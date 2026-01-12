@@ -2,6 +2,18 @@ const os = require("os");
 const { pool } = require("../../db/pool");
 const { AppError } = require("../../shared/errors/AppError");
 
+let _state = {
+  started: false,
+  startedAt: null,
+  lastTickAt: null,
+  lastTickError: null,
+  tasksLoaded: 0
+};
+
+function getSchedulerState() {
+  return { ..._state };
+}
+
 function utcNow() { return new Date(); }
 
 function computeNextRunAt({ schedule_type, intervalSeconds, dailyHourUtc, dailyMinuteUtc }) {
@@ -109,6 +121,12 @@ async function markRun({ taskCode, status, message, error }) {
 }
 
 async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
+  if (!Array.isArray(tasks)) tasks = [];
+
+  _state.started = true;
+  _state.startedAt = new Date().toISOString();
+  _state.tasksLoaded = tasks.length;
+
   // Ensure tasks exist in DB (persisted schedules)
   for (const t of tasks) {
     await ensureTask({ code: t.code, name: t.name, schedule: t.schedule });
@@ -117,6 +135,8 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
   const instanceId = `${os.hostname()}:${process.pid}`;
 
   async function tick() {
+    _state.lastTickAt = new Date().toISOString();
+    _state.lastTickError = null;
     const client = await pool.connect();
     try {
       // pick due tasks
@@ -247,7 +267,21 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
 
   // Run immediately then poll
   await tick();
-  setInterval(() => tick().catch(() => {}), pollIntervalMs);
+  const intervalId = setInterval(() => {
+    tick().catch((e) => {
+      _state.lastTickError = String(e?.message || e);
+    });
+  }, pollIntervalMs);
+
+  return {
+    started: true,
+    tasks: tasks.map((t) => ({ code: t.code, name: t.name })),
+    stop: async () => {
+      clearInterval(intervalId);
+      _state.started = false;
+      return { stopped: true };
+    }
+  };
 }
 
-module.exports = { startScheduler };
+module.exports = { startScheduler, getSchedulerState };

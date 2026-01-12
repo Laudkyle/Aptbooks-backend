@@ -29,7 +29,7 @@ function signAccessToken({ userId, organizationId, email }) {
   return jwt.sign(
     { id: userId, organization_id: organizationId, email, typ: "access" },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN }
+    { expiresIn: env.JWT_EXPIRES_IN, ...jwtOptions() }
   );
 }
 
@@ -39,7 +39,7 @@ function signRefreshToken({ userId, organizationId, email, familyId }) {
   const token = jwt.sign(
     { sub: userId, organization_id: organizationId, email, jti, fid, typ: "refresh" },
     env.JWT_REFRESH_SECRET,
-    { expiresIn: env.JWT_REFRESH_EXPIRES_IN }
+    { expiresIn: env.JWT_REFRESH_EXPIRES_IN, ...jwtOptions() }
   );
   const decoded = jwt.decode(token);
   const expMs = decoded?.exp ? decoded.exp * 1000 : (Date.now() + 30 * 24 * 3600 * 1000);

@@ -2,7 +2,12 @@ const logger = require("../config/logger");
 const { AppError } = require("../shared/errors/AppError");
 
 function errorMiddleware(err, req, res, _next) {
-  const status = err instanceof AppError ? err.status : 500;
+  let status = err instanceof AppError ? err.status : 500;
+
+  // Normalise common framework errors
+  if (status === 500 && typeof err?.message === "string" && err.message.toLowerCase().includes("cors")) {
+    status = 403;
+  }
 
   if (status >= 500) {
     logger.error({ err, path: req.path }, "Unhandled error");
