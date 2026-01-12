@@ -88,5 +88,7 @@ if (process.env.SCHEDULER_ENABLED !== "false") {
         handler: async () => ifrs9AutoComputeAndFinalizeEclDaily(),
       },
     ],
-  }).catch(() => {});
+  }).catch((err) => {
+    console.log(err)
+  });
 }

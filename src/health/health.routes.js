@@ -49,13 +49,14 @@ async function moduleTableCheck() {
     { module: "modules.transactions", required: ["invoices", "invoice_lines", "bills", "bill_lines"] },
     { module: "modules.assets", required: ["fixed_assets", "asset_depreciation_transactions"] },
     { module: "modules.inventory", required: ["inventory_items", "inventory_transactions"] },
-    { module: "modules.banking", required: ["bank_accounts", "bank_statements", "bank_transactions"] },
+    { module: "modules.banking", required: ["bank_accounts", "bank_statements", "bank_statement_lines", "bank_reconciliations", "bank_transactions"] },
     { module: "reporting", required: ["budgets", "budget_versions", "kpi_definitions", "financial_statements"] },
     { module: "workflow", required: ["documents", "document_types", "document_versions", "document_approvals"] },
     { module: "compliance.ifrs16", required: ["leases", "lease_schedule_lines", "lease_posting_ledger"] },
     { module: "compliance.ifrs15", required: ["ifrs15_settings", "ifrs15_contracts", "ifrs15_recognition_schedule_lines", "ifrs15_posting_ledger"] },
     { module: "compliance.ifrs9", required: ["ifrs9_settings", "ifrs9_ecl_models", "ifrs9_ecl_runs", "ifrs9_posting_ledger"] },
-    { module: "compliance.ias12", required: ["ias12_settings", "tax_authorities", "tax_rate_sets", "ias12_deferred_tax_runs", "ias12_posting_ledger"] },
+    // IAS 12 tables are namespaced with ias12_ prefixes in migrations.
+    { module: "compliance.ias12", required: ["ias12_settings", "ias12_tax_authorities", "ias12_tax_rate_sets", "ias12_deferred_tax_runs", "ias12_deferred_tax_postings"] },
     { module: "utilities.scheduler", required: ["scheduled_tasks", "scheduled_task_runs"] }
   ];
 

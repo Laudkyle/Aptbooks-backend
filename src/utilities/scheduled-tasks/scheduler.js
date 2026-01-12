@@ -4,35 +4,48 @@ const { AppError } = require("../../shared/errors/AppError");
 
 function utcNow() { return new Date(); }
 
-function computeNextRunAt(task) {
-  const now = utcNow();
+function computeNextRunAt({ schedule_type, intervalSeconds, dailyHourUtc, dailyMinuteUtc }) {
+  const now = new Date();
 
-  if (task.schedule_type === "interval_seconds") {
-    const seconds = Number(task.interval_seconds || 0);
-    if (!seconds) throw new AppError(500, `Task ${task.code} missing interval_seconds`);
-    return new Date(now.getTime() + seconds * 1000);
+  if (schedule_type === "interval") {
+    const secs = Number(intervalSeconds);
+    if (!Number.isFinite(secs) || secs <= 0) {
+      throw new Error(`Invalid intervalSeconds for interval schedule: ${intervalSeconds}`);
+    }
+    return new Date(now.getTime() + secs * 1000);
   }
 
-  if (task.schedule_type === "daily_at_utc") {
-    const h = Number(task.daily_hour_utc);
-    const m = Number(task.daily_minute_utc);
+  if (schedule_type === "daily_at_utc") {
+    const hh = Number(dailyHourUtc);
+    const mm = Number(dailyMinuteUtc);
 
+    if (!Number.isInteger(hh) || hh < 0 || hh > 23) {
+      throw new Error(`Invalid dailyHourUtc for daily schedule: ${dailyHourUtc}`);
+    }
+    if (!Number.isInteger(mm) || mm < 0 || mm > 59) {
+      throw new Error(`Invalid dailyMinuteUtc for daily schedule: ${dailyMinuteUtc}`);
+    }
+
+    // Next run at HH:MM UTC (today if still in future, else tomorrow)
     const next = new Date(Date.UTC(
       now.getUTCFullYear(),
       now.getUTCMonth(),
       now.getUTCDate(),
-      h, m, 0, 0
+      hh,
+      mm,
+      0,
+      0
     ));
 
-    // if already passed today, schedule tomorrow
     if (next.getTime() <= now.getTime()) {
       next.setUTCDate(next.getUTCDate() + 1);
     }
     return next;
   }
 
-  throw new AppError(500, `Unknown schedule_type: ${task.schedule_type}`);
+  throw new Error(`Unsupported schedule_type: ${schedule_type}`);
 }
+
 
 // Deterministic 32-bit advisory lock key from task_code
 function lockKeyFromCode(code) {
