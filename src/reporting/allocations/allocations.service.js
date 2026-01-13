@@ -189,7 +189,7 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
   for (const id of ruleIds) assertUuid(id, "ruleId");
 
   // validate period exists
-  const period = await pool.query(`SELECT id, period_name, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`, [orgId, periodId]);
+  const period = await pool.query(`SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`, [orgId, periodId]);
   if (!period.rows.length) throw new AppError(404, "Period not found");
 
   const created = [];
