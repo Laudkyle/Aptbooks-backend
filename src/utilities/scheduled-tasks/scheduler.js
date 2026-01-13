@@ -21,10 +21,10 @@ function computeNextRunAt(task) {
   console.log('computeNextRunAt called with task:', task.code);
   
   // Extract schedule properties from the task object
-  const scheduleType = task.schedule_type;
-  const intervalSeconds = task.interval_seconds;
-  const dailyHourUtc = task.daily_hour_utc;
-  const dailyMinuteUtc = task.daily_minute_utc;
+  const scheduleType = task.schedule_type || task.type;
+  const intervalSeconds = task.interval_seconds || task.intervalSeconds;
+  const dailyHourUtc = task.daily_hour_utc || task.dailyHourUtc;
+  const dailyMinuteUtc = task.daily_minute_utc || task.dailyMinuteUtc;
   
   console.log('Extracted values:', {
     scheduleType,
