@@ -244,6 +244,8 @@ CREATE TABLE IF NOT EXISTS project_phases (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  code TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'archived')),
   sort_order INT NOT NULL DEFAULT 0
 );
 
@@ -253,7 +255,7 @@ CREATE TABLE IF NOT EXISTS project_tasks (
   project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   phase_id UUID REFERENCES project_phases(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','archived')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'archived')),
   sort_order INT NOT NULL DEFAULT 0
 );
 

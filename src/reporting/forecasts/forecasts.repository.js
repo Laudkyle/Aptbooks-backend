@@ -250,51 +250,105 @@ async function upsertLine({ orgId, forecastId, forecastVersionId, accountId, per
   );
   return rows[0];
 }
-
 async function getVariance({ orgId, forecastId, forecastVersionId, periodId }) {
-  const { rows } = await pool.query(
-    `
-    WITH forecast AS (
-      SELECT fl.account_id,
-             SUM(fl.amount) AS forecast_amount
-      FROM forecast_lines fl
-      WHERE fl.organization_id = $1
-        AND fl.forecast_id = $2
-        AND fl.forecast_version_id = $3
-        AND fl.period_id = $4
-      GROUP BY fl.account_id
-    ), actual AS (
-      SELECT gl.account_id,
-             gl.debit_total,
-             gl.credit_total,
-             CASE WHEN coa.normal_balance='credit'
-                  THEN (gl.credit_total - gl.debit_total)
-                  ELSE (gl.debit_total - gl.credit_total)
-             END AS actual_normal
-      FROM general_ledger_balances gl
-      JOIN chart_of_accounts coa ON coa.id = gl.account_id
-      WHERE gl.organization_id = $1
-        AND gl.period_id = $4
-    )
-    SELECT f.account_id,
-           coa.code AS account_code,
-           coa.name AS account_name,
-           coa.normal_balance,
-           f.forecast_amount,
-           COALESCE(a.debit_total, 0) AS actual_debit_total,
-           COALESCE(a.credit_total, 0) AS actual_credit_total,
-           COALESCE(a.actual_normal, 0) AS actual_amount,
-           (COALESCE(a.actual_normal, 0) - f.forecast_amount) AS variance
-    FROM forecast f
-    JOIN chart_of_accounts coa ON coa.id = f.account_id
-    LEFT JOIN actual a ON a.account_id = f.account_id
-    ORDER BY coa.code
-    `,
-    [orgId, forecastId, forecastVersionId, periodId]
-  );
-  return rows;
+  try {
+    
+    const query = `
+      WITH forecast AS (
+        SELECT fl.account_id,
+               SUM(fl.amount) AS forecast_amount
+        FROM forecast_lines fl
+        WHERE fl.organization_id = $1
+          AND fl.forecast_id = $2
+          AND fl.forecast_version_id = $3
+          AND fl.period_id = $4
+        GROUP BY fl.account_id
+      ), 
+      actual AS (
+        SELECT gl.account_id,
+               gl.debit_total,
+               gl.credit_total,
+               -- Determine actual balance based on account type's normal balance
+               CASE 
+                 WHEN at.normal_balance = 'credit' THEN (gl.credit_total - gl.debit_total)
+                 WHEN at.normal_balance = 'debit' THEN (gl.debit_total - gl.credit_total)
+                 ELSE (gl.debit_total - gl.credit_total) -- Default to debit
+               END AS actual_normal,
+               at.normal_balance
+        FROM general_ledger_balances gl
+        INNER JOIN chart_of_accounts coa ON coa.id = gl.account_id
+        INNER JOIN account_types at ON at.id = coa.account_type_id
+        WHERE gl.organization_id = $1
+          AND gl.period_id = $4
+      ),
+      combined AS (
+        SELECT 
+          f.account_id,
+          coa.code AS account_code,
+          coa.name AS account_name,
+          at.name AS account_type_name,
+          at.normal_balance,
+          COALESCE(f.forecast_amount, 0) AS forecast_amount,
+          COALESCE(a.debit_total, 0) AS actual_debit_total,
+          COALESCE(a.credit_total, 0) AS actual_credit_total,
+          COALESCE(a.actual_normal, 0) AS actual_amount,
+          (COALESCE(a.actual_normal, 0) - COALESCE(f.forecast_amount, 0)) AS variance_absolute,
+          -- Calculate variance percentage (handle division by zero)
+          CASE 
+            WHEN COALESCE(f.forecast_amount, 0) = 0 THEN NULL
+            ELSE ((COALESCE(a.actual_normal, 0) - COALESCE(f.forecast_amount, 0)) / ABS(COALESCE(f.forecast_amount, 1))) * 100
+          END AS variance_percentage
+        FROM forecast f
+        INNER JOIN chart_of_accounts coa ON coa.id = f.account_id
+        INNER JOIN account_types at ON at.id = coa.account_type_id
+        LEFT JOIN actual a ON a.account_id = f.account_id
+        
+        UNION ALL
+        
+        -- Also include accounts that have actuals but no forecast
+        SELECT 
+          a.account_id,
+          coa.code AS account_code,
+          coa.name AS account_name,
+          at.name AS account_type_name,
+          at.normal_balance,
+          0 AS forecast_amount,
+          a.debit_total AS actual_debit_total,
+          a.credit_total AS actual_credit_total,
+          a.actual_normal AS actual_amount,
+          (a.actual_normal - 0) AS variance_absolute,
+          NULL AS variance_percentage
+        FROM actual a
+        INNER JOIN chart_of_accounts coa ON coa.id = a.account_id
+        INNER JOIN account_types at ON at.id = coa.account_type_id
+        WHERE a.account_id NOT IN (SELECT account_id FROM forecast)
+      )
+      SELECT *,
+        CASE 
+          WHEN variance_absolute > 0 THEN 'over'
+          WHEN variance_absolute < 0 THEN 'under'
+          ELSE 'on_target'
+        END AS variance_direction
+      FROM combined
+      ORDER BY account_code
+    `;
+    
+    const { rows } = await pool.query(query, [
+      orgId, 
+      forecastId, 
+      forecastVersionId, 
+      periodId
+    ]);
+    
+    console.log(`Found ${rows.length} variance records`);
+    return rows;
+    
+  } catch (error) {
+    console.error('Error in getVariance:', error.message);
+    console.error('Query parameters:', { orgId, forecastId, forecastVersionId, periodId });
+    throw error;
+  }
 }
-
 module.exports = {
   assertAccountWritable,
   assertPeriodExists,

@@ -109,7 +109,7 @@ async function archiveCenter({ orgId, type, id, actorUserId, req }) {
 
   const { rows } = await pool.query(
     `UPDATE ${table}
-     SET status='archived', updated_at=NOW()
+     SET status='inactive', updated_at=NOW()
      WHERE organization_id=$1 AND id=$2
      RETURNING id, code, name, status, created_at, updated_at`,
     [orgId, id]

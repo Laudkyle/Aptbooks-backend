@@ -9,7 +9,7 @@ router.get("/:type", requirePermission("reporting.centers.read"), async (req, re
   try {
     const { organization_id: orgId } = req.user;
     const { type } = req.params;
-    const data = await svc.list({ orgId, type });
+    const data = await svc.listCenters({ orgId, type });
     res.json({ data });
   } catch (err) {
     next(err);
@@ -20,7 +20,7 @@ router.post("/:type", requirePermission("reporting.centers.manage"), idempotency
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { type } = req.params;
-    const created = await svc.create({ orgId, type, actorUserId, req, ...req.body });
+    const created = await svc.createCenter({ orgId, type, actorUserId, req, ...req.body });
     res.status(201).json({ data: created });
   } catch (err) {
     next(err);
@@ -31,7 +31,7 @@ router.put("/:type/:id", requirePermission("reporting.centers.manage"), idempote
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { type, id: centerId } = req.params;
-    const updated = await svc.update({ orgId, type, id: centerId, actorUserId, req, ...req.body });
+    const updated = await svc.updateCenter({ orgId, type, id: centerId, actorUserId, req, ...req.body });
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -42,7 +42,7 @@ router.delete("/:type/:id", requirePermission("reporting.centers.manage"), idemp
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { type, id: centerId } = req.params;
-    await svc.remove({ orgId, type, id: centerId, actorUserId, req });
+    await svc.archiveCenter({ orgId, type, id: centerId, actorUserId, req });
     res.status(204).send();
   } catch (err) {
     next(err);
