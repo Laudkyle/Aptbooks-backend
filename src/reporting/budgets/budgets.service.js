@@ -1,6 +1,7 @@
 const { AppError } = require("../../shared/errors/AppError");
 const repo = require("./budgets.repository");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
+const { validateDimensionJson } = require("../dimensions/dimensions.validator");
 
 function assertName(name) {
   if (!name || typeof name !== "string") throw new AppError(400, "name is required");
@@ -139,13 +140,17 @@ async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req
         throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}`);
       }
     }
+    const amountNum = Number(line.amount);
+    if (Number.isNaN(amountNum)) throw new AppError(400, "Each line amount must be numeric");
+    const dim = await validateDimensionJson({ orgId, dimensionJson: line.dimensionJson || {} });
+
     const row = await repo.upsertLine({
       orgId,
       versionId,
       accountId: line.accountId,
       periodId: line.periodId,
-      amount: Number(line.amount),
-      dimensionJson: line.dimensionJson || {},
+      amount: amountNum,
+      dimensionJson: dim,
     });
     saved.push(row);
   }
@@ -235,16 +240,20 @@ async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId
       perPeriodAmounts = amounts.map((x) => roundMoney(x, 2));
     }
 
+    const dim = await validateDimensionJson({ orgId, dimensionJson: dimensionJson || {} });
+
     // upsert per period
     for (let i = 0; i < n; i++) {
       const p = periods[i];
+      const amountNum = Number(perPeriodAmounts[i]);
+      if (Number.isNaN(amountNum)) throw new AppError(400, "Computed budget amount must be numeric");
       const row = await repo.upsertLine({
         orgId,
         versionId,
         accountId,
         periodId: p.id,
-        amount: perPeriodAmounts[i],
-        dimensionJson: dimensionJson || {},
+        amount: amountNum,
+        dimensionJson: dim,
       });
       saved.push(row);
     }

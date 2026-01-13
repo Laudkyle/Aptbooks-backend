@@ -1,47 +1,96 @@
-const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");
+const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
-const { trialBalance } = require("../../core/accounting/ledger/balances.service");
+const journalPosting = require("../../interfaces/journalPosting.interface");
+const {
+  normalizeCode,
+  normalizeStatus,
+  assertUuid,
+  assertMoneyAmount,
+} = require("../_util");
+const { validateDimensionJson } = require("../dimensions/dimensions.validator");
 
-function assertCode(code) {
-  if (!code || typeof code !== "string") throw new AppError(400, "code is required");
+const STATUS = ["active", "inactive", "archived"]; // bases/rules
+
+async function fetchAccountNormalBalances({ orgId, accountIds }) {
+  if (!Array.isArray(accountIds) || !accountIds.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT a.id, at.normal_balance
+       FROM chart_of_accounts a
+       JOIN account_types at ON at.id = a.account_type_id
+      WHERE a.organization_id = $1 AND a.id = ANY($2::uuid[])`,
+    [orgId, accountIds]
+  );
+  const map = new Map();
+  for (const r of rows) map.set(r.id, r.normal_balance);
+  return map;
 }
 
-function assertName(name) {
-  if (!name || typeof name !== "string") throw new AppError(400, "name is required");
+function normalizeSignedByNormalBalance({ normalBalance, signedAmount }) {
+  // For management reporting, treat "DEBIT" normal as +debits, "CREDIT" normal as +credits.
+  // signedAmount here is (debit_total - credit_total).
+  const nb = (normalBalance || "DEBIT").toUpperCase();
+  return nb === "CREDIT" ? -signedAmount : signedAmount;
+}
+
+function assertName(name, field = "name") {
+  if (!name || typeof name !== "string" || !name.trim()) throw new AppError(400, `${field} is required`);
+}
+
+function assertTargetDimension(value) {
+  if (!value || typeof value !== "string" || !value.trim()) throw new AppError(400, "targetDimension is required");
+  // keep permissive, but canonicalise casing
+  return value.trim().toLowerCase();
+}
+
+function assertTargets(payloadJson) {
+  const targets = payloadJson?.targets;
+  if (!Array.isArray(targets) || targets.length === 0) {
+    throw new AppError(400, "payloadJson.targets must be a non-empty array");
+  }
+  for (const t of targets) {
+    if (!t || typeof t !== "object") throw new AppError(400, "Each target must be an object");
+    if (!t.toAccountId) throw new AppError(400, "Each target requires toAccountId");
+    assertUuid(t.toAccountId, "toAccountId");
+    const w = Number(t.weight);
+    if (Number.isNaN(w) || w <= 0) throw new AppError(400, "Each target requires weight > 0");
+  }
+  return targets;
 }
 
 async function listBases({ orgId }) {
   const { rows } = await pool.query(
-    `SELECT id, code, name, basis_type, payload_json, status FROM allocation_bases WHERE organization_id=$1 ORDER BY code`,
+    `SELECT id, code, name, payload_json AS "payloadJson", status, created_at, updated_at
+       FROM allocation_bases
+      WHERE organization_id=$1 AND status <> 'archived'
+      ORDER BY code ASC`,
     [orgId]
   );
   return rows;
 }
 
-async function createBase({ orgId, code, name, basisType, payloadJson, status, actorUserId, req }) {
-  assertCode(code);
+async function createBase({ orgId, code, name, payloadJson, status, actorUserId, req }) {
+  const c = normalizeCode(code);
   assertName(name);
-  if (!basisType) throw new AppError(400, "basisType is required");
+  const st = normalizeStatus(status || "active", STATUS, "status");
+  const pj = payloadJson && typeof payloadJson === "object" ? payloadJson : {};
+
   const { rows } = await pool.query(
-    `
-    INSERT INTO allocation_bases(organization_id, code, name, basis_type, payload_json, status)
-    VALUES ($1,$2,$3,$4,$5,$6)
-    RETURNING id, code, name, basis_type, payload_json, status
-    `,
-    [orgId, code, name, basisType, payloadJson || {}, status || 'active']
+    `INSERT INTO allocation_bases(organization_id, code, name, payload_json, status)
+     VALUES ($1,$2,$3,$4,$5)
+     RETURNING id, code, name, payload_json AS "payloadJson", status, created_at, updated_at`,
+    [orgId, c, name.trim(), pj, st]
   );
 
   await writeAudit({
-    organizationId: orgId,
+    orgId,
     actorUserId,
-    action: "reporting.allocation.base.create",
+    action: "reporting.allocation_base.create",
     entityType: "allocation_base",
     entityId: rows[0].id,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
     before: null,
     after: rows[0],
+    req,
   });
 
   return rows[0];
@@ -49,101 +98,327 @@ async function createBase({ orgId, code, name, basisType, payloadJson, status, a
 
 async function listRules({ orgId }) {
   const { rows } = await pool.query(
-    `
-    SELECT id, code, name, source_account_id, target_dimension, allocation_base_id, payload_json, status
-    FROM allocation_rules
-    WHERE organization_id=$1
-    ORDER BY code
-    `,
+    `SELECT r.id, r.code, r.name,
+            r.allocation_base_id AS "baseId",
+            b.code AS "baseCode",
+            r.source_account_id AS "sourceAccountId",
+            r.target_dimension AS "targetDimension",
+            r.payload_json AS "payloadJson",
+            r.status, r.created_at, r.updated_at
+       FROM allocation_rules r
+       JOIN allocation_bases b ON b.id = r.allocation_base_id
+      WHERE r.organization_id=$1 AND r.status <> 'archived'
+      ORDER BY r.code ASC`,
     [orgId]
   );
   return rows;
 }
 
-async function createRule({ orgId, code, name, sourceAccountId, targetDimension, allocationBaseId, payloadJson, status, actorUserId, req }) {
-  assertCode(code);
+async function createRule({
+  orgId,
+  code,
+  name,
+  baseId,
+  sourceAccountId,
+  targetDimension,
+  payloadJson,
+  status,
+  actorUserId,
+  req,
+}) {
+  const c = normalizeCode(code);
   assertName(name);
-  if (!targetDimension) throw new AppError(400, "targetDimension is required");
+  assertUuid(baseId, "baseId");
+  assertUuid(sourceAccountId, "sourceAccountId");
+  const td = assertTargetDimension(targetDimension);
+  const st = normalizeStatus(status || "active", STATUS, "status");
+
+  const pj = payloadJson && typeof payloadJson === "object" ? payloadJson : {};
+  const targets = assertTargets(pj);
+  // validate any provided dimensionJson shapes
+  for (const t of targets) {
+    if (t.dimensionJson) {
+      // will throw on invalid keys/ids
+      // eslint-disable-next-line no-await-in-loop
+      t.dimensionJson = await validateDimensionJson({ orgId, dimensionJson: t.dimensionJson });
+    }
+  }
+
+  // Ensure base exists and is active-ish
+  const base = await pool.query(`SELECT id, status FROM allocation_bases WHERE organization_id=$1 AND id=$2`, [orgId, baseId]);
+  if (!base.rows.length) throw new AppError(404, "Allocation base not found");
+  if (base.rows[0].status === "archived") throw new AppError(409, "Allocation base is archived");
+
   const { rows } = await pool.query(
-    `
-    INSERT INTO allocation_rules(
-      organization_id, code, name, source_account_id, target_dimension, allocation_base_id, payload_json, status
-    )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    RETURNING id, code, name, source_account_id, target_dimension, allocation_base_id, payload_json, status
-    `,
-    [orgId, code, name, sourceAccountId || null, targetDimension, allocationBaseId || null, payloadJson || {}, status || 'active']
+    `INSERT INTO allocation_rules(
+        organization_id, code, name, allocation_base_id,
+        source_account_id, target_dimension, payload_json, status
+     )
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     RETURNING id, code, name,
+       allocation_base_id AS "baseId",
+       source_account_id AS "sourceAccountId",
+       target_dimension AS "targetDimension",
+       payload_json AS "payloadJson",
+       status, created_at, updated_at`,
+    [orgId, c, name.trim(), baseId, sourceAccountId, td, pj, st]
   );
 
   await writeAudit({
-    organizationId: orgId,
+    orgId,
     actorUserId,
-    action: "reporting.allocation.rule.create",
+    action: "reporting.allocation_rule.create",
     entityType: "allocation_rule",
     entityId: rows[0].id,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
     before: null,
     after: rows[0],
+    req,
   });
 
   return rows[0];
 }
 
-async function computeAndPersist({ orgId, ruleId, periodId, actorUserId, req }) {
-  if (!ruleId) throw new AppError(400, "ruleId is required");
-  if (!periodId) throw new AppError(400, "periodId is required");
+async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, actorUserId, req }) {
+  assertUuid(periodId, "periodId");
+  if (!Array.isArray(ruleIds) || ruleIds.length === 0) throw new AppError(400, "ruleIds must be a non-empty array");
+  for (const id of ruleIds) assertUuid(id, "ruleId");
 
-  const { rows: ruleRows } = await pool.query(
-    `SELECT * FROM allocation_rules WHERE organization_id=$1 AND id=$2 LIMIT 1`,
-    [orgId, ruleId]
+  // validate period exists
+  const period = await pool.query(`SELECT id, period_name, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`, [orgId, periodId]);
+  if (!period.rows.length) throw new AppError(404, "Period not found");
+
+  const created = [];
+  for (const ruleId of ruleIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const existing = await pool.query(
+      `SELECT id, status FROM cost_allocations
+        WHERE organization_id=$1 AND rule_id=$2 AND period_id=$3 AND status IN ('computed','posted')
+        ORDER BY computed_at DESC LIMIT 1`,
+      [orgId, ruleId, periodId]
+    );
+    if (existing.rows.length && !replace) {
+      created.push({ id: existing.rows[0].id, status: existing.rows[0].status, reused: true });
+      continue;
+    }
+    if (existing.rows.length && replace) {
+      // archive existing (soft)
+      // eslint-disable-next-line no-await-in-loop
+      await pool.query(`UPDATE cost_allocations SET status='archived', updated_at=now() WHERE organization_id=$1 AND id=$2`, [orgId, existing.rows[0].id]);
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const ruleRes = await pool.query(
+      `SELECT id, code, name, source_account_id AS "sourceAccountId", payload_json AS "payloadJson", status
+         FROM allocation_rules
+        WHERE organization_id=$1 AND id=$2`,
+      [orgId, ruleId]
+    );
+    if (!ruleRes.rows.length) throw new AppError(404, `Allocation rule not found: ${ruleId}`);
+    const rule = ruleRes.rows[0];
+    if (rule.status === "archived") throw new AppError(409, `Allocation rule is archived: ${rule.code}`);
+
+    const targets = assertTargets(rule.payloadJson || {});
+
+    // Pull source balance for period from GL balances
+    // eslint-disable-next-line no-await-in-loop
+    const gl = await pool.query(
+      `SELECT debit_total, credit_total
+         FROM general_ledger_balances
+        WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
+      [orgId, periodId, rule.sourceAccountId]
+    );
+    const debit = Number(gl.rows[0]?.debit_total || 0);
+    const credit = Number(gl.rows[0]?.credit_total || 0);
+    const signedNet = debit - credit;
+
+    // normalise to management-reporting sign (positive = "natural" direction)
+    // eslint-disable-next-line no-await-in-loop
+    const nb = await fetchAccountNormalBalances({ orgId, accountIds: [rule.sourceAccountId] });
+    const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance: nb[rule.sourceAccountId] });
+    const baseAmount = Math.abs(normalised);
+
+    const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
+    if (totalWeight <= 0) throw new AppError(400, "Total target weight must be > 0");
+
+    // Begin transaction for allocation header + lines
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const payloadJson = {
+        memo: memo || null,
+        source_account_id: rule.sourceAccountId,
+        signed_net: signedNet,
+        normalised_net: normalised,
+        base_amount: baseAmount,
+        total_weight: totalWeight,
+        targets: targets.map((t) => ({
+          toAccountId: t.toAccountId,
+          weight: Number(t.weight),
+          dimensionJson: t.dimensionJson || null,
+          notes: t.notes || null,
+        })),
+      };
+
+      const header = await client.query(
+        `INSERT INTO cost_allocations(organization_id, rule_id, period_id, computed_at, status, payload_json)
+         VALUES ($1,$2,$3,now(),'computed',$4)
+         RETURNING id, rule_id AS "ruleId", period_id AS "periodId", computed_at AS "computedAt", status, payload_json AS "payloadJson"`,
+        [orgId, ruleId, periodId, payloadJson]
+      );
+      const allocation = header.rows[0];
+
+      // Compute line amounts (rounded to cents by default, but keep JS number)
+      const lineRows = [];
+      let lineNo = 1;
+      let allocatedSum = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        const w = Number(t.weight);
+        let amt = (baseAmount * w) / totalWeight;
+        // last line residual to ensure sums match baseAmount
+        if (i === targets.length - 1) {
+          amt = baseAmount - allocatedSum;
+        }
+        allocatedSum += amt;
+        lineRows.push({
+          orgId,
+          allocationId: allocation.id,
+          ruleId,
+          periodId,
+          lineNo,
+          toAccountId: t.toAccountId,
+          amount: amt,
+          weight: w,
+          notes: t.notes || null,
+          dimensionJson: t.dimensionJson || null,
+        });
+        lineNo += 1;
+      }
+
+      for (const lr of lineRows) {
+        // eslint-disable-next-line no-await-in-loop
+        await client.query(
+          `INSERT INTO cost_allocation_lines(
+             organization_id, allocation_id, rule_id, period_id,
+             line_no, to_account_id, amount, weight, notes, dimension_json
+           )
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [
+            lr.orgId,
+            lr.allocationId,
+            lr.ruleId,
+            lr.periodId,
+            lr.lineNo,
+            lr.toAccountId,
+            lr.amount,
+            lr.weight,
+            lr.notes,
+            lr.dimensionJson || {},
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+
+      await writeAudit({
+        orgId,
+        actorUserId,
+        action: "reporting.allocations.compute",
+        entityType: "cost_allocation",
+        entityId: allocation.id,
+        before: null,
+        after: allocation,
+        req,
+      });
+
+      created.push(allocation);
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  return created;
+}
+
+async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserId, req }) {
+  assertUuid(allocationId, "allocationId");
+  if (!entryDate || typeof entryDate !== "string") throw new AppError(400, "entryDate is required (YYYY-MM-DD)");
+
+  const headerRes = await pool.query(
+    `SELECT a.id, a.rule_id AS "ruleId", a.period_id AS "periodId", a.status, a.payload_json AS "payloadJson",
+            r.source_account_id AS "sourceAccountId"
+       FROM cost_allocations a
+       JOIN allocation_rules r ON r.id = a.rule_id
+      WHERE a.organization_id=$1 AND a.id=$2`,
+    [orgId, allocationId]
   );
-  if (!ruleRows.length) throw new AppError(404, "Allocation rule not found");
-  const rule = ruleRows[0];
+  if (!headerRes.rows.length) throw new AppError(404, "Allocation not found");
+  const allocation = headerRes.rows[0];
+  if (allocation.status === "posted") return { id: allocation.id, status: "posted", reused: true };
+  if (allocation.status !== "computed") throw new AppError(409, `Allocation must be computed to post (current: ${allocation.status})`);
 
-  // MVP computation: snapshot the source account balance (or all balances) and attach the base payload.
-  // Full allocation engine can be implemented without schema changes.
-  const tb = await trialBalance({ orgId, periodId });
-  const scoped = rule.source_account_id
-    ? tb.filter((r) => r.account_id === rule.source_account_id)
-    : tb;
+  const linesRes = await pool.query(
+    `SELECT line_no AS "lineNo", to_account_id AS "toAccountId", amount, weight, notes, dimension_json AS "dimensionJson"
+       FROM cost_allocation_lines
+      WHERE organization_id=$1 AND allocation_id=$2
+      ORDER BY line_no ASC`,
+    [orgId, allocationId]
+  );
+  if (!linesRes.rows.length) throw new AppError(409, "Allocation has no lines to post");
 
-  const payload = {
-    periodId,
-    rule: {
-      id: rule.id,
-      code: rule.code,
-      name: rule.name,
-      source_account_id: rule.source_account_id,
-      target_dimension: rule.target_dimension,
-      allocation_base_id: rule.allocation_base_id,
-    },
-    trial_balance_snapshot: scoped,
-    note: "MVP allocation snapshot. Extend with basis weights + target splits.",
-  };
+  const baseAmount = Number(allocation.payloadJson?.base_amount ?? 0);
+  if (Number.isNaN(baseAmount)) throw new AppError(500, "Allocation base amount is invalid");
 
-  const { rows } = await pool.query(
-    `
-    INSERT INTO cost_allocations(organization_id, rule_id, period_id, status, payload_json)
-    VALUES ($1,$2,$3,'computed',$4)
-    RETURNING id, rule_id, period_id, status, computed_at, created_at
-    `,
-    [orgId, ruleId, periodId, payload]
+  const debitLines = [];
+  const creditLines = [];
+
+  // Determine posting direction: by default, move costs from source to targets.
+  // If base is 0, do not post.
+  if (baseAmount === 0) {
+    await pool.query(`UPDATE cost_allocations SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=NULL WHERE organization_id=$1 AND id=$2`, [orgId, allocationId, actorUserId]);
+    return { id: allocationId, status: "posted", journalEntryId: null, zeroAmount: true };
+  }
+
+  // Debit targets, credit source (typical expense allocation)
+  for (const l of linesRes.rows) {
+    debitLines.push({ accountId: l.toAccountId, amount: assertMoneyAmount(l.amount, "amount"), memo: l.notes || "Allocation" });
+  }
+  creditLines.push({ accountId: allocation.sourceAccountId, amount: baseAmount, memo: "Allocation source" });
+
+  const je = await journalPosting.postJournalEntry({
+    orgId,
+    entryDate,
+    memo: memo || allocation.payloadJson?.memo || "Cost allocation",
+    lines: [...debitLines.map((l) => ({ ...l, side: "debit" })), ...creditLines.map((l) => ({ ...l, side: "credit" }))],
+    metadata: { module: "reporting.allocations", allocationId },
+    req,
+    actorUserId,
+  });
+
+  await pool.query(
+    `UPDATE cost_allocations
+        SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=$4, updated_at=now(),
+            payload_json = jsonb_set(payload_json, '{posted_journal_entry_id}', to_jsonb($4::text), true)
+      WHERE organization_id=$1 AND id=$2`,
+    [orgId, allocationId, actorUserId, je.id]
   );
 
   await writeAudit({
-    organizationId: orgId,
+    orgId,
     actorUserId,
-    action: "reporting.allocation.compute",
+    action: "reporting.allocations.post",
     entityType: "cost_allocation",
-    entityId: rows[0].id,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
-    before: null,
-    after: { ruleId, periodId },
+    entityId: allocationId,
+    before: { status: "computed" },
+    after: { status: "posted", journalEntryId: je.id },
+    req,
   });
 
-  return rows[0];
+  return { id: allocationId, status: "posted", journalEntryId: je.id };
 }
 
 module.exports = {
@@ -152,4 +427,5 @@ module.exports = {
   listRules,
   createRule,
   computeAndPersist,
+  postAllocation,
 };

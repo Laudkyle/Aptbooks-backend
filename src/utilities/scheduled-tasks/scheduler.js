@@ -16,10 +16,26 @@ function getSchedulerState() {
 
 function utcNow() { return new Date(); }
 
-function computeNextRunAt({ schedule_type, intervalSeconds, dailyHourUtc, dailyMinuteUtc }) {
+
+function computeNextRunAt(task) {
+  console.log('computeNextRunAt called with task:', task.code);
+  
+  // Extract schedule properties from the task object
+  const scheduleType = task.schedule_type;
+  const intervalSeconds = task.interval_seconds;
+  const dailyHourUtc = task.daily_hour_utc;
+  const dailyMinuteUtc = task.daily_minute_utc;
+  
+  console.log('Extracted values:', {
+    scheduleType,
+    dailyHourUtc,
+    dailyMinuteUtc,
+    intervalSeconds
+  });
+  
   const now = new Date();
 
-  if (schedule_type === "interval") {
+  if (scheduleType === "interval") {
     const secs = Number(intervalSeconds);
     if (!Number.isFinite(secs) || secs <= 0) {
       throw new Error(`Invalid intervalSeconds for interval schedule: ${intervalSeconds}`);
@@ -27,15 +43,17 @@ function computeNextRunAt({ schedule_type, intervalSeconds, dailyHourUtc, dailyM
     return new Date(now.getTime() + secs * 1000);
   }
 
-  if (schedule_type === "daily_at_utc") {
+  if (scheduleType === "daily_at_utc") {
     const hh = Number(dailyHourUtc);
     const mm = Number(dailyMinuteUtc);
-
+    
+    console.log(`Processing daily schedule at ${hh}:${mm} UTC`);
+    
     if (!Number.isInteger(hh) || hh < 0 || hh > 23) {
-      throw new Error(`Invalid dailyHourUtc for daily schedule: ${dailyHourUtc}`);
+      throw new Error(`Invalid daily_hour_utc for daily schedule: ${dailyHourUtc}`);
     }
     if (!Number.isInteger(mm) || mm < 0 || mm > 59) {
-      throw new Error(`Invalid dailyMinuteUtc for daily schedule: ${dailyMinuteUtc}`);
+      throw new Error(`Invalid daily_minute_utc for daily schedule: ${dailyMinuteUtc}`);
     }
 
     // Next run at HH:MM UTC (today if still in future, else tomorrow)
@@ -52,12 +70,13 @@ function computeNextRunAt({ schedule_type, intervalSeconds, dailyHourUtc, dailyM
     if (next.getTime() <= now.getTime()) {
       next.setUTCDate(next.getUTCDate() + 1);
     }
+    
+    console.log(`Next run calculated: ${next.toISOString()}`);
     return next;
   }
 
-  throw new Error(`Unsupported schedule_type: ${schedule_type}`);
+  throw new Error(`Unsupported schedule_type: ${scheduleType}`);
 }
-
 
 // Deterministic 32-bit advisory lock key from task_code
 function lockKeyFromCode(code) {

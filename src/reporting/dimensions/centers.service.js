@@ -1,113 +1,136 @@
-const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");
+const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
+const { normalizeCode, normalizeStatus } = require("../_util");
 
-const TYPE_TO_TABLE = {
-  cost: "cost_centers",
-  profit: "profit_centers",
-  investment: "investment_centers",
-};
+const CENTER_TYPES = ["cost", "profit", "investment"]; // routes map to tables
+const CENTER_STATUSES = ["active", "inactive", "archived"];
 
-function tableFor(type) {
-  const t = TYPE_TO_TABLE[type];
-  if (!t) throw new AppError(400, "type must be one of: cost, profit, investment");
-  return t;
+function tableForType(type) {
+  if (!CENTER_TYPES.includes(type)) throw new AppError(400, "Unsupported center type");
+  return type === "cost" ? "cost_centers" : type === "profit" ? "profit_centers" : "investment_centers";
 }
 
-async function list({ orgId, type }) {
-  const table = tableFor(type);
+async function listCenters({ orgId, type, status }) {
+  const table = tableForType(type);
+  const params = [orgId];
+  let where = "WHERE organization_id=$1";
+  if (status) {
+    params.push(status);
+    where += ` AND status=$${params.length}`;
+  }
   const { rows } = await pool.query(
-    `SELECT id, code, name, status, created_at, updated_at FROM ${table} WHERE organization_id=$1 ORDER BY code`,
-    [orgId]
+    `SELECT id, code, name, status, created_at, updated_at
+     FROM ${table}
+     ${where}
+     ORDER BY code`,
+    params
   );
   return rows;
 }
 
-async function create({ orgId, type, code, name, status, actorUserId, req }) {
-  if (!code) throw new AppError(400, "code is required");
-  if (!name) throw new AppError(400, "name is required");
-  const table = tableFor(type);
-  const { rows } = await pool.query(
-    `
-    INSERT INTO ${table}(organization_id, code, name, status)
-    VALUES ($1,$2,$3,$4)
-    RETURNING id, code, name, status, created_at, updated_at
-    `,
-    [orgId, code, name, status || "active"]
-  );
+async function createCenter({ orgId, type, code, name, status, actorUserId, req }) {
+  const table = tableForType(type);
+  const normCode = normalizeCode(code);
+  if (!name || typeof name !== "string" || !name.trim()) throw new AppError(400, "name is required");
+  const normStatus = normalizeStatus(status || "active", CENTER_STATUSES);
 
+  const { rows } = await pool.query(
+    `INSERT INTO ${table}(organization_id, code, name, status)
+     VALUES ($1,$2,$3,$4)
+     RETURNING id, code, name, status, created_at, updated_at`,
+    [orgId, normCode, name.trim(), normStatus]
+  );
+  const created = rows[0];
   await writeAudit({
     organizationId: orgId,
     actorUserId,
-    action: "reporting.center.create",
+    action: `reporting.center.${type}.create`,
     entityType: table,
-    entityId: rows[0].id,
+    entityId: created.id,
     ip: req.ip,
     userAgent: req.headers["user-agent"],
     before: null,
-    after: { type, ...rows[0] },
+    after: created,
   });
-
-  return rows[0];
+  return created;
 }
 
-async function update({ orgId, type, id, code, name, status, actorUserId, req }) {
-  const table = tableFor(type);
-  const { rows: beforeRows } = await pool.query(
+async function updateCenter({ orgId, type, id, code, name, status, actorUserId, req }) {
+  const table = tableForType(type);
+  const { rows: existingRows } = await pool.query(
     `SELECT * FROM ${table} WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
   );
-  if (!beforeRows.length) throw new AppError(404, "Center not found");
+  if (!existingRows.length) throw new AppError(404, "Center not found");
+  const before = existingRows[0];
+  if (before.status === "archived") throw new AppError(409, "Archived centers cannot be modified");
+
+  const normCode = code ? normalizeCode(code) : null;
+  const normStatus = status ? normalizeStatus(status, CENTER_STATUSES) : null;
+  const normName = name ? String(name).trim() : null;
+  if (name !== undefined && !normName) throw new AppError(400, "name cannot be empty");
 
   const { rows } = await pool.query(
-    `
-    UPDATE ${table}
-    SET code = COALESCE($3, code),
-        name = COALESCE($4, name),
-        status = COALESCE($5, status),
-        updated_at = NOW()
-    WHERE organization_id=$1 AND id=$2
-    RETURNING id, code, name, status, created_at, updated_at
-    `,
-    [orgId, id, code || null, name || null, status || null]
+    `UPDATE ${table}
+     SET code = COALESCE($3, code),
+         name = COALESCE($4, name),
+         status = COALESCE($5, status),
+         updated_at = NOW()
+     WHERE organization_id=$1 AND id=$2
+     RETURNING id, code, name, status, created_at, updated_at`,
+    [orgId, id, normCode, normName, normStatus]
   );
-
+  const updated = rows[0];
   await writeAudit({
     organizationId: orgId,
     actorUserId,
-    action: "reporting.center.update",
+    action: `reporting.center.${type}.update`,
     entityType: table,
     entityId: id,
     ip: req.ip,
     userAgent: req.headers["user-agent"],
-    before: beforeRows[0],
-    after: { type, ...rows[0] },
+    before,
+    after: updated,
   });
-
-  return rows[0];
+  return updated;
 }
 
-async function remove({ orgId, type, id, actorUserId, req }) {
-  const table = tableFor(type);
-  const { rows: beforeRows } = await pool.query(
+// Production-grade behaviour: never hard-delete. Move to archived.
+async function archiveCenter({ orgId, type, id, actorUserId, req }) {
+  const table = tableForType(type);
+  const { rows: existingRows } = await pool.query(
     `SELECT * FROM ${table} WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
   );
-  if (!beforeRows.length) throw new AppError(404, "Center not found");
+  if (!existingRows.length) return;
+  const before = existingRows[0];
+  if (before.status === "archived") return;
 
-  await pool.query(`DELETE FROM ${table} WHERE organization_id=$1 AND id=$2`, [orgId, id]);
-
+  const { rows } = await pool.query(
+    `UPDATE ${table}
+     SET status='archived', updated_at=NOW()
+     WHERE organization_id=$1 AND id=$2
+     RETURNING id, code, name, status, created_at, updated_at`,
+    [orgId, id]
+  );
+  const after = rows[0];
   await writeAudit({
     organizationId: orgId,
     actorUserId,
-    action: "reporting.center.delete",
+    action: `reporting.center.${type}.archive`,
     entityType: table,
     entityId: id,
     ip: req.ip,
     userAgent: req.headers["user-agent"],
-    before: beforeRows[0],
-    after: null,
+    before,
+    after,
   });
 }
 
-module.exports = { list, create, update, remove };
+module.exports = {
+  listCenters,
+  createCenter,
+  updateCenter,
+  archiveCenter,
+};

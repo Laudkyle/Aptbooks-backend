@@ -8,7 +8,13 @@ const router = express.Router();
 router.get("/definitions", requirePermission("reporting.kpis.read"), async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
-    const data = await svc.listDefinitions({ orgId });
+    const { limit, offset, status } = req.query;
+    const data = await svc.listDefinitions({
+      orgId,
+      limit: limit ? Number(limit) : 100,
+      offset: offset ? Number(offset) : 0,
+      status,
+    });
     res.json({ data });
   } catch (err) {
     next(err);
@@ -28,7 +34,7 @@ router.post("/definitions", requirePermission("reporting.kpis.manage"), idempote
 router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
-    const updated = await svc.updateDefinition({ orgId, actorUserId, req, id: req.params.id, ...req.body });
+    const updated = await svc.updateDefinition({ orgId, actorUserId, req, id: req.params.id, patch: req.body });
     res.json({ data: updated });
   } catch (err) {
     next(err);
@@ -38,8 +44,8 @@ router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), idemp
 router.delete("/definitions/:id", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
-    await svc.deleteDefinition({ orgId, actorUserId, req, id: req.params.id });
-    res.status(204).send();
+    const data = await svc.archiveDefinition({ orgId, actorUserId, req, id: req.params.id });
+    res.json({ data });
   } catch (err) {
     next(err);
   }
@@ -49,18 +55,24 @@ router.get("/values", requirePermission("reporting.kpis.read"), async (req, res,
   try {
     const { organization_id: orgId } = req.user;
     const { periodId } = req.query;
-    const data = await svc.computeValues({ orgId, periodId });
+    const { limit, offset } = req.query;
+    const data = await svc.listValues({
+      orgId,
+      periodId: periodId || null,
+      limit: limit ? Number(limit) : 200,
+      offset: offset ? Number(offset) : 0,
+    });
     res.json({ data });
   } catch (err) {
     next(err);
   }
 });
 
-router.post("/values/compute", requirePermission("reporting.kpis.read"), idempotency({ required: true }), async (req, res, next) => {
+router.post("/values/compute", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
-    const { periodId } = req.body;
-    const data = await svc.computeAndPersistValues({ orgId, periodId, actorUserId, req });
+    const { periodId, kpiDefinitionIds, asOfDate } = req.body;
+    const data = await svc.computeValues({ orgId, periodId, kpiDefinitionIds, asOfDate, actorUserId, req });
     res.status(201).json({ data });
   } catch (err) {
     next(err);

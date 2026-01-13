@@ -48,12 +48,25 @@ router.post("/rules", requirePermission("reporting.allocations.manage"), idempot
 });
 
 // Compute allocations snapshot
-router.post("/compute", requirePermission("reporting.allocations.read"), idempotency({ required: true }), async (req, res, next) => {
+router.post("/compute", requirePermission("reporting.allocations.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
-    const { ruleId, periodId } = req.body;
-    const data = await svc.computeAndPersist({ orgId, ruleId, periodId, actorUserId, req });
+    const { ruleIds, periodId, memo, replace } = req.body;
+    const data = await svc.computeAndPersist({ orgId, ruleIds, periodId, memo, replace, actorUserId, req });
     res.status(201).json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Post a computed allocation to the journal (creates a journal entry)
+router.post("/:id/post", requirePermission("reporting.allocations.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const { id } = req.params;
+    const { entryDate, memo } = req.body || {};
+    const data = await svc.postAllocation({ orgId, allocationId: id, entryDate, memo, actorUserId, req });
+    res.status(200).json({ data });
   } catch (err) {
     next(err);
   }
