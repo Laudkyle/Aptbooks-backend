@@ -297,4 +297,5 @@ CREATE TABLE IF NOT EXISTS cost_allocations (
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

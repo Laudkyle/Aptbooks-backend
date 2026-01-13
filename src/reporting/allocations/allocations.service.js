@@ -351,10 +351,13 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
 
 async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserId, req }) {
   assertUuid(allocationId, "allocationId");
-    const organizationId = orgId
+  const organizationId = orgId;
 
-  if (!entryDate || typeof entryDate !== "string") throw new AppError(400, "entryDate is required (YYYY-MM-DD)");
+  if (!entryDate || typeof entryDate !== "string") {
+    throw new AppError(400, "entryDate is required (YYYY-MM-DD)");
+  }
 
+  // Get allocation with source account
   const headerRes = await pool.query(
     `SELECT a.id, a.rule_id AS "ruleId", a.period_id AS "periodId", a.status, a.payload_json AS "payloadJson",
             r.source_account_id AS "sourceAccountId"
@@ -363,11 +366,24 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
       WHERE a.organization_id=$1 AND a.id=$2`,
     [orgId, allocationId]
   );
+  
   if (!headerRes.rows.length) throw new AppError(404, "Allocation not found");
   const allocation = headerRes.rows[0];
-  if (allocation.status === "posted") return { id: allocation.id, status: "posted", reused: true };
-  if (allocation.status !== "computed") throw new AppError(409, `Allocation must be computed to post (current: ${allocation.status})`);
+  
+  if (allocation.status === "posted") {
+    return { 
+      id: allocation.id, 
+      status: "posted", 
+      reused: true,
+      journalEntryId: allocation.payloadJson?.posted_journal_entry_id 
+    };
+  }
+  
+  if (allocation.status !== "computed") {
+    throw new AppError(409, `Allocation must be computed to post (current: ${allocation.status})`);
+  }
 
+  // Get allocation lines
   const linesRes = await pool.query(
     `SELECT line_no AS "lineNo", to_account_id AS "toAccountId", amount, weight, notes, dimension_json AS "dimensionJson"
        FROM cost_allocation_lines
@@ -375,57 +391,140 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
       ORDER BY line_no ASC`,
     [orgId, allocationId]
   );
+  
   if (!linesRes.rows.length) throw new AppError(409, "Allocation has no lines to post");
 
   const baseAmount = Number(allocation.payloadJson?.base_amount ?? 0);
   if (Number.isNaN(baseAmount)) throw new AppError(500, "Allocation base amount is invalid");
 
-  const debitLines = [];
-  const creditLines = [];
-
-  // Determine posting direction: by default, move costs from source to targets.
-  // If base is 0, do not post.
+  // If base amount is 0, mark as posted without creating journal
   if (baseAmount === 0) {
-    await pool.query(`UPDATE cost_allocations SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=NULL WHERE organization_id=$1 AND id=$2`, [orgId, allocationId, actorUserId]);
-    return { id: allocationId, status: "posted", journalEntryId: null, zeroAmount: true };
+    await pool.query(
+      `UPDATE cost_allocations 
+       SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=NULL, updated_at=now()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, allocationId, actorUserId]
+    );
+    
+    return { 
+      id: allocationId, 
+      status: "posted", 
+      journalEntryId: null, 
+      zeroAmount: true 
+    };
   }
 
-  // Debit targets, credit source (typical expense allocation)
+  // Create journal lines
+  const journalLines = [];
+
+  // Debit lines (target accounts receive the allocation)
   for (const l of linesRes.rows) {
-    debitLines.push({ accountId: l.toAccountId, amount: assertMoneyAmount(l.amount, "amount"), memo: l.notes || "Allocation" });
+    const amount = assertMoneyAmount(l.amount, "amount");
+    journalLines.push({
+      accountId: l.toAccountId,
+      debit: amount,
+      credit: 0,
+      description: l.notes || `Allocation to ${l.toAccountId.substring(0, 8)}...`
+    });
   }
-  creditLines.push({ accountId: allocation.sourceAccountId, amount: baseAmount, memo: "Allocation source" });
 
-  const je = await journalPosting.postJournalEntry({
-    orgId,
-    entryDate,
-    memo: memo || allocation.payloadJson?.memo || "Cost allocation",
-    lines: [...debitLines.map((l) => ({ ...l, side: "debit" })), ...creditLines.map((l) => ({ ...l, side: "credit" }))],
-    metadata: { module: "reporting.allocations", allocationId },
-    req,
-    actorUserId,
+  // Credit line (source account provides the allocation)
+  journalLines.push({
+    accountId: allocation.sourceAccountId,
+    debit: 0,
+    credit: baseAmount,
+    description: "Cost allocation source"
   });
 
-  await pool.query(
-    `UPDATE cost_allocations
-        SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=$4, updated_at=now(),
-            payload_json = jsonb_set(payload_json, '{posted_journal_entry_id}', to_jsonb($4::text), true)
-      WHERE organization_id=$1 AND id=$2`,
-    [orgId, allocationId, actorUserId, je.id]
-  );
+  // Verify journal is balanced
+  const totalDebit = journalLines.reduce((sum, line) => sum + (line.debit || 0), 0);
+  const totalCredit = journalLines.reduce((sum, line) => sum + (line.credit || 0), 0);
+  
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    throw new AppError(400, `Journal not balanced. Debit: ${totalDebit}, Credit: ${totalCredit}`);
+  }
 
-  await writeAudit({
-    organizationId,
-    actorUserId,
-    action: "reporting.allocations.post",
-    entityType: "cost_allocation",
-    entityId: allocationId,
-    before: { status: "computed" },
-    after: { status: "posted", journalEntryId: je.id },
-    req,
-  });
+  try {
+    // Create and post the journal entry
+    const je = await journalPosting.postJournal({
+      orgId,
+      actorUserId,
+      payload: {
+        periodId: allocation.periodId,  // REQUIRED: Period from allocation
+        entryDate: entryDate,           // Date for the journal entry
+        memo: memo || allocation.payloadJson?.memo || "Cost allocation posting",
+        lines: journalLines,
+        typeCode: "GENERAL"             // Default journal type
+        // idempotencyKey is NOT in payload - it's in headers
+      },
+      req,
+    });
 
-  return { id: allocationId, status: "posted", journalEntryId: je.id };
+    // Get the journal entry ID (handle both possible return formats)
+    const journalEntryId = je.journalId || je.id;
+    
+    if (!journalEntryId) {
+      throw new AppError(500, "Journal entry created but no ID returned");
+    }
+
+    // Update allocation with journal entry reference
+    await pool.query(
+      `UPDATE cost_allocations
+       SET status = 'posted',
+           posted_at = NOW(),
+           posted_by = $3,
+           posted_journal_entry_id = $4,
+           updated_at = NOW(),
+           payload_json = jsonb_set(
+             COALESCE(payload_json, '{}'::jsonb),
+             '{posted_journal_entry_id}',
+             to_jsonb($4::text)
+           )
+       WHERE organization_id = $1 AND id = $2`,
+      [orgId, allocationId, actorUserId, journalEntryId]
+    );
+
+    // Write audit log
+    await writeAudit({
+      organizationId,
+      actorUserId,
+      action: "reporting.allocations.post",
+      entityType: "cost_allocation",
+      entityId: allocationId,
+      before: { 
+        id: allocationId,
+        status: "computed",
+        baseAmount: baseAmount
+      },
+      after: { 
+        id: allocationId,
+        status: "posted", 
+        journalEntryId: journalEntryId,
+        postedAt: new Date().toISOString()
+      },
+      req,
+    });
+
+    return { 
+      id: allocationId, 
+      status: "posted", 
+      journalEntryId: journalEntryId,
+      baseAmount: baseAmount
+    };
+    
+  } catch (error) {
+    console.error('Failed to post journal for allocation:', {
+      allocationId,
+      error: error.message,
+      stack: error.stack
+    });
+    
+    // Re-throw as AppError if not already
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError(500, `Failed to post journal entry: ${error.message}`);
+  }
 }
 
 module.exports = {
