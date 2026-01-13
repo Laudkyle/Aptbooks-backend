@@ -69,21 +69,22 @@ async function listBases({ orgId }) {
   return rows;
 }
 
-async function createBase({ orgId, code, name, payloadJson, status, actorUserId, req }) {
+async function createBase({ orgId, code, name,basis_type, payloadJson, status, actorUserId, req }) {
   const c = normalizeCode(code);
+  const organizationId = orgId
   assertName(name);
   const st = normalizeStatus(status || "active", STATUS, "status");
   const pj = payloadJson && typeof payloadJson === "object" ? payloadJson : {};
 
   const { rows } = await pool.query(
-    `INSERT INTO allocation_bases(organization_id, code, name, payload_json, status)
-     VALUES ($1,$2,$3,$4,$5)
-     RETURNING id, code, name, payload_json AS "payloadJson", status, created_at, updated_at`,
-    [orgId, c, name.trim(), pj, st]
+    `INSERT INTO allocation_bases(organization_id, code, name, basis_type,payload_json, status)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     RETURNING id, code, name,basis_type, payload_json AS "payloadJson", status, created_at, updated_at`,
+    [orgId, c, name.trim(),basis_type, pj, st]
   );
 
   await writeAudit({
-    orgId,
+    organizationId,
     actorUserId,
     action: "reporting.allocation_base.create",
     entityType: "allocation_base",
@@ -127,6 +128,8 @@ async function createRule({
   req,
 }) {
   const c = normalizeCode(code);
+    const organizationId = orgId
+
   assertName(name);
   assertUuid(baseId, "baseId");
   assertUuid(sourceAccountId, "sourceAccountId");
@@ -165,7 +168,7 @@ async function createRule({
   );
 
   await writeAudit({
-    orgId,
+    organizationId,
     actorUserId,
     action: "reporting.allocation_rule.create",
     entityType: "allocation_rule",
@@ -180,6 +183,8 @@ async function createRule({
 
 async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, actorUserId, req }) {
   assertUuid(periodId, "periodId");
+    const organizationId = orgId
+
   if (!Array.isArray(ruleIds) || ruleIds.length === 0) throw new AppError(400, "ruleIds must be a non-empty array");
   for (const id of ruleIds) assertUuid(id, "ruleId");
 
@@ -322,7 +327,7 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
       await client.query("COMMIT");
 
       await writeAudit({
-        orgId,
+        organizationId,
         actorUserId,
         action: "reporting.allocations.compute",
         entityType: "cost_allocation",
@@ -346,6 +351,8 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
 
 async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserId, req }) {
   assertUuid(allocationId, "allocationId");
+    const organizationId = orgId
+
   if (!entryDate || typeof entryDate !== "string") throw new AppError(400, "entryDate is required (YYYY-MM-DD)");
 
   const headerRes = await pool.query(
@@ -408,7 +415,7 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
   );
 
   await writeAudit({
-    orgId,
+    organizationId,
     actorUserId,
     action: "reporting.allocations.post",
     entityType: "cost_allocation",
