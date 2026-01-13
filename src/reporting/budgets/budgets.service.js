@@ -132,14 +132,29 @@ async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req
     if (!line.periodId) throw new AppError(400, "Each line requires periodId");
     if (line.amount === undefined || line.amount === null) throw new AppError(400, "Each line requires amount");
 
-    const p = await repo.getAccountingPeriod({ orgId, periodId: line.periodId });
-    if (!p) throw new AppError(400, `Invalid periodId: ${line.periodId}`);
-    if (budget.fiscal_year) {
-      const y = new Date(p.start_date).getUTCFullYear();
-      if (Number(y) !== Number(budget.fiscal_year)) {
-        throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}`);
-      }
-    }
+ const p = await repo.getAccountingPeriod({ orgId, periodId: line.periodId });
+if (!p) throw new AppError(400, `Invalid periodId: ${line.periodId}`);
+
+console.log('DEBUG - Period data:', {
+  periodId: line.periodId,
+  startDate: p.start_date,
+  startDateType: typeof p.start_date,
+  startDateObject: new Date(p.start_date),
+  startDateUTCYear: new Date(p.start_date).getUTCFullYear(),
+  startDateUTCYearType: typeof new Date(p.start_date).getUTCFullYear(),
+  budgetFiscalYear: budget.fiscal_year,
+  budgetFiscalYearType: typeof budget.fiscal_year,
+  comparison: Number(new Date(p.start_date).getUTCFullYear()) !== Number(budget.fiscal_year)
+});
+
+if (budget.fiscal_year) {
+  const y = new Date(p.start_date).getUTCFullYear();
+  console.log(`Comparing: y=${y} (type: ${typeof y}) vs budget.fiscal_year=${budget.fiscal_year} (type: ${typeof budget.fiscal_year})`);
+  
+  if (Number(y) !== Number(budget.fiscal_year)) {
+    throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}. Period year: ${y}, Budget year: ${budget.fiscal_year}`);
+  }
+}
     const amountNum = Number(line.amount);
     if (Number.isNaN(amountNum)) throw new AppError(400, "Each line amount must be numeric");
     const dim = await validateDimensionJson({ orgId, dimensionJson: line.dimensionJson || {} });

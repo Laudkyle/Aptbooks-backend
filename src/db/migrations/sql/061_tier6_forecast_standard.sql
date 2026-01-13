@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS forecast_versions (
   forecast_id UUID NOT NULL REFERENCES forecasts(id) ON DELETE CASCADE,
   version_no INTEGER NOT NULL,
   name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','final','archived')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','archived')),
   created_by_user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS forecast_versions (
 -- 3) Attach lines to versions (while keeping backward compatibility)
 ALTER TABLE forecast_lines
   ADD COLUMN IF NOT EXISTS forecast_version_id UUID NULL REFERENCES forecast_versions(id) ON DELETE CASCADE;
+-- Add composite unique constraint to forecast_lines
 
+ALTER TABLE forecast_lines 
+ADD CONSTRAINT uq_forecast_lines_version_account_period 
+UNIQUE (forecast_version_id, account_id, period_id);
 -- Create a default v1 for any existing forecast and attach existing lines.
 WITH ins AS (
   INSERT INTO forecast_versions (organization_id, forecast_id, version_no, name, status)
