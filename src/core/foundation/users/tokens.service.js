@@ -5,6 +5,10 @@ const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 
 function sha256(input) {
+  if (!input) {
+    console.error('sha256 called with falsy input:', input);
+    throw new Error('sha256: input cannot be undefined or null');
+  }
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
@@ -71,12 +75,93 @@ async function revokeRefreshTokenByJti({ jti, organizationId, userId, reason = n
 }
 
 async function revokeRefreshTokenFamily({ familyId, organizationId, userId }) {
-  await pool.query(
+  const { rowCount } = await pool.query(
     `UPDATE refresh_tokens
        SET revoked_at = now()
      WHERE family_id=$1 AND organization_id=$2 AND user_id=$3 AND revoked_at IS NULL`,
     [familyId, organizationId, userId]
   );
+  return rowCount;
+}
+
+/**
+ * Revoke all refresh tokens for a specific user in an organization
+ * Useful for logout all devices, security incidents, or account deactivation
+ */
+async function revokeAllRefreshTokensForUser({ organizationId, userId, reason = null }) {
+  const { rowCount } = await pool.query(
+    `UPDATE refresh_tokens
+       SET revoked_at = now(),
+           revoke_reason = $3
+     WHERE organization_id=$1 AND user_id=$2 AND revoked_at IS NULL`,
+    [organizationId, userId, reason || null]
+  );
+  
+  return rowCount;
+}
+
+/**
+ * Revoke all refresh tokens except the current one
+ * Useful for "logout other devices" functionality
+ */
+async function revokeAllOtherRefreshTokens({ organizationId, userId, exceptJti = null, exceptFamilyId = null }) {
+  let query = `UPDATE refresh_tokens SET revoked_at = now() WHERE organization_id=$1 AND user_id=$2 AND revoked_at IS NULL`;
+  const params = [organizationId, userId];
+  
+  if (exceptJti) {
+    query += ` AND token_jti != $${params.length + 1}`;
+    params.push(exceptJti);
+  }
+  
+  if (exceptFamilyId) {
+    query += ` AND family_id != $${params.length + 1}`;
+    params.push(exceptFamilyId);
+  }
+  
+  const { rowCount } = await pool.query(query, params);
+  
+  console.log(`Revoked ${rowCount} other refresh tokens for user ${userId} (except: ${exceptJti || exceptFamilyId || 'none'})`);
+  return rowCount;
+}
+
+/**
+ * Get active refresh tokens for a user (for security audit/management)
+ */
+async function getActiveRefreshTokens({ organizationId, userId, limit = 100 }) {
+  const { rows } = await pool.query(
+    `SELECT 
+        token_jti, 
+        family_id, 
+        ip, 
+        user_agent, 
+        created_at, 
+        expires_at,
+        revoked_at,
+        replaced_by_jti,
+        revoke_reason
+     FROM refresh_tokens
+     WHERE organization_id=$1 AND user_id=$2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [organizationId, userId, limit]
+  );
+  
+  return rows;
+}
+
+/**
+ * Clean up expired refresh tokens (cron job)
+ */
+async function cleanupExpiredRefreshTokens(batchSize = 1000) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM refresh_tokens
+     WHERE expires_at < now() - INTERVAL '7 days' -- Keep expired tokens for a week for audit
+        OR (revoked_at IS NOT NULL AND revoked_at < now() - INTERVAL '30 days') -- Clean up old revoked tokens
+     LIMIT $1`,
+    [batchSize]
+  );
+  
+  return rowCount;
 }
 
 async function rotateRefreshToken({ token }) {
@@ -125,30 +210,32 @@ async function rotateRefreshToken({ token }) {
   // Rotate: mint new refresh token (same family) + revoke old token and mark replacement
   const next = signRefreshToken({ userId, organizationId, email, familyId });
 
-  await pool.query("BEGIN");
+  const client = await pool.connect();
   try {
+    await client.query("BEGIN");
+    
     // Insert new token
-    await persistRefreshToken({
-      organizationId,
-      userId,
-      familyId: next.familyId,
-      jti: next.jti,
-      token: next.token,
-      expiresAt: next.expiresAt
-    });
+    await client.query(
+      `INSERT INTO refresh_tokens
+        (organization_id, user_id, family_id, token_jti, token_hash, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [organizationId, userId, next.familyId, next.jti, sha256(next.token), next.expiresAt]
+    );
 
     // Mark old token as replaced and revoke it (prevents reuse)
-    await pool.query(
+    await client.query(
       `UPDATE refresh_tokens
           SET replaced_by_jti=$1, revoked_at=now()
         WHERE token_jti=$2 AND organization_id=$3 AND user_id=$4 AND revoked_at IS NULL`,
       [next.jti, jti, organizationId, userId]
     );
 
-    await pool.query("COMMIT");
+    await client.query("COMMIT");
   } catch (e) {
-    await pool.query("ROLLBACK");
+    await client.query("ROLLBACK");
     throw e;
+  } finally {
+    client.release();
   }
 
   const accessToken = signAccessToken({ userId, organizationId, email });
@@ -164,5 +251,9 @@ module.exports = {
   persistRefreshToken,
   revokeRefreshTokenByJti,
   revokeRefreshTokenFamily,
+  revokeAllRefreshTokensForUser,
+  revokeAllOtherRefreshTokens,
+  getActiveRefreshTokens,
+  cleanupExpiredRefreshTokens,
   rotateRefreshToken
 };

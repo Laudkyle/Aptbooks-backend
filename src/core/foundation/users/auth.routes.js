@@ -397,7 +397,7 @@ router.post("/reset-password", async (req, res, next) => {
       await client.query(`UPDATE password_reset_tokens SET used_at=NOW() WHERE id=$1`, [rec.prt_id]);
 
       // Revoke all refresh tokens so a stolen refresh token cannot be used after reset.
-      await revokeAllRefreshTokensForUser({ organizationId: rec.organization_id, userId: rec.user_id });
+      await revokeAllRefreshTokensForUser({ organizationId: rec.organization_id, userId: rec.user_id,reason:"User forot password" });
 
       await client.query("COMMIT");
 
