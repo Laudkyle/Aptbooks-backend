@@ -5,10 +5,63 @@ const { requirePermission } = require("../../../middleware/permission.middleware
 const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
-const { writeAudit } = require("../audit-logs/audit.service");
+const { writeAudit } = require("../audit-logs/audit.service");const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
+
 const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
 
 router.use(authRequired);
+
+// Current user profile
+// Returns the authenticated user's profile + roles + permissions in current org context.
+router.get("/me", async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+
+    const { rows: uRows } = await pool.query(
+      `
+      SELECT id, organization_id, email, status, created_at, updated_at
+      FROM users
+      WHERE organization_id=$1 AND id=$2
+      LIMIT 1
+      `,
+      [orgId, userId]
+    );
+    if (!uRows.length) throw new AppError(404, "User not found");
+
+    const { rows: roleRows } = await pool.query(
+      `
+      SELECT r.id, r.name
+      FROM user_roles ur
+      JOIN roles r ON r.id = ur.role_id
+      WHERE ur.user_id=$1 AND r.organization_id=$2
+      ORDER BY r.name
+      `,
+      [userId, orgId]
+    );
+
+    const { rows: permRows } = await pool.query(
+      `
+      SELECT DISTINCT p.code
+      FROM user_roles ur
+      JOIN roles r ON r.id = ur.role_id
+      JOIN role_permissions rp ON rp.role_id = r.id
+      JOIN permissions p ON p.id = rp.permission_id
+      WHERE ur.user_id=$1 AND r.organization_id=$2
+      ORDER BY p.code
+      `,
+      [userId, orgId]
+    );
+
+    res.json({
+      user: uRows[0],
+      roles: roleRows,
+      permissions: permRows.map((p) => p.code)
+    });
+  } catch (e) {
+    next(e);
+  }
+});
 
 router.post("/", requirePermission("users.manage"), async (req, res, next) => {
   try {
@@ -28,8 +81,6 @@ router.post("/", requirePermission("users.manage"), async (req, res, next) => {
       `,
       [orgId, email, passwordHash]
     );
-
-
     // Ensure multi-org membership record exists
     await pool.query(
       `INSERT INTO user_organizations(user_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -159,8 +210,6 @@ router.post("/:id/roles", requirePermission("rbac.roles.manage"), async (req, re
     client.release();
   }
 });
-
-
 router.get("/me/organizations", async (req, res, next) => {
   try {
     const userId = req.user.id;

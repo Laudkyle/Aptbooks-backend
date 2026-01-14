@@ -112,6 +112,39 @@ async function listPeriods({ orgId }) {
   return rows;
 }
 
+// Current period is defined as an OPEN period that covers today (CURRENT_DATE).
+// If none covers today, return the most recent OPEN period.
+async function getCurrentPeriod({ orgId }) {
+  const { rows: covering } = await pool.query(
+    `
+    SELECT id, code, start_date, end_date, status
+    FROM accounting_periods
+    WHERE organization_id=$1
+      AND status='open'
+      AND start_date <= CURRENT_DATE
+      AND end_date >= CURRENT_DATE
+    ORDER BY start_date DESC
+    LIMIT 1
+    `,
+    [orgId]
+  );
+  if (covering.length) return covering[0];
+
+  const { rows: latestOpen } = await pool.query(
+    `
+    SELECT id, code, start_date, end_date, status
+    FROM accounting_periods
+    WHERE organization_id=$1 AND status='open'
+    ORDER BY start_date DESC
+    LIMIT 1
+    `,
+    [orgId]
+  );
+  if (latestOpen.length) return latestOpen[0];
+
+  throw new AppError(404, "No open accounting period found");
+}
+
 /**
  * Close period with kernel-grade guards:
  * - period must be open
@@ -285,4 +318,11 @@ async function reopenPeriod({ orgId, periodId }) {
 }
 
 
-module.exports = { createPeriod, listPeriods, closePeriod, reopenPeriod,closePreview };
+module.exports = {
+  createPeriod,
+  listPeriods,
+  getCurrentPeriod,
+  closePeriod,
+  reopenPeriod,
+  closePreview
+};

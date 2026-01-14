@@ -46,6 +46,17 @@ router.get("/", requirePermission("accounting.period.read"), async (req, res, ne
     next(e);
   }
 });
+
+// Explicit current period API
+router.get("/current", requirePermission("accounting.period.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const out = await svc.getCurrentPeriod({ orgId });
+    res.json(out);
+  } catch (e) {
+    next(e);
+  }
+});
 router.get("/:id/close-preview", requirePermission("accounting.period.close"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

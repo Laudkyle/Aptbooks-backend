@@ -12,6 +12,7 @@ function sha256(input) {
   return crypto.createHash("sha256").update(input).digest("hex");
 }
 
+
 function uuid() {
   if (crypto.randomUUID) return crypto.randomUUID();
   // Fallback for older Node: 16 bytes -> uuidv4-ish
@@ -164,6 +165,7 @@ async function cleanupExpiredRefreshTokens(batchSize = 1000) {
   return rowCount;
 }
 
+
 async function rotateRefreshToken({ token }) {
   let payload;
   try {
@@ -208,6 +210,7 @@ async function rotateRefreshToken({ token }) {
   if (rec.revoked_at) throw new AppError(401, "Refresh token revoked");
 
   // Rotate: mint new refresh token (same family) + revoke old token and mark replacement
+   // Rotate: mint new refresh token (same family) + revoke old token and mark replacement
   const next = signRefreshToken({ userId, organizationId, email, familyId });
 
   const client = await pool.connect();
@@ -250,9 +253,9 @@ module.exports = {
   signRefreshToken,
   persistRefreshToken,
   revokeRefreshTokenByJti,
-  revokeRefreshTokenFamily,
-  revokeAllRefreshTokensForUser,
-  revokeAllOtherRefreshTokens,
+  revokeRefreshTokenFamily, 
+   revokeAllRefreshTokensForUser,
+    revokeAllOtherRefreshTokens,
   getActiveRefreshTokens,
   cleanupExpiredRefreshTokens,
   rotateRefreshToken

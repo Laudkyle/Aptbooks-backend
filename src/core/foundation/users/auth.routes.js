@@ -1,4 +1,4 @@
-const router = require("express").Router();
+const router = require("express").Router();const crypto = require("crypto");
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -12,7 +12,7 @@ const {
   persistRefreshToken,
   rotateRefreshToken,
   revokeRefreshTokenByJti,
-  revokeRefreshTokenFamily,
+   revokeRefreshTokenFamily,
   revokeAllRefreshTokensForUser
 } = require("./tokens.service");
 
@@ -421,7 +421,6 @@ router.post("/reset-password", async (req, res, next) => {
     }
   } catch (e) { next(e); }
 });
-
 router.post("/refresh", async (req, res, next) => {
   try {
     const rt = getRefreshTokenFromRequest(req);

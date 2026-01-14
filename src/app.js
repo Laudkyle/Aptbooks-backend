@@ -22,6 +22,8 @@ const rolesRoutes = require("./core/foundation/roles/roles.routes");
 const usersRoutes = require("./core/foundation/users/users.routes");
 const settingsRoutes = require("./core/foundation/system-settings/system-settings.routes");
 const accrualRoutes = require("./core/accounting/accruals/accruals.routes");
+const notificationsRoutes = require("./notifications/notifications.routes");
+const searchRoutes = require("./search/search.routes");
 
 // Tier 10: Documents & Workflow
 const documentsWorkflowRoutes = require("./workflow/documents/documents.routes");
@@ -120,6 +122,10 @@ app.use("/reporting", require("./reporting/reports.routes"));
 
 // Tier 10: Documents & Workflow
 app.use("/workflow/documents", documentsWorkflowRoutes);
+
+// Phase 2: Notifications + Global Search
+app.use("/core/notifications", notificationsRoutes);
+app.use("/search", searchRoutes);
 
 
 app.use(errorMiddleware);

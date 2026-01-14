@@ -42,8 +42,7 @@ const env = {
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN || "",
 
   BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS || "12", 10),
-
-// Public bootstrap / self-serve provisioning
+  // Public bootstrap / self-serve provisioning
 PUBLIC_REGISTRATION_ENABLED: (process.env.PUBLIC_REGISTRATION_ENABLED || "true").toLowerCase() === "true",
 
 // Password reset

@@ -8,8 +8,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 
   family_id UUID NOT NULL,
-  revoke_reason TEXT NULL,
-  token_jti UUID NOT NULL UNIQUE,
+revoke_reason TEXT NULL,  token_jti UUID NOT NULL UNIQUE,
   token_hash TEXT NOT NULL UNIQUE,
 
   issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
