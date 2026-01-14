@@ -6,6 +6,7 @@ const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../audit-logs/audit.service");
+const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
 
 router.use(authRequired);
 
@@ -26,6 +27,13 @@ router.post("/", requirePermission("users.manage"), async (req, res, next) => {
       RETURNING id, organization_id, email, status, created_at
       `,
       [orgId, email, passwordHash]
+    );
+
+
+    // Ensure multi-org membership record exists
+    await pool.query(
+      `INSERT INTO user_organizations(user_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      [rows[0].id, orgId]
     );
 
     await writeAudit({
@@ -150,6 +158,79 @@ router.post("/:id/roles", requirePermission("rbac.roles.manage"), async (req, re
   } finally {
     client.release();
   }
+});
+
+
+router.get("/me/organizations", async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    const { rows } = await pool.query(
+      `
+      SELECT o.id, o.name, o.base_currency_code, (o.id = u.organization_id) AS is_current
+        FROM user_organizations uo
+        JOIN organizations o ON o.id = uo.organization_id
+        JOIN users u ON u.id = uo.user_id
+       WHERE uo.user_id=$1
+       ORDER BY is_current DESC, o.name ASC
+      `,
+      [userId]
+    );
+
+    res.json({ userId, organizations: rows });
+  } catch (e) { next(e); }
+});
+
+router.post("/me/switch-organization", async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { organizationId } = req.body || {};
+    if (!organizationId) throw new AppError(400, "organizationId required");
+
+    // Ensure membership exists
+    const { rows: mem } = await pool.query(
+      `SELECT 1 FROM user_organizations WHERE user_id=$1 AND organization_id=$2`,
+      [userId, organizationId]
+    );
+    if (!mem.length) throw new AppError(403, "Not a member of that organization");
+
+    // Update current org context
+    const { rows: updated } = await pool.query(
+      `UPDATE users SET organization_id=$1, updated_at=NOW() WHERE id=$2 RETURNING id, email, organization_id`,
+      [organizationId, userId]
+    );
+
+    // Issue fresh tokens scoped to the selected organization
+    const user = updated[0];
+    const accessToken = signAccessToken({ userId: user.id, organizationId: user.organization_id, email: user.email });
+    const refresh = signRefreshToken({ userId: user.id, organizationId: user.organization_id, email: user.email });
+
+    await persistRefreshToken({
+      organizationId: user.organization_id,
+      userId: user.id,
+      tokenJti: refresh.jti,
+      familyId: refresh.familyId,
+      expiresAt: refresh.expiresAt,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent
+    });
+
+    await writeAudit({
+      organizationId: user.organization_id,
+      actorUserId: userId,
+      action: "user.organization.switched",
+      entityType: "users",
+      entityId: userId,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: { organizationId: user.organization_id }
+    });
+
+    res.json({
+      user: { id: user.id, email: user.email, organization_id: user.organization_id },
+      tokens: { accessToken, refreshToken: refresh.token }
+    });
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

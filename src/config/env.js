@@ -43,6 +43,17 @@ const env = {
 
   BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS || "12", 10),
 
+// Public bootstrap / self-serve provisioning
+PUBLIC_REGISTRATION_ENABLED: (process.env.PUBLIC_REGISTRATION_ENABLED || "true").toLowerCase() === "true",
+
+// Password reset
+PASSWORD_RESET_TOKEN_TTL_MINUTES: parseInt(process.env.PASSWORD_RESET_TOKEN_TTL_MINUTES || "30", 10),
+PASSWORD_RESET_TOKEN_PEPPER: process.env.PASSWORD_RESET_TOKEN_PEPPER || (process.env.JWT_SECRET || ""),
+// For dev/test environments only: return reset tokens in API response.
+RETURN_RESET_TOKEN_IN_RESPONSE:
+  (process.env.RETURN_RESET_TOKEN_IN_RESPONSE || (process.env.NODE_ENV === "production" ? "false" : "true"))
+    .toLowerCase() === "true",
+
   // CORS (comma-separated origins). In production you should set this explicitly.
   CORS_ALLOWED_ORIGINS: (process.env.CORS_ALLOWED_ORIGINS || "")
     .split(",")

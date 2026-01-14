@@ -1,4 +1,5 @@
 const router = require("express").Router();
+const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { pool } = require("../../../db/pool");
@@ -11,7 +12,8 @@ const {
   persistRefreshToken,
   rotateRefreshToken,
   revokeRefreshTokenByJti,
-  revokeRefreshTokenFamily
+  revokeRefreshTokenFamily,
+  revokeAllRefreshTokensForUser
 } = require("./tokens.service");
 
 // Minimal in-memory rate limiter (per IP + email) for the login endpoint.
@@ -163,7 +165,7 @@ router.post("/login", async (req, res, next) => {
       organizationId: user.organization_id,
       userId: user.id,
       familyId: refresh.familyId,
-      jti: refresh.jti,
+      tokenJti: refresh.jti,
       token: refresh.token,
       expiresAt: refresh.expiresAt,
       ip: req.audit?.ip,
@@ -189,6 +191,234 @@ router.post("/login", async (req, res, next) => {
       accessToken,
       refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : refresh.token
     });
+  } catch (e) { next(e); }
+});
+
+/**
+ * Public registration (org + initial admin user provisioning)
+ * NOTE: In production you may want to gate this (invite-only) via env.PUBLIC_REGISTRATION_ENABLED=false.
+ */
+router.post("/register", async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    if (env.PUBLIC_REGISTRATION_ENABLED === false) throw new AppError(403, "Public registration disabled");
+
+    const { organizationName, baseCurrencyCode, email, password } = req.body || {};
+    if (!organizationName) throw new AppError(400, "organizationName required");
+    if (!email || !password) throw new AppError(400, "email and password required");
+    if (String(password).length < 10) throw new AppError(400, "password must be at least 10 characters");
+
+    const currencyCode = (baseCurrencyCode || "GHS").toUpperCase();
+    const { rows: cRows } = await client.query(`SELECT code FROM currencies WHERE code=$1`, [currencyCode]);
+    if (!cRows.length) throw new AppError(400, "Invalid baseCurrencyCode");
+
+    await client.query("BEGIN");
+
+    // 1) Create org
+    const { rows: orgRows } = await client.query(
+      `INSERT INTO organizations(name, base_currency_code) VALUES ($1,$2) RETURNING id, name, base_currency_code`,
+      [organizationName, currencyCode]
+    );
+    const org = orgRows[0];
+
+    // 2) Create Admin role
+    const { rows: roleRows } = await client.query(
+      `INSERT INTO roles(organization_id, name) VALUES ($1,'Admin') RETURNING id, name`,
+      [org.id]
+    );
+    const role = roleRows[0];
+
+    // 3) Grant all permissions to Admin role
+    await client.query(
+      `
+      INSERT INTO role_permissions(role_id, permission_id)
+      SELECT $1, p.id FROM permissions p
+      ON CONFLICT DO NOTHING
+      `,
+      [role.id]
+    );
+
+    // 4) Create user
+    const passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
+    const { rows: userRows } = await client.query(
+      `INSERT INTO users(organization_id, email, password_hash, status)
+       VALUES ($1,$2,$3,'active')
+       RETURNING id, email, organization_id, status, created_at`,
+      [org.id, email, passwordHash]
+    );
+    const user = userRows[0];
+
+    // 5) Membership + role assignment
+    await client.query(
+      `INSERT INTO user_organizations(user_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      [user.id, org.id]
+    );
+    await client.query(
+      `INSERT INTO user_roles(user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      [user.id, role.id]
+    );
+
+    await client.query("COMMIT");
+
+    await writeAudit({
+      organizationId: org.id,
+      actorUserId: user.id,
+      action: "auth.register",
+      entityType: "organizations",
+      entityId: org.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: { organization: org, user: { id: user.id, email: user.email } }
+    });
+
+    // Auto-login after registration
+    const accessToken = signAccessToken({ userId: user.id, organizationId: org.id, email: user.email });
+    const refresh = signRefreshToken({ userId: user.id, organizationId: org.id, email: user.email });
+    await persistRefreshToken({
+      organizationId: org.id,
+      userId: user.id,
+      token: refresh.token,
+      tokenJti: refresh.jti,
+      familyId: refresh.familyId,
+      expiresAt: refresh.expiresAt,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent
+    });
+
+    res.status(201).json({
+      organization: org,
+      user: { id: user.id, email: user.email, organization_id: user.organization_id },
+      tokens: { accessToken, refreshToken: refresh.token }
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    next(e);
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * Forgot password: create an expiring, single-use reset token.
+ * Returns 200 even if the email does not exist to avoid user enumeration.
+ */
+router.post("/forgot-password", async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) throw new AppError(400, "email required");
+
+    const { rows: users } = await pool.query(
+      `SELECT id, email, organization_id, status, is_system FROM users WHERE email=$1`,
+      [email]
+    );
+
+    // Always respond OK (anti-enumeration)
+    if (!users.length) return res.json({ ok: true });
+
+    const eligible = users.filter(u => !u.is_system && u.status === "active");
+    if (!eligible.length) return res.json({ ok: true });
+
+    const ttlMinutes = env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30;
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
+
+    // One token per user record (handles the rare case of same email across orgs)
+    const issued = [];
+    for (const u of eligible) {
+      const token = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto
+        .createHash("sha256")
+        .update(token + String(env.PASSWORD_RESET_TOKEN_PEPPER || ""))
+        .digest("hex");
+
+      await pool.query(
+        `
+        INSERT INTO password_reset_tokens(user_id, token_hash, expires_at, ip, user_agent)
+        VALUES ($1,$2,$3,$4,$5)
+        `,
+        [u.id, tokenHash, expiresAt, req.audit?.ip || null, req.audit?.userAgent || null]
+      );
+
+      await writeAudit({
+        organizationId: u.organization_id,
+        actorUserId: null,
+        action: "auth.forgot_password",
+        entityType: "users",
+        entityId: u.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: { email: u.email, expiresAt }
+      });
+
+      if (env.RETURN_RESET_TOKEN_IN_RESPONSE) {
+        issued.push({ organization_id: u.organization_id, token, expiresAt });
+      }
+    }
+
+    // In production you'd send tokens via email; here we optionally return them for dev/test.
+    res.json(env.RETURN_RESET_TOKEN_IN_RESPONSE ? { ok: true, issued } : { ok: true });
+  } catch (e) { next(e); }
+});
+
+router.post("/reset-password", async (req, res, next) => {
+  try {
+    const { token, newPassword } = req.body || {};
+    if (!token) throw new AppError(400, "token required");
+    if (!newPassword) throw new AppError(400, "newPassword required");
+    if (String(newPassword).length < 10) throw new AppError(400, "newPassword must be at least 10 characters");
+
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(String(token) + String(env.PASSWORD_RESET_TOKEN_PEPPER || ""))
+      .digest("hex");
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `
+        SELECT prt.id AS prt_id, prt.user_id, prt.expires_at, u.organization_id, u.email
+          FROM password_reset_tokens prt
+          JOIN users u ON u.id = prt.user_id
+         WHERE prt.token_hash=$1
+           AND prt.used_at IS NULL
+           AND prt.expires_at > NOW()
+         LIMIT 1
+        `,
+        [tokenHash]
+      );
+
+      if (!rows.length) throw new AppError(400, "Invalid or expired token");
+
+      const rec = rows[0];
+      const passwordHash = await bcrypt.hash(newPassword, env.BCRYPT_ROUNDS);
+
+      await client.query(`UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2`, [passwordHash, rec.user_id]);
+      await client.query(`UPDATE password_reset_tokens SET used_at=NOW() WHERE id=$1`, [rec.prt_id]);
+
+      // Revoke all refresh tokens so a stolen refresh token cannot be used after reset.
+      await revokeAllRefreshTokensForUser({ organizationId: rec.organization_id, userId: rec.user_id });
+
+      await client.query("COMMIT");
+
+      await writeAudit({
+        organizationId: rec.organization_id,
+        actorUserId: rec.user_id,
+        action: "auth.reset_password",
+        entityType: "users",
+        entityId: rec.user_id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: { email: rec.email }
+      });
+
+      res.json({ ok: true });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   } catch (e) { next(e); }
 });
 

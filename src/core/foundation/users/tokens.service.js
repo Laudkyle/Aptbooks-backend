@@ -46,14 +46,14 @@ function signRefreshToken({ userId, organizationId, email, familyId }) {
   return { token, jti, familyId: fid, expiresAt: new Date(expMs) };
 }
 
-async function persistRefreshToken({ organizationId, userId, familyId, jti, token, expiresAt, ip, userAgent }) {
+async function persistRefreshToken({ organizationId, userId, familyId, tokenJti, token, expiresAt, ip, userAgent }) {
   const tokenHash = sha256(token);
 
   await pool.query(
     `INSERT INTO refresh_tokens
       (organization_id, user_id, family_id, token_jti, token_hash, expires_at, ip, user_agent)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [organizationId, userId, familyId, jti, tokenHash, expiresAt, ip || null, userAgent || null]
+    [organizationId, userId, familyId, tokenJti, tokenHash, expiresAt, ip || null, userAgent || null]
   );
 
   return { tokenHash };
