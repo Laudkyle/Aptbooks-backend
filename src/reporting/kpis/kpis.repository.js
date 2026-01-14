@@ -32,18 +32,17 @@ async function createDefinition({
   status,
   accountId,
   expressionJson,
-  createdByUserId,
 }) {
   const { rows } = await pool.query(
     `
     INSERT INTO kpi_definitions(
       organization_id, code, name, kpi_type, status,
-      account_id, expression_json, created_by_user_id
+      account_id, expression
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
     RETURNING *
     `,
-    [orgId, code, name, kpiType, status, accountId || null, expressionJson || null, createdByUserId]
+    [orgId, code, name, kpiType, status, accountId || null, expressionJson]
   );
   return rows[0];
 }
@@ -57,7 +56,7 @@ async function updateDefinition({ orgId, id, patch }) {
     kpiType: "kpi_type",
     status: "status",
     accountId: "account_id",
-    expressionJson: "expression_json",
+    expressionJson: "expression",
   };
 
   for (const [k, col] of Object.entries(allowed)) {
@@ -85,10 +84,10 @@ async function archiveDefinition({ orgId, id }) {
 async function upsertValue({ orgId, kpiDefinitionId, periodId, asOfDate, value, metaJson }) {
   const { rows } = await pool.query(
     `
-    INSERT INTO kpi_values(organization_id, kpi_definition_id, period_id, as_of_date, value, meta_json)
+    INSERT INTO kpi_values(organization_id, kpi_definition_id, period_id, as_of_date, value, payload_json)
     VALUES ($1,$2,$3,$4,$5,$6)
     ON CONFLICT (organization_id, kpi_definition_id, period_id, as_of_date)
-    DO UPDATE SET value=EXCLUDED.value, meta_json=EXCLUDED.meta_json, updated_at=NOW()
+    DO UPDATE SET value=EXCLUDED.value, payload_json=EXCLUDED.payload_json, updated_at=NOW()
     RETURNING *
     `,
     [orgId, kpiDefinitionId, periodId, asOfDate, value, metaJson || {}]
@@ -118,13 +117,16 @@ async function getNormalisedAccountActual({ orgId, periodId, accountId }) {
   const { rows } = await pool.query(
     `
     SELECT
-      CASE WHEN coa.normal_balance='CREDIT'
+      CASE WHEN at.normal_balance = 'CREDIT'
            THEN (glb.credit_total - glb.debit_total)
            ELSE (glb.debit_total - glb.credit_total)
       END AS actual_normal
     FROM general_ledger_balances glb
     JOIN chart_of_accounts coa ON coa.id = glb.account_id
-    WHERE glb.organization_id=$1 AND glb.period_id=$2 AND glb.account_id=$3
+    JOIN account_types at ON at.id = coa.account_type_id
+    WHERE glb.organization_id = $1 
+      AND glb.period_id = $2 
+      AND glb.account_id = $3
     LIMIT 1
     `,
     [orgId, periodId, accountId]

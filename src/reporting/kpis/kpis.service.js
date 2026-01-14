@@ -1,6 +1,6 @@
 const repo = require("./kpis.repository");
 const { AppError } = require("../../shared/errors/AppError");
-const { writeAudit } = require("../../core/foundation/audit-logs/audit-log.repository");
+const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { assertUuid, assertCode, assertName } = require("../_util");
 
 const KPI_TYPES = ["ACCOUNT_BALANCE", "EXPRESSION"];
@@ -76,7 +76,6 @@ async function createDefinition({ orgId, actorUserId, req, code, name, kpiType, 
   if (kpiType === "EXPRESSION" && !expr) {
     throw new AppError(400, "expressionJson is required for EXPRESSION KPIs");
   }
-
   const created = await repo.createDefinition({
     orgId,
     code: code.trim(),
@@ -85,7 +84,6 @@ async function createDefinition({ orgId, actorUserId, req, code, name, kpiType, 
     status: status || "active",
     accountId: accountId || null,
     expressionJson: expr,
-    createdByUserId: actorUserId,
   });
 
   await writeAudit({
@@ -196,7 +194,7 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
       value = await repo.getNormalisedAccountActual({ orgId, periodId, accountId: def.account_id });
       meta = { ...meta, account_id: def.account_id };
     } else if (def.kpi_type === "EXPRESSION") {
-      const ast = def.expression_json;
+      const ast = def.expression;
       value = await evalAst({ orgId, periodId, ast, cache });
       meta = { ...meta, expression_kind: ast?.kind || null };
     } else {

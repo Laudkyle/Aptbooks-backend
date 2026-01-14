@@ -7,6 +7,20 @@ function normalizeCode(code) {
   if (!v) throw new AppError(400, "code is required");
   return v.toUpperCase();
 }
+function assertCode(code) {
+  if (code === null || code === undefined) return null;
+  if (typeof code !== "string") throw new AppError(400, "code must be a string");
+  const v = code.trim();
+  if (!v) throw new AppError(400, "code is required");
+  return v.toUpperCase();
+}
+function assertName(name) {
+  if (name === null || name === undefined) return null;
+  if (typeof name !== "string") throw new AppError(400, "code must be a string");
+  const v = name.trim();
+  if (!v) throw new AppError(400, "code is required");
+  return v.toUpperCase();
+}
 
 function normalizeStatus(status, allowed, fieldName = "status") {
   if (status === null || status === undefined) return null;
@@ -36,4 +50,6 @@ module.exports = {
   normalizeStatus,
   assertMoneyAmount,
   assertUuid,
+  assertName,
+  assertCode
 };

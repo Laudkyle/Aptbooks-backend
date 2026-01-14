@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS kpi_definitions (
   name TEXT NOT NULL,
   description TEXT,
   -- expression is an app-defined DSL string.
-  expression TEXT NOT NULL,
+  expression TEXT NULL,
   unit TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS kpi_values (
   value NUMERIC(18,6) NOT NULL,
   computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, kpi_definition_id, period_id, as_of_date)
 );
 

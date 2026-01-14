@@ -352,11 +352,10 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
 async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserId, req }) {
   assertUuid(allocationId, "allocationId");
   const organizationId = orgId;
-
   if (!entryDate || typeof entryDate !== "string") {
     throw new AppError(400, "entryDate is required (YYYY-MM-DD)");
   }
-
+  
   // Get allocation with source account
   const headerRes = await pool.query(
     `SELECT a.id, a.rule_id AS "ruleId", a.period_id AS "periodId", a.status, a.payload_json AS "payloadJson",
@@ -364,44 +363,45 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
        FROM cost_allocations a
        JOIN allocation_rules r ON r.id = a.rule_id
       WHERE a.organization_id=$1 AND a.id=$2`,
-    [orgId, allocationId]
-  );
-  
-  if (!headerRes.rows.length) throw new AppError(404, "Allocation not found");
-  const allocation = headerRes.rows[0];
-  
-  if (allocation.status === "posted") {
-    return { 
-      id: allocation.id, 
-      status: "posted", 
-      reused: true,
-      journalEntryId: allocation.payloadJson?.posted_journal_entry_id 
-    };
-  }
-  
-  if (allocation.status !== "computed") {
-    throw new AppError(409, `Allocation must be computed to post (current: ${allocation.status})`);
-  }
-
-  // Get allocation lines
-  const linesRes = await pool.query(
-    `SELECT line_no AS "lineNo", to_account_id AS "toAccountId", amount, weight, notes, dimension_json AS "dimensionJson"
-       FROM cost_allocation_lines
+      [orgId, allocationId]
+    );
+    
+    if (!headerRes.rows.length) throw new AppError(404, "Allocation not found");
+    const allocation = headerRes.rows[0];
+    
+    if (allocation.status === "posted") {
+      return { 
+        id: allocation.id, 
+        status: "posted", 
+        reused: true,
+        journalEntryId: allocation.payloadJson?.posted_journal_entry_id 
+      };
+    }
+    
+    if (allocation.status !== "computed") {
+      throw new AppError(409, `Allocation must be computed to post (current: ${allocation.status})`);
+    }
+    
+    // Get allocation lines
+    const linesRes = await pool.query(
+      `SELECT line_no AS "lineNo", to_account_id AS "toAccountId", amount, weight, notes, dimension_json AS "dimensionJson"
+      FROM cost_allocation_lines
       WHERE organization_id=$1 AND allocation_id=$2
       ORDER BY line_no ASC`,
-    [orgId, allocationId]
-  );
-  
-  if (!linesRes.rows.length) throw new AppError(409, "Allocation has no lines to post");
+      [orgId, allocationId]
+    );
+    
+    if (!linesRes.rows.length) throw new AppError(409, "Allocation has no lines to post");
+    
+    const baseAmount = Number(allocation.payloadJson?.base_amount ?? 0);
+    if (Number.isNaN(baseAmount)) throw new AppError(500, "Allocation base amount is invalid");
 
-  const baseAmount = Number(allocation.payloadJson?.base_amount ?? 0);
-  if (Number.isNaN(baseAmount)) throw new AppError(500, "Allocation base amount is invalid");
-
+    console.log("reached poset",baseAmount)
   // If base amount is 0, mark as posted without creating journal
   if (baseAmount === 0) {
     await pool.query(
       `UPDATE cost_allocations 
-       SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=NULL, updated_at=now()
+      SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=NULL, updated_at=now()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, allocationId, actorUserId]
     );
