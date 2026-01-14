@@ -577,6 +577,8 @@ async function run() {
       ["reporting.inventory.read", "Read inventory reports"],
 // Optional override
       ["accounting.period.force_close", "Force close period (override checks)"],
+      ["notifications.manage", "Managing of notifications"],
+      
     ];
 
     for (const [code, description] of perms) {
