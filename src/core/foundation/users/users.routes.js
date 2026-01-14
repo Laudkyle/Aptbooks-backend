@@ -5,10 +5,8 @@ const { requirePermission } = require("../../../middleware/permission.middleware
 const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
-const { writeAudit } = require("../audit-logs/audit.service");const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
-
+const { writeAudit } = require("../audit-logs/audit.service");
 const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
-
 router.use(authRequired);
 
 // Current user profile
