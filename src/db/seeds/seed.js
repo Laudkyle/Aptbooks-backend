@@ -458,9 +458,20 @@ async function run() {
       ["accounting.period.read", "Read periods"],
       ["accounting.period.manage", "Create/reopen periods"],
       ["accounting.period.close", "Close periods"],
+      ["accounting.period.force_close", "Force close period (override checks)"],
+      ["accounting.period.lock", "Lock an open period (read-only)"],
+      ["accounting.period.unlock", "Unlock a locked period"],
+      ["accounting.period.roll_forward", "Roll forward to create next period"],
       ["accounting.coa.read", "Read chart of accounts"],
       ["accounting.coa.manage", "Manage chart of accounts"],
+      ["accounting.coa.archive", "Archive chart of accounts entries"],
       ["accounting.journal.create", "Create draft journals"],
+      ["accounting.journal.edit", "Edit draft/rejected journals"],
+      ["accounting.journal.submit", "Submit journals for approval"],
+      ["accounting.journal.approve", "Approve submitted journals"],
+      ["accounting.journal.reject", "Reject submitted journals"],
+      ["accounting.journal.cancel", "Cancel draft/rejected journals"],
+      ["accounting.journal.batch_post", "Batch post journals"],
       ["accounting.journal.post", "Post journals"],
       ["accounting.journal.void", "Void posted journals"],
       ["accounting.journal.read", "Read journals"],
@@ -576,7 +587,6 @@ async function run() {
       
       ["reporting.inventory.read", "Read inventory reports"],
 // Optional override
-      ["accounting.period.force_close", "Force close period (override checks)"],
       ["notifications.manage", "Managing of notifications"],
       
     ];

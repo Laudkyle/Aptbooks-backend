@@ -86,11 +86,11 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     const { rows: jRows } = await client.query(
       `
       INSERT INTO journal_entries
-        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key)
-      VALUES ($1,$2,$3,$4,$5,'draft',$6)
+        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key, created_by)
+      VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
       RETURNING id, status
       `,
-      [orgId, typeId, payload.periodId, payload.entryDate, payload.memo || null, payload.idempotencyKey || null]
+      [orgId, typeId, payload.periodId, payload.entryDate, payload.memo || null, payload.idempotencyKey || null, actorUserId]
     );
     const journalId = jRows[0].id;
 
@@ -136,7 +136,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     // NOTE: avoid console logging in production paths (keep silent here)
     const { rows: jRows } = await client.query(
       `
-      SELECT id, status, period_id, entry_date
+      SELECT id, status, period_id, entry_date, created_by
       FROM journal_entries
       WHERE organization_id=$1 AND id=$2
       FOR UPDATE
@@ -145,7 +145,13 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const journal = jRows[0];
-    if (journal.status !== "draft") throw new AppError(409, "Journal not in draft status");
+    if (!['draft','approved'].includes(journal.status)) {
+      throw new AppError(409, "Journal must be in draft or approved status to post");
+    }
+    if (journal.created_by && String(journal.created_by) === String(actorUserId)) {
+      // Maker-checker: creator cannot post their own journal
+      throw new AppError(403, "Segregation of duties: creator cannot post this journal");
+    }
 
     const period = await getPeriodForUpdate(client, orgId, journal.period_id);
     if (period.status !== "open") throw new AppError(409, "Period not open");
@@ -505,5 +511,362 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
   }
 }
 
+// ---------------------------------
+// Stage 2: Draft editing + lifecycle
+// ---------------------------------
 
-module.exports = { createDraftJournal, postDraftJournal, voidByReversal,reversePostedJournal };
+async function getJournalWithLines({ orgId, journalId }) {
+  const { rows: j } = await pool.query(
+    `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
+    [orgId, journalId]
+  );
+  if (!j.length) throw new AppError(404, "Journal not found");
+  const { rows: lines } = await pool.query(
+    `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+    [journalId]
+  );
+  return { journal: j[0], lines };
+}
+
+async function assertEditableJournal(client, { orgId, journalId }) {
+  const { rows: jRows } = await client.query(
+    `SELECT id, status, period_id, entry_date, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+    [orgId, journalId]
+  );
+  if (!jRows.length) throw new AppError(404, "Journal not found");
+  const j = jRows[0];
+  if (!["draft", "rejected"].includes(j.status)) {
+    throw new AppError(409, "Only draft/rejected journals can be edited");
+  }
+  const period = await getPeriodForUpdate(client, orgId, j.period_id);
+  if (period.status !== "open") throw new AppError(409, "Period not open");
+  return { journal: j, period };
+}
+
+async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { journal } = await assertEditableJournal(client, { orgId, journalId });
+    if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
+      // Allow only creator to edit draft by default
+      throw new AppError(403, "Only the creator can edit this draft journal");
+    }
+
+    // Resolve type id if typeCode provided
+    let typeId = null;
+    if (payload.typeCode) {
+      const { rows: tRows } = await client.query(`SELECT id FROM journal_entry_types WHERE code=$1`, [payload.typeCode]);
+      if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
+      typeId = tRows[0].id;
+    }
+
+    let periodId = payload.periodId || journal.period_id;
+    if (payload.periodId) {
+      const p = await getPeriodForUpdate(client, orgId, payload.periodId);
+      if (p.status !== "open") throw new AppError(409, "Target period not open");
+      periodId = p.id;
+      if (payload.entryDate) assertEntryDateWithinPeriod(payload.entryDate, p);
+    }
+
+    if (payload.entryDate && !payload.periodId) {
+      const p = await getPeriodForUpdate(client, orgId, journal.period_id);
+      assertEntryDateWithinPeriod(payload.entryDate, p);
+    }
+
+    await client.query(
+      `UPDATE journal_entries
+       SET period_id = COALESCE($3, period_id),
+           entry_date = COALESCE($4, entry_date),
+           memo = CASE WHEN $5::text IS NOT NULL THEN $5 ELSE memo END,
+           journal_entry_type_id = COALESCE($6, journal_entry_type_id),
+           status='draft',
+           rejected_at=NULL,
+           rejected_by=NULL,
+           rejection_reason=NULL,
+           updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, journalId, periodId, payload.entryDate || null, payload.memo === undefined ? null : payload.memo, typeId]
+    );
+
+    await client.query("COMMIT");
+    return { journalId, status: "draft" };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { journal } = await assertEditableJournal(client, { orgId, journalId });
+    if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
+      throw new AppError(403, "Only the creator can edit this draft journal");
+    }
+
+    const totals = sum2(lines || []);
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
+
+    // Validate accounts
+    for (const l of lines) {
+      const { rows: aRows } = await client.query(
+        `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
+        [orgId, l.accountId]
+      );
+      if (!aRows.length) throw new AppError(400, "Invalid accountId");
+      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used");
+      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
+    }
+
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+
+    await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id=$1`, [journalId]);
+
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountBaseBI = debitBI > 0n ? debitBI : creditBI;
+      await client.query(
+        `INSERT INTO journal_entry_lines
+          (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8)`,
+        [
+          journalId,
+          i + 1,
+          l.accountId,
+          l.description || null,
+          bigIntToDecimalString(debitBI, 2),
+          bigIntToDecimalString(creditBI, 2),
+          baseCurrency,
+          bigIntToDecimalString(amountBaseBI, 2)
+        ]
+      );
+    }
+
+    // If journal was rejected, revert back to draft
+    await client.query(
+      `UPDATE journal_entries
+       SET status='draft', rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, journalId]
+    );
+
+    await client.query("COMMIT");
+    return { journalId, status: "draft" };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function submitDraftJournal({ orgId, journalId, actorUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: jRows } = await client.query(
+      `SELECT id, status, created_by, period_id, entry_date FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, journalId]
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "draft") throw new AppError(409, "Only draft journals can be submitted");
+    if (j.created_by && String(j.created_by) !== String(actorUserId)) {
+      throw new AppError(403, "Only the creator can submit this journal");
+    }
+
+    const period = await getPeriodForUpdate(client, orgId, j.period_id);
+    if (period.status !== "open") throw new AppError(409, "Period not open");
+    assertEntryDateWithinPeriod(j.entry_date, period);
+
+    const { rows: lines } = await client.query(
+      `SELECT debit, credit FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+      [journalId]
+    );
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
+    const totals = sum2(lines);
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
+
+    await client.query(
+      `UPDATE journal_entries
+       SET status='submitted', submitted_at=NOW(), submitted_by=$3, updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, journalId, actorUserId]
+    );
+
+    await client.query("COMMIT");
+    return { journalId, status: "submitted" };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: jRows } = await client.query(
+      `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, journalId]
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be approved");
+    if (j.created_by && String(j.created_by) === String(actorUserId)) {
+      throw new AppError(403, "Segregation of duties: creator cannot approve this journal");
+    }
+    await client.query(
+      `UPDATE journal_entries
+       SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, journalId, actorUserId]
+    );
+    await client.query("COMMIT");
+    return { journalId, status: "approved" };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: jRows } = await client.query(
+      `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, journalId]
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be rejected");
+    if (j.created_by && String(j.created_by) === String(actorUserId)) {
+      throw new AppError(403, "Segregation of duties: creator cannot reject this journal");
+    }
+    await client.query(
+      `UPDATE journal_entries
+       SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, journalId, actorUserId, reason]
+    );
+    await client.query("COMMIT");
+    return { journalId, status: "rejected" };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: jRows } = await client.query(
+      `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, journalId]
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "draft" && j.status !== "rejected") {
+      throw new AppError(409, "Only draft/rejected journals can be canceled");
+    }
+    if (j.created_by && String(j.created_by) !== String(actorUserId)) {
+      throw new AppError(403, "Only the creator can cancel this journal");
+    }
+    await client.query(
+      `UPDATE journal_entries
+       SET status='canceled', canceled_at=NOW(), canceled_by=$3, updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2`,
+      [orgId, journalId, actorUserId]
+    );
+    await client.query("COMMIT");
+    return { journalId, status: "canceled" };
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function batchPostJournals({ orgId, actorUserId, journalIds, client: existingClient = null }) {
+  // Best-effort batch: posts sequentially; each post is transactional.
+  const results = [];
+  for (const id of journalIds) {
+    const r = await postDraftJournal({ orgId, journalId: id, actorUserId, client: existingClient });
+    results.push(r);
+  }
+  return { count: results.length, results };
+}
+
+async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
+  const where = ["organization_id=$1"];
+  const params = [orgId];
+  let i = 2;
+
+  if (filters.periodId) {
+    where.push(`period_id=$${i++}`);
+    params.push(filters.periodId);
+  }
+  if (filters.status) {
+    where.push(`status=$${i++}`);
+    params.push(filters.status);
+  }
+  if (filters.from) {
+    where.push(`entry_date >= $${i++}::date`);
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    where.push(`entry_date <= $${i++}::date`);
+    params.push(filters.to);
+  }
+
+  params.push(limit);
+  params.push(offset);
+
+  const { rows } = await pool.query(
+    `
+    SELECT id, journal_entry_type_id, period_id, entry_date, memo, status,
+           created_by, submitted_at, submitted_by, approved_at, approved_by,
+           rejected_at, rejected_by, rejection_reason,
+           canceled_at, canceled_by,
+           created_at, updated_at
+    FROM journal_entries
+    WHERE ${where.join(" AND ")}
+    ORDER BY entry_date DESC, created_at DESC
+    LIMIT $${i++} OFFSET $${i++}
+    `,
+    params
+  );
+  return rows;
+}
+
+
+module.exports = {
+  createDraftJournal,
+  postDraftJournal,
+  voidByReversal,
+  reversePostedJournal,
+  listJournals,
+  getJournalWithLines,
+  updateDraftHeader,
+  replaceDraftLines,
+  submitDraftJournal,
+  approveSubmittedJournal,
+  rejectSubmittedJournal,
+  cancelDraftJournal,
+  batchPostJournals
+};

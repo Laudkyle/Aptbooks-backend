@@ -7,4 +7,12 @@ async function trialBalance({ orgId, periodId }) {
   return balancesSvc.trialBalance({ orgId, periodId });
 }
 
-module.exports = { trialBalance };
+async function glBalances({ orgId, periodId }) {
+  return balancesSvc.glBalances({ orgId, periodId });
+}
+
+async function accountActivity({ orgId, accountId, fromDate, toDate }) {
+  return balancesSvc.accountActivity({ orgId, accountId, fromDate, toDate });
+}
+
+module.exports = { trialBalance, glBalances, accountActivity };

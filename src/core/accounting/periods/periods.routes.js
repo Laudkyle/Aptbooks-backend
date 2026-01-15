@@ -4,7 +4,7 @@ const { requirePermission } = require("../../../middleware/permission.middleware
 const { validate } = require("../../../shared/validators/validate");
 const { createPeriodSchema } = require("../../../shared/validators/accounting.validators");
 const { AppError } = require("../../../shared/errors/AppError");
-const svc = require("./periods.service");
+const periodAPI = require("../../../interfaces/periodManagement.interface");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 
 router.use(authRequired);
@@ -13,7 +13,7 @@ router.post("/", requirePermission("accounting.period.manage"), async (req, res,
   try {
     const orgId = req.user.organization_id;
     const payload = validate(createPeriodSchema, req.body);
-    const created = await svc.createPeriod({ orgId, payload });
+    const created = await periodAPI.createPeriod({ orgId, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -40,7 +40,7 @@ router.post("/", requirePermission("accounting.period.manage"), async (req, res,
 router.get("/", requirePermission("accounting.period.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await svc.listPeriods({ orgId });
+    const out = await periodAPI.listPeriods({ orgId });
     res.json(out);
   } catch (e) {
     next(e);
@@ -51,7 +51,7 @@ router.get("/", requirePermission("accounting.period.read"), async (req, res, ne
 router.get("/current", requirePermission("accounting.period.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await svc.getCurrentPeriod({ orgId });
+    const out = await periodAPI.getCurrentPeriod({ orgId });
     res.json(out);
   } catch (e) {
     next(e);
@@ -60,23 +60,29 @@ router.get("/current", requirePermission("accounting.period.read"), async (req, 
 router.get("/:id/close-preview", requirePermission("accounting.period.close"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await svc.closePreview({ orgId, periodId: req.params.id });
+    const out = await periodAPI.closePreview({ orgId, periodId: req.params.id });
     res.json(out);
   } catch (e) { next(e); }
 });
 
 router.post("/:id/close", requirePermission("accounting.period.close"), async (req, res, next) => {
-      const force = req.body?.force === true;
-  if (force) {
-      // require additional permission
-      await requirePermission("accounting.period.force_close")(req, res, () => {});
+  const force = req.body?.force === true;
+  try {
+    if (force) {
+      // run middleware explicitly (proper error propagation)
+      await new Promise((resolve, reject) => {
+        requirePermission("accounting.period.force_close")(req, res, (err) => (err ? reject(err) : resolve()));
+      });
     }
 
-  try {
     const orgId = req.user.organization_id;
 
-    const out = await svc.closePeriod({ orgId, periodId: req.params.id, actorUserId: req.user.id,
-  options: { autoRunAccruals: req.body?.autoRunAccruals } });
+    const out = await periodAPI.closePeriod({
+      orgId,
+      periodId: req.params.id,
+      actorUserId: req.user.id,
+      options: { autoRunAccruals: req.body?.autoRunAccruals, force }
+    });
 
     await writeAudit({
       organizationId: orgId,
@@ -99,7 +105,7 @@ router.post("/:id/close", requirePermission("accounting.period.close"), async (r
 router.post("/:id/reopen", requirePermission("accounting.period.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await svc.reopenPeriod({ orgId, periodId: req.params.id });
+    const out = await periodAPI.reopenPeriod({ orgId, periodId: req.params.id });
 
     await writeAudit({
       organizationId: orgId,
@@ -115,6 +121,74 @@ router.post("/:id/reopen", requirePermission("accounting.period.manage"), async 
 
     res.json(out.after);
   } catch (e) {
+    next(e);
+  }
+});
+
+router.post("/:id/lock", requirePermission("accounting.period.lock"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const out = await periodAPI.lockPeriod({ orgId, periodId: req.params.id, actorUserId: req.user.id });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "period.locked",
+      entityType: "accounting_periods",
+      entityId: out.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+
+    res.json(out.after);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/unlock", requirePermission("accounting.period.unlock"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const out = await periodAPI.unlockPeriod({ orgId, periodId: req.params.id, actorUserId: req.user.id });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "period.unlocked",
+      entityType: "accounting_periods",
+      entityId: out.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+
+    res.json(out.after);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/roll-forward", requirePermission("accounting.period.roll_forward"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = req.body || {};
+    const created = await periodAPI.rollForward({ orgId, periodId: req.params.id, actorUserId: req.user.id, payload });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "period.rolled_forward",
+      entityType: "accounting_periods",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+
+    res.status(201).json(created);
+  } catch (e) {
+    if (e && e.code === "23P01") {
+      return next(new AppError(409, "Period dates overlap an existing period"));
+    }
     next(e);
   }
 });

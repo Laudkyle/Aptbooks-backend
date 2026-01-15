@@ -317,6 +317,75 @@ async function reopenPeriod({ orgId, periodId }) {
   return { id: periodId, before: beforeRows[0], after: afterRows[0] };
 }
 
+async function lockPeriod({ orgId, periodId }) {
+  const { rows: beforeRows } = await pool.query(
+    `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!beforeRows.length) throw new AppError(404, "Period not found");
+  const before = beforeRows[0];
+  if (before.status !== "open") throw new AppError(409, "Only open periods can be locked");
+
+  const { rows: afterRows } = await pool.query(
+    `UPDATE accounting_periods SET status='locked', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, periodId]
+  );
+
+  return { id: periodId, before, after: afterRows[0] };
+}
+
+async function unlockPeriod({ orgId, periodId }) {
+  const { rows: beforeRows } = await pool.query(
+    `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!beforeRows.length) throw new AppError(404, "Period not found");
+  const before = beforeRows[0];
+  if (before.status !== "locked") throw new AppError(409, "Only locked periods can be unlocked");
+
+  const { rows: afterRows } = await pool.query(
+    `UPDATE accounting_periods SET status='open', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, periodId]
+  );
+
+  return { id: periodId, before, after: afterRows[0] };
+}
+
+// Roll forward: create a new OPEN period after an existing period.
+// If payload not provided, it will create a period with the same length as the source.
+async function rollForward({ orgId, periodId, payload = {} }) {
+  const { rows: srcRows } = await pool.query(
+    `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!srcRows.length) throw new AppError(404, "Period not found");
+  const src = srcRows[0];
+
+  const startDate = payload.startDate || new Date(new Date(src.end_date).getTime() + 24 * 60 * 60 * 1000);
+  const lengthDays = Math.round((new Date(src.end_date) - new Date(src.start_date)) / (24 * 60 * 60 * 1000));
+  const endDate = payload.endDate || new Date(new Date(startDate).getTime() + lengthDays * 24 * 60 * 60 * 1000);
+
+  const iso = (d) => {
+    const dt = new Date(d);
+    const yyyy = dt.getUTCFullYear();
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(dt.getUTCDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const code = payload.code || `${src.code}_NEXT_${iso(startDate)}`;
+
+  const { rows } = await pool.query(
+    `
+    INSERT INTO accounting_periods (organization_id, code, start_date, end_date, status)
+    VALUES ($1,$2,$3,$4,'open')
+    RETURNING id, code, start_date, end_date, status
+    `,
+    [orgId, code, payload.startDate || iso(startDate), payload.endDate || iso(endDate)]
+  );
+  return rows[0];
+}
+
 
 module.exports = {
   createPeriod,
@@ -324,5 +393,8 @@ module.exports = {
   getCurrentPeriod,
   closePeriod,
   reopenPeriod,
-  closePreview
+  closePreview,
+  lockPeriod,
+  unlockPeriod,
+  rollForward
 };

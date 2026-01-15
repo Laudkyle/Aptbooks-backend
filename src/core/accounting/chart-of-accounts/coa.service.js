@@ -28,7 +28,7 @@ async function createAccount({ orgId, payload }) {
   // Validate parent belongs to org if provided
   if (payload.parentAccountId) {
     const { rows: p } = await pool.query(
-      `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
+      `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2 AND archived_at IS NULL`,
       [orgId, payload.parentAccountId]
     );
     if (!p.length) throw new AppError(400, "Invalid parentAccountId");
@@ -55,7 +55,7 @@ async function createAccount({ orgId, payload }) {
   return rows[0];
 }
 
-async function listAccounts({ orgId }) {
+async function listAccounts({ orgId, includeArchived = false }) {
   const { rows } = await pool.query(
     `
     SELECT
@@ -66,9 +66,10 @@ async function listAccounts({ orgId }) {
     JOIN account_types at ON at.id = coa.account_type_id
     LEFT JOIN account_categories ac ON ac.id = coa.category_id
     WHERE coa.organization_id=$1
+      AND ($2::boolean = TRUE OR coa.archived_at IS NULL)
     ORDER BY coa.code
     `,
-    [orgId]
+    [orgId, includeArchived]
   );
   return rows;
 }
@@ -94,11 +95,36 @@ async function getAccount({ orgId, accountId }) {
 async function updateAccount({ orgId, accountId, payload }) {
   // Validate parent if present
   if (payload.parentAccountId !== undefined && payload.parentAccountId !== null) {
+    if (String(payload.parentAccountId) === String(accountId)) {
+      throw new AppError(400, "Account cannot be its own parent");
+    }
     const { rows: p } = await pool.query(
-      `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
+      `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2 AND archived_at IS NULL`,
       [orgId, payload.parentAccountId]
     );
     if (!p.length) throw new AppError(400, "Invalid parentAccountId");
+
+    // Prevent circular references: parent cannot be a descendant of this account
+    const { rows: cycle } = await pool.query(
+      `
+      WITH RECURSIVE descendants AS (
+        SELECT id, parent_account_id
+        FROM chart_of_accounts
+        WHERE organization_id=$1 AND id=$2
+        UNION ALL
+        SELECT c.id, c.parent_account_id
+        FROM chart_of_accounts c
+        JOIN descendants d ON c.parent_account_id = d.id
+        WHERE c.organization_id=$1
+      )
+      SELECT 1 AS bad
+      FROM descendants
+      WHERE id=$3
+      LIMIT 1
+      `,
+      [orgId, accountId, payload.parentAccountId]
+    );
+    if (cycle.length) throw new AppError(400, "Circular parent reference not allowed");
   }
   const categoryId = payload.categoryName ? await upsertCategory(orgId, payload.categoryName) : undefined;
 
@@ -128,4 +154,32 @@ async function updateAccount({ orgId, accountId, payload }) {
   return { before: existing[0], after: rows[0] };
 }
 
-module.exports = { createAccount, listAccounts, getAccount, updateAccount };
+async function archiveAccount({ orgId, accountId, actorUserId }) {
+  const { rows: beforeRows } = await pool.query(
+    `SELECT * FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
+    [orgId, accountId]
+  );
+  if (!beforeRows.length) throw new AppError(404, "Account not found");
+  if (beforeRows[0].archived_at) throw new AppError(409, "Account already archived");
+
+  // Do not allow archiving if it has active children (encourage archiving leaves first)
+  const { rows: children } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM chart_of_accounts WHERE organization_id=$1 AND parent_account_id=$2 AND archived_at IS NULL`,
+    [orgId, accountId]
+  );
+  if (children[0].n > 0) throw new AppError(409, "Cannot archive: account has active child accounts");
+
+  const { rows: afterRows } = await pool.query(
+    `
+    UPDATE chart_of_accounts
+    SET archived_at=NOW(), archived_by=$3, status='inactive', updated_at=NOW()
+    WHERE organization_id=$1 AND id=$2
+    RETURNING *
+    `,
+    [orgId, accountId, actorUserId]
+  );
+
+  return { id: accountId, before: beforeRows[0], after: afterRows[0] };
+}
+
+module.exports = { createAccount, listAccounts, getAccount, updateAccount, archiveAccount };
