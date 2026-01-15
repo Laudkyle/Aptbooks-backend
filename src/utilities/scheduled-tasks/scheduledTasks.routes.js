@@ -18,11 +18,10 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
 });
 
 // Enable/disable
-router.post("/:code/toggle", requirePermission("settings.manage"), async (req, res, next) => {
+router.post("/:code/:status/toggle", requirePermission("settings.manage"), async (req, res, next) => {
   try {
     const code = req.params.code;
-    const enabled = Boolean(req.body?.enabled);
-
+    const enabled = Boolean(req.params.status);
     const { rows } = await pool.query(
       `
       UPDATE scheduled_tasks
