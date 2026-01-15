@@ -56,7 +56,7 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
 });
 
 // Error statistics
-router.get("/stats", requirePermission("settings.read"), async (req, res, next) => {
+router.get("/stats/summary/", requirePermission("settings.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const days = Math.min(Number(req.query.days || 7) || 7, 90);

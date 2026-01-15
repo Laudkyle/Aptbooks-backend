@@ -246,7 +246,7 @@ router.post("/2fa/enroll", require("../../../middleware/auth.middleware").authRe
 });
 
 // 2FA enable (verify TOTP)
-router.post("/2fa/enable", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
+router.post("/2fa/verify", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const userId = req.user.id;

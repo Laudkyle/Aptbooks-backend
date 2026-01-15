@@ -79,7 +79,7 @@ router.get("/me/login-history", async (req, res, next) => {
 });
 
 // Admin: login history with filtering
-router.get("/login-history", requirePermission("users.read"), async (req, res, next) => {
+router.get("/:userId/login-history", requirePermission("users.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
