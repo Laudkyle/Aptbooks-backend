@@ -77,7 +77,7 @@ router.get("/:id/permissions", requirePermission("rbac.roles.read"), async (req,
 
     const { rows: perms } = await pool.query(
       `
-      SELECT p.id, p.code, p.name
+      SELECT p.id, p.code
       FROM role_permissions rp
       JOIN permissions p ON p.id = rp.permission_id
       WHERE rp.role_id=$1
