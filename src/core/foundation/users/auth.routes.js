@@ -6,6 +6,7 @@ const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../audit-logs/audit.service");
+const { verifyTotp, generateSecretBase32, buildOtpauthUrl } = require("../../../shared/security/totp");
 const {
   signAccessToken,
   signRefreshToken,
@@ -111,7 +112,8 @@ router.post("/login", async (req, res, next) => {
     assertNotRateLimited(req, email);
 
     const { rows } = await pool.query(
-      `SELECT id, organization_id, password_hash, status, is_system FROM users WHERE email=$1`,
+      `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled, two_factor_secret
+         FROM users WHERE email=$1`,
       [email]
     );
 
@@ -136,6 +138,12 @@ router.post("/login", async (req, res, next) => {
 
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
+      // login history (failure)
+      await pool.query(
+        `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent, failure_reason)
+         VALUES ($1,$2,$3,FALSE,$4,$5,$6)`,
+        [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null, "bad_password"]
+      ).catch(() => {});
       await writeAudit({
         organizationId: user.organization_id,
         actorUserId: user.id,
@@ -147,6 +155,21 @@ router.post("/login", async (req, res, next) => {
         after: { reason: "bad_password" }
       });
       throw new AppError(401, "Invalid credentials");
+    }
+
+    // 2FA check if enabled
+    if (user.two_factor_enabled) {
+      const otp = req.body?.otp;
+      if (!otp) throw new AppError(401, "2FA code required");
+      const secret = user.two_factor_secret;
+      if (!secret || !verifyTotp(secret, otp, { window: 1 })) {
+        await pool.query(
+          `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent, failure_reason)
+           VALUES ($1,$2,$3,FALSE,$4,$5,$6)`,
+          [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null, "bad_2fa"]
+        ).catch(() => {});
+        throw new AppError(401, "Invalid 2FA code");
+      }
     }
 
     const accessToken = signAccessToken({
@@ -187,10 +210,74 @@ router.post("/login", async (req, res, next) => {
       after: { email }
     });
 
+    // login history (success) and user last login markers
+    await pool.query(
+      `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent)
+       VALUES ($1,$2,$3,TRUE,$4,$5)`,
+      [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null]
+    ).catch(() => {});
+    await pool.query(
+      `UPDATE users SET last_login_at=NOW(), last_login_ip=$2, last_login_user_agent=$3 WHERE id=$1`,
+      [user.id, req.audit?.ip || null, req.audit?.userAgent || null]
+    ).catch(() => {});
+
     res.json({
       accessToken,
       refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : refresh.token
     });
+  } catch (e) { next(e); }
+});
+
+// 2FA enrollment (generate secret)
+router.post("/2fa/enroll", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+    const { rows } = await pool.query(`SELECT email, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    if (!rows.length) throw new AppError(404, "User not found");
+    if (rows[0].two_factor_enabled) throw new AppError(409, "2FA already enabled");
+    const secret = generateSecretBase32();
+    const issuer = env.APP_NAME || "ERP";
+    const otpauth = buildOtpauthUrl({ issuer, email: rows[0].email, secret });
+    // store as pending secret (two_factor_secret) until enabled
+    await pool.query(`UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId, secret]);
+    res.json({ secret, otpauth });
+  } catch (e) { next(e); }
+});
+
+// 2FA enable (verify TOTP)
+router.post("/2fa/enable", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+    const otp = req.body?.otp;
+    if (!otp) throw new AppError(400, "otp required");
+    const { rows } = await pool.query(`SELECT two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    if (!rows.length) throw new AppError(404, "User not found");
+    if (rows[0].two_factor_enabled) throw new AppError(409, "2FA already enabled");
+    if (!rows[0].two_factor_secret) throw new AppError(409, "Enroll first");
+    if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp");
+    await pool.query(`UPDATE users SET two_factor_enabled=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+// 2FA disable (verify password + TOTP)
+router.post("/2fa/disable", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+    const password = req.body?.password;
+    const otp = req.body?.otp;
+    if (!password || !otp) throw new AppError(400, "password and otp required");
+    const { rows } = await pool.query(`SELECT password_hash, two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    if (!rows.length) throw new AppError(404, "User not found");
+    if (!rows[0].two_factor_enabled) throw new AppError(409, "2FA not enabled");
+    const ok = await bcrypt.compare(password, rows[0].password_hash);
+    if (!ok) throw new AppError(401, "Invalid credentials");
+    if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp");
+    await pool.query(`UPDATE users SET two_factor_enabled=FALSE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

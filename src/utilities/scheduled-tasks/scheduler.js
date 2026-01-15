@@ -18,24 +18,16 @@ function utcNow() { return new Date(); }
 
 
 function computeNextRunAt(task) {
-  console.log('computeNextRunAt called with task:', task.code);
-  
+  // schedule fields may come from in-memory registry or DB row
   // Extract schedule properties from the task object
   const scheduleType = task.schedule_type || task.type;
   const intervalSeconds = task.interval_seconds || task.intervalSeconds;
   const dailyHourUtc = task.daily_hour_utc || task.dailyHourUtc;
   const dailyMinuteUtc = task.daily_minute_utc || task.dailyMinuteUtc;
   
-  console.log('Extracted values:', {
-    scheduleType,
-    dailyHourUtc,
-    dailyMinuteUtc,
-    intervalSeconds
-  });
-  
   const now = new Date();
 
-  if (scheduleType === "interval") {
+  if (scheduleType === "interval" || scheduleType === "interval_seconds") {
     const secs = Number(intervalSeconds);
     if (!Number.isFinite(secs) || secs <= 0) {
       throw new Error(`Invalid intervalSeconds for interval schedule: ${intervalSeconds}`);
@@ -46,8 +38,6 @@ function computeNextRunAt(task) {
   if (scheduleType === "daily_at_utc") {
     const hh = Number(dailyHourUtc);
     const mm = Number(dailyMinuteUtc);
-    
-    console.log(`Processing daily schedule at ${hh}:${mm} UTC`);
     
     if (!Number.isInteger(hh) || hh < 0 || hh > 23) {
       throw new Error(`Invalid daily_hour_utc for daily schedule: ${dailyHourUtc}`);
@@ -71,7 +61,6 @@ function computeNextRunAt(task) {
       next.setUTCDate(next.getUTCDate() + 1);
     }
     
-    console.log(`Next run calculated: ${next.toISOString()}`);
     return next;
   }
 

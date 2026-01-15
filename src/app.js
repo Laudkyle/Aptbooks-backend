@@ -50,6 +50,7 @@ const { swaggerDocument } = require("./docs/swagger");
 // Public docs (recommended)
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
+app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
 
 app.use(helmet({
   // API-first backend; Swagger UI uses inline scripts/styles.
@@ -79,7 +80,8 @@ const corsOptions = {
     "Idempotency-Key",
     "x-request-id",
     "x-filename",
-    "x-refresh-token"
+    "x-refresh-token",
+    "x-api-key"
   ],
   exposedHeaders: ["x-request-id", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset"]
 };
@@ -101,6 +103,7 @@ app.use("/core/roles", rolesRoutes);
 app.use("/core/organizations", orgRoutes);
 app.use("/core/permissions", permissionsRoutes);
 app.use("/core/settings", settingsRoutes);
+app.use("/core/api-keys", require("./core/foundation/api-keys/apiKeys.routes"));
 app.use("/core/accounting/accruals", accrualRoutes);
 
 app.use("/core/accounting/accounts", coaRoutes);
