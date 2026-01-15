@@ -298,6 +298,6 @@ CREATE TABLE IF NOT EXISTS cost_allocations (
   status TEXT NOT NULL DEFAULT 'computed' CHECK (status IN ('computed','posted','archived')),
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
