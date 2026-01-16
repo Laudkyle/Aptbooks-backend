@@ -476,6 +476,11 @@ async function run() {
       ["accounting.journal.void", "Void posted journals"],
       ["accounting.journal.read", "Read journals"],
       ["accounting.balances.read", "Read balances and reports"],
+      ["accounting.exports.run", "Run accounting exports"],
+      ["accounting.imports.run", "Run accounting imports"],
+      ["accounting.reconcile.run", "Run accounting reconciliations"],
+      ["accounting.fx.read", "Read FX rates"],
+      ["accounting.fx.manage", "Manage FX rates"],
 
       // RBAC + administration (Tier 0)
       ["rbac.permissions.read", "Read permissions"],
@@ -488,6 +493,8 @@ async function run() {
       ["accounting.accruals.read", "Read accrual rules and runs"],
       ["accounting.accruals.manage", "Create/update accrual rules"],
       ["accounting.accruals.run", "Run accrual jobs manually"],
+      ["webhooks.manage", "Manage webhooks"],
+      ["webhooks.dispatch", "Dispatch webhook outbox"],
 
       // Tier 2
       ["partners.read", "Read business partners"],

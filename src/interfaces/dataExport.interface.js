@@ -9,4 +9,12 @@ async function exportTrialBalance({ orgId, periodId, format }) {
   return exportsService.exportTrialBalance({ orgId, periodId, format });
 }
 
-module.exports = { exportTrialBalance };
+async function exportGeneralLedger({ orgId, periodId, format }) {
+  return exportsService.exportGeneralLedger({ orgId, periodId, format });
+}
+
+async function exportAccountActivity({ orgId, accountId, fromDate, toDate, format }) {
+  return exportsService.exportAccountActivity({ orgId, accountId, fromDate, toDate, format });
+}
+
+module.exports = { exportTrialBalance, exportGeneralLedger, exportAccountActivity };

@@ -15,6 +15,13 @@ const coaRoutes = require("./core/accounting/chart-of-accounts/coa.routes");
 const periodRoutes = require("./core/accounting/periods/periods.routes");
 const journalRoutes = require("./core/accounting/journal/journal.routes");
 const balanceRoutes = require("./core/accounting/ledger/balances.routes");
+const fxRoutes = require("./core/accounting/fx/fx.routes");
+const accountingStatementRoutes = require("./core/accounting/ledger/statements.routes");
+const reconciliationRoutes = require("./core/accounting/ledger/reconciliation.routes");
+const accountingImportRoutes = require("./core/accounting/imports/imports.routes");
+const accountingExportRoutes = require("./core/accounting/ledger/exports.routes");
+
+const webhookRoutes = require("./modules/webhooks/webhooks.routes");
 const businessModuleRoutes = require("./modules/business/business.routes");
 const transactionsModuleRoutes = require("./modules/transactions/transactions.routes");
 const permissionsRoutes = require("./core/foundation/permissions/permissions.routes");
@@ -110,6 +117,14 @@ app.use("/core/accounting/accounts", coaRoutes);
 app.use("/core/accounting/periods", periodRoutes);
 app.use("/core/accounting/journals", journalRoutes);
 app.use("/core/accounting/balances", balanceRoutes);
+app.use("/core/accounting/fx", fxRoutes);
+app.use("/core/accounting/statements", accountingStatementRoutes);
+app.use("/core/accounting/reconciliation", reconciliationRoutes);
+app.use("/core/accounting/imports", accountingImportRoutes);
+app.use("/core/accounting/exports", accountingExportRoutes);
+app.use("/core/accounting/exports", accountingExportRoutes);
+
+app.use("/modules/webhooks", webhookRoutes);
 
 app.use("/modules/business", businessModuleRoutes);
 app.use("/modules/transactions", transactionsModuleRoutes);

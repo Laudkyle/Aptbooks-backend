@@ -1,6 +1,7 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
+const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -11,15 +12,71 @@ async function getOrgBaseCurrency(client, orgId) {
   return rows[0].base_currency_code;
 }
 
-function sum2(lines) {
+function parseRateToMicro(rate) {
+  // 6dp rate precision
+  return parseDecimalToBigInt(rate || 1, 6);
+}
+
+function computeBaseCents({ amountCents, rateMicro }) {
+  // baseCents = (amountCents * rateMicro) / 1e6
+  return (amountCents * rateMicro) / 1000000n;
+}
+
+async function lookupFxRateMicro(client, { orgId, rateTypeCode = "SPOT", fromCurrency, toCurrency, asOfDate }) {
+  if (!asOfDate) throw new AppError(400, "entryDate required for FX lookup");
+  if (!fromCurrency || !toCurrency) throw new AppError(400, "currency required for FX lookup");
+  const from = String(fromCurrency).toUpperCase();
+  const to = String(toCurrency).toUpperCase();
+  if (from === to) return 1000000n;
+
+  const { rows: rt } = await client.query("SELECT id FROM exchange_rate_types WHERE code=$1", [String(rateTypeCode).toUpperCase()]);
+  if (!rt.length) throw new AppError(400, `Unknown FX rate type: ${rateTypeCode}`);
+  const rateTypeId = rt[0].id;
+
+  const direct = await client.query(
+    "SELECT rate FROM exchange_rates WHERE organization_id=$1 AND rate_type_id=$2 AND from_currency=$3 AND to_currency=$4 AND effective_date <= $5 ORDER BY effective_date DESC LIMIT 1",
+    [orgId, rateTypeId, from, to, asOfDate]
+  );
+  if (direct.rows.length) return parseRateToMicro(direct.rows[0].rate);
+
+  const inv = await client.query(
+    "SELECT rate FROM exchange_rates WHERE organization_id=$1 AND rate_type_id=$2 AND from_currency=$3 AND to_currency=$4 AND effective_date <= $5 ORDER BY effective_date DESC LIMIT 1",
+    [orgId, rateTypeId, to, from, asOfDate]
+  );
+  if (inv.rows.length) {
+    const baseMicro = parseRateToMicro(inv.rows[0].rate);
+    if (baseMicro <= 0n) throw new AppError(400, "Invalid stored FX rate");
+    // invert: 1 / r. keep micro precision: (1e12 / baseMicro) gives micro
+    return (1000000n * 1000000n) / baseMicro;
+  }
+
+  throw new AppError(404, `No FX rate found for ${from}/${to} as of ${asOfDate}`);
+}
+
+function sumBaseCents(lines) {
   return lines.reduce(
     (acc, l) => {
-      acc.debit += parseDecimalToBigInt(l.debit || 0, 2);
-      acc.credit += parseDecimalToBigInt(l.credit || 0, 2);
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const baseCents = parseDecimalToBigInt(l.amount_base || 0, 2);
+      if (debitCents > 0n) acc.debit += baseCents;
+      if (creditCents > 0n) acc.credit += baseCents;
       return acc;
     },
     { debit: 0n, credit: 0n }
   );
+}
+
+function sum2(lines) {
+  // Sums using amount_base when available (base currency equivalent).
+  return lines.reduce((acc, l) => {
+    const debitC = parseDecimalToBigInt(l.debit || 0, 2);
+    const creditC = parseDecimalToBigInt(l.credit || 0, 2);
+    const base = ('amount_base' in l && l.amount_base != null) ? parseDecimalToBigInt(l.amount_base || 0, 2) : (debitC>0n?debitC:creditC);
+    if (debitC > 0n) acc.debit += base;
+    if (creditC > 0n) acc.credit += base;
+    return acc;
+  }, { debit: 0n, credit: 0n });
 }
 
 async function getPeriodForUpdate(client, orgId, periodId) {
@@ -69,8 +126,45 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
     const typeId = tRows[0].id;
 
-    const totals = sum2(payload.lines || []);
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
+    // Compute & validate base-equivalent totals. For non-base currencies we either use a provided fxRate
+    // or look up a rate effective on entryDate.
+    const preparedLines = [];
+    for (const l of payload.lines || []) {
+      const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase();
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountCents = debitCents > 0n ? debitCents : creditCents;
+
+      let rateMicro = 1000000n;
+      if (currencyCode !== baseCurrency) {
+        if (l.fxRate != null) {
+          rateMicro = parseRateToMicro(l.fxRate);
+        } else {
+          rateMicro = await lookupFxRateMicro(client, {
+            orgId,
+            rateTypeCode: l.rateTypeCode || payload.rateTypeCode || "SPOT",
+            fromCurrency: currencyCode,
+            toCurrency: baseCurrency,
+            asOfDate: payload.entryDate,
+          });
+        }
+      }
+
+      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
+    }
+
+    const totals = preparedLines.reduce(
+      (acc, l) => {
+        const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+        const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+        if (debitCents > 0n) acc.debit += l.amountBaseCents;
+        if (creditCents > 0n) acc.credit += l.amountBaseCents;
+        return acc;
+      },
+      { debit: 0n, credit: 0n }
+    );
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced in base currency");
 
     // Validate accounts exist and are postable+active up front
     for (const l of payload.lines) {
@@ -94,11 +188,11 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     );
     const journalId = jRows[0].id;
 
-    for (let i = 0; i < payload.lines.length; i++) {
-      const l = payload.lines[i];
+    for (let i = 0; i < preparedLines.length; i++) {
+      const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
-      const amountBaseBI = debitBI > 0n ? debitBI : creditBI;
+      const amountBaseBI = l.amountBaseCents;
 
       const debit = bigIntToDecimalString(debitBI, 2);
       const credit = bigIntToDecimalString(creditBI, 2);
@@ -108,9 +202,9 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
         `
         INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
-        [journalId, i + 1, l.accountId, l.description || null, debit, credit, baseCurrency, amountBase]
+        [journalId, i + 1, l.accountId, l.description || null, debit, credit, l.currencyCode, bigIntToDecimalString(l.fxRateMicro, 6), amountBase]
       );
     }
 
@@ -130,10 +224,10 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
-    if (managesTx) await client.query("BEGIN");
+    if (managesTx) await client.query('BEGIN');
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
-    // NOTE: avoid console logging in production paths (keep silent here)
+
     const { rows: jRows } = await client.query(
       `
       SELECT id, status, period_id, entry_date, created_by
@@ -143,23 +237,23 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       `,
       [orgId, journalId]
     );
-    if (!jRows.length) throw new AppError(404, "Journal not found");
+    if (!jRows.length) throw new AppError(404, 'Journal not found');
     const journal = jRows[0];
     if (!['draft','approved'].includes(journal.status)) {
-      throw new AppError(409, "Journal must be in draft or approved status to post");
+      throw new AppError(409, 'Journal must be in draft or approved status to post');
     }
     if (journal.created_by && String(journal.created_by) === String(actorUserId)) {
-      // Maker-checker: creator cannot post their own journal
-      throw new AppError(403, "Segregation of duties: creator cannot post this journal");
+      throw new AppError(403, 'Segregation of duties: creator cannot post this journal');
     }
 
     const period = await getPeriodForUpdate(client, orgId, journal.period_id);
-    if (period.status !== "open") throw new AppError(409, "Period not open");
+    if (period.status !== 'open') throw new AppError(409, 'Period not open');
     assertEntryDateWithinPeriod(journal.entry_date, period);
 
     const { rows: lines } = await client.query(
       `
-      SELECT jel.account_id, jel.debit, jel.credit, jel.currency_code,
+      SELECT jel.id AS line_id, jel.line_no, jel.account_id, jel.description,
+             jel.debit, jel.credit, jel.currency_code, jel.fx_rate, jel.amount_base,
              coa.is_postable, coa.status AS account_status
       FROM journal_entry_lines jel
       JOIN chart_of_accounts coa
@@ -169,23 +263,57 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       `,
       [orgId, journalId]
     );
-    if (!lines.length) throw new AppError(400, "Journal has no lines");
+    if (!lines.length) throw new AppError(400, 'Journal has no lines');
 
+    // Validate accounts and ensure amount_base/fx_rate are present and correct.
     for (const l of lines) {
-      if (l.currency_code !== baseCurrency) {
-        throw new AppError(400, `Phase 1 supports base currency only (${baseCurrency})`);
+      if (!l.is_postable) throw new AppError(400, 'Non-postable account used');
+      if (l.account_status !== 'active') throw new AppError(400, 'Inactive account used');
+
+      const currencyCode = String(l.currency_code || baseCurrency).toUpperCase();
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountCents = debitCents > 0n ? debitCents : creditCents;
+
+      let rateMicro = 1000000n;
+      if (currencyCode !== baseCurrency) {
+        if (l.fx_rate != null && String(l.fx_rate).trim() !== '') {
+          rateMicro = parseRateToMicro(l.fx_rate);
+        } else {
+          rateMicro = await lookupFxRateMicro(client, {
+            orgId,
+            rateTypeCode: 'SPOT',
+            fromCurrency: currencyCode,
+            toCurrency: baseCurrency,
+            asOfDate: journal.entry_date,
+          });
+        }
       }
-      if (!l.is_postable) throw new AppError(400, "Non-postable account used");
-      if (l.account_status !== "active") throw new AppError(400, "Inactive account used");
+
+      const computedBaseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      const storedBaseCents = parseDecimalToBigInt(l.amount_base || 0, 2);
+
+      // If missing/incorrect, update line.
+      if (storedBaseCents !== computedBaseCents || String(l.fx_rate || '').trim() === '') {
+        await client.query(
+          `UPDATE journal_entry_lines
+           SET currency_code=$2, fx_rate=$3, amount_base=$4
+           WHERE id=$1`,
+          [l.line_id, currencyCode, bigIntToDecimalString(rateMicro, 6), bigIntToDecimalString(computedBaseCents, 2)]
+        );
+        l.currency_code = currencyCode;
+        l.fx_rate = bigIntToDecimalString(rateMicro, 6);
+        l.amount_base = bigIntToDecimalString(computedBaseCents, 2);
+      }
     }
 
     const totals = sum2(lines);
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
+    if (totals.debit !== totals.credit) throw new AppError(400, 'Journal not balanced in base currency');
 
     for (const l of lines) {
-      const debit = l.debit || "0";
-      const credit = l.credit || "0";
-
+      const isDebit = parseDecimalToBigInt(l.debit || 0, 2) > 0n;
+      const isCredit = parseDecimalToBigInt(l.credit || 0, 2) > 0n;
+      const baseAmt = l.amount_base || '0';
       await client.query(
         `
         INSERT INTO general_ledger_balances
@@ -196,7 +324,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
           debit_total = general_ledger_balances.debit_total + EXCLUDED.debit_total,
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
-        [orgId, journal.period_id, l.account_id, debit, credit]
+        [orgId, journal.period_id, l.account_id, isDebit ? baseAmt : '0', isCredit ? baseAmt : '0']
       );
     }
 
@@ -209,11 +337,13 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       [orgId, journalId, actorUserId]
     );
 
-    if (managesTx) await client.query("COMMIT");
-    return { journalId, status: "posted" };
+    await enqueueEvent({ orgId, eventType: 'accounting.journal.posted', payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date } });
+
+    if (managesTx) await client.query('COMMIT');
+    return { journalId, status: 'posted' };
   } catch (e) {
     if (managesTx) {
-      try { await client.query("ROLLBACK"); } catch (_) {}
+      try { await client.query('ROLLBACK'); } catch (_) {}
     }
     throw e;
   } finally {
@@ -222,6 +352,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
 }
 
 /**
+ * Accounting-correct void/**
  * Accounting-correct void: create and post a reversal journal.
  * - Requires original journal is POSTED and not already voided.
  * - Reversal journal is posted immediately in the SAME period.
@@ -253,7 +384,7 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
 
     const { rows: lines } = await client.query(
       `
-      SELECT line_no, account_id, description, debit, credit, currency_code
+      SELECT line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base
       FROM journal_entry_lines
       WHERE journal_entry_id=$1
       ORDER BY line_no
@@ -261,11 +392,6 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       [journalId]
     );
     if (!lines.length) throw new AppError(400, "Journal has no lines");
-    for (const l of lines) {
-      if (l.currency_code !== baseCurrency) {
-        throw new AppError(400, `Phase 1 supports base currency only (${baseCurrency})`);
-      }
-    }
 
     // Create reversal journal (draft)
     const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason}`;
@@ -296,9 +422,9 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
         `
         INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
-        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ""}`.trim(), newDebit, newCredit, baseCurrency, amountBase]
+        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
       );
     }
 
@@ -306,7 +432,7 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
     // Fetch reversal lines for posting
     const { rows: revLines } = await client.query(
       `
-      SELECT account_id, debit, credit
+      SELECT account_id, debit, credit, amount_base
       FROM journal_entry_lines
       WHERE journal_entry_id=$1
       ORDER BY line_no
@@ -328,7 +454,7 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
           debit_total = general_ledger_balances.debit_total + EXCLUDED.debit_total,
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
-        [orgId, orig.period_id, l.account_id, l.debit || "0", l.credit || "0"]
+        [orgId, orig.period_id, l.account_id, (parseDecimalToBigInt(l.debit||0,2)>0n?l.amount_base:'0'), (parseDecimalToBigInt(l.credit||0,2)>0n?l.amount_base:'0')]
       );
     }
 
@@ -359,6 +485,7 @@ await client.query(
   [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
 );
 
+    await enqueueEvent({ orgId, eventType: "accounting.journal.voided", payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id } });
 
     if (managesTx) await client.query("COMMIT");
     return { journalId, status: "voided", reversalJournalId: reversalId };
@@ -417,7 +544,7 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
     // 4) Load original lines
     const { rows: lines } = await client.query(
       `
-      SELECT line_no, account_id, description, debit, credit, currency_code
+      SELECT line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base
       FROM journal_entry_lines
       WHERE journal_entry_id=$1
       ORDER BY line_no
@@ -425,11 +552,6 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
       [journalId]
     );
     if (!lines.length) throw new AppError(400, "Journal has no lines");
-    for (const l of lines) {
-      if (l.currency_code !== baseCurrency) {
-        throw new AppError(400, `Phase 1 supports base currency only (${baseCurrency})`);
-      }
-    }
 
     // 5) Create reversal journal in TARGET period/date
     const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason || "n/a"}`;
@@ -460,9 +582,9 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
         `
         INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
-        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ""}`.trim(), newDebit, newCredit, baseCurrency, amountBase]
+        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
       );
     }
 
@@ -499,6 +621,7 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
     );
 
     // 8) IMPORTANT: Do NOT modify original journal status
+    await enqueueEvent({ orgId, eventType: 'accounting.journal.reversed', payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate } });
     if (managesTx) await client.query("COMMIT");
     return { reversalJournalId: reversalId, alreadyExisted: false };
   } catch (e) {
@@ -634,7 +757,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       await client.query(
         `INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,1,$8)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
         [
           journalId,
           i + 1,

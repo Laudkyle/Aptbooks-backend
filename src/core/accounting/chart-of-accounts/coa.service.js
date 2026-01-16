@@ -1,4 +1,5 @@
 const { pool } = require("../../../db/pool");
+const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 const { AppError } = require("../../../shared/errors/AppError");
 
 async function getAccountTypeIdByCode(code) {

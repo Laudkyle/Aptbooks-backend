@@ -53,7 +53,10 @@ async function accountActivity({ orgId, accountId, fromDate, toDate }) {
       jel.line_no,
       jel.description,
       jel.debit,
-      jel.credit
+      jel.credit,
+      jel.currency_code,
+      jel.fx_rate,
+      jel.amount_base
     FROM journal_entry_lines jel
     JOIN journal_entries je ON je.id = jel.journal_entry_id
     WHERE je.organization_id=$1
