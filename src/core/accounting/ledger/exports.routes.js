@@ -1,8 +1,11 @@
 const express = require("express");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const exportsApi = require("../../../interfaces/dataExport.interface");
+const { authRequired } = require("../../../middleware/auth.middleware");
 
 const router = express.Router();
+router.use(authRequired)
+
 
 router.get("/trial-balance", requirePermission("accounting.exports.run"), async (req, res, next) => {
   try {

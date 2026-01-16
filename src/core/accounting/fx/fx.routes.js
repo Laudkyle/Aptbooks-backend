@@ -1,8 +1,10 @@
 const express = require("express");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const fx = require("../../../interfaces/fxManagement.interface");
+const { authRequired } = require("../../../middleware/auth.middleware");
 
 const router = express.Router();
+router.use(authRequired);
 
 router.get("/rate-types", requirePermission("accounting.fx.read"), async (req, res, next) => {
   try {

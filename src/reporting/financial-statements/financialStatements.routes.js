@@ -2,9 +2,10 @@ const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./financialStatements.service");
+const { authRequired } = require("../../middleware/auth.middleware");
 
 const router = express.Router();
-
+router.use(authRequired)
 router.use(requirePermission("reporting.statements.read"));
 
 router.get("/trial-balance", async (req, res, next) => {

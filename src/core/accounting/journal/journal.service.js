@@ -731,11 +731,51 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       throw new AppError(403, "Only the creator can edit this draft journal");
     }
 
-    const totals = sum2(lines || []);
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+
+    // Prepare lines with proper FX rates and base amounts
+    const preparedLines = [];
+    for (const l of lines) {
+      const currencyCode = String(l.currencyCode || baseCurrency).toUpperCase();
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountCents = debitCents > 0n ? debitCents : creditCents;
+
+      let rateMicro = 1000000n;
+      if (currencyCode !== baseCurrency) {
+        if (l.fxRate != null) {
+          rateMicro = parseRateToMicro(l.fxRate);
+        } else {
+          // Look up FX rate for the journal's entry date
+          rateMicro = await lookupFxRateMicro(client, {
+            orgId,
+            rateTypeCode: l.rateTypeCode || "SPOT",
+            fromCurrency: currencyCode,
+            toCurrency: baseCurrency,
+            asOfDate: journal.entry_date,
+          });
+        }
+      }
+
+      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
+    }
+
+    // Validate totals are balanced
+    const totals = preparedLines.reduce(
+      (acc, l) => {
+        const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+        const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+        if (debitCents > 0n) acc.debit += l.amountBaseCents;
+        if (creditCents > 0n) acc.credit += l.amountBaseCents;
+        return acc;
+      },
+      { debit: 0n, credit: 0n }
+    );
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
     // Validate accounts
-    for (const l of lines) {
+    for (const l of preparedLines) {
       const { rows: aRows } = await client.query(
         `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
         [orgId, l.accountId]
@@ -745,19 +785,27 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
     }
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+    // IMPORTANT: Check if there are existing lines first
+    const { rows: existingLines } = await client.query(
+      `SELECT COUNT(*) as count FROM journal_entry_lines WHERE journal_entry_id = $1`,
+      [journalId]
+    );
+    
+    // Delete existing lines if they exist
+    if (parseInt(existingLines[0].count) > 0) {
+      await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [journalId]);
+    }
 
-    await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id=$1`, [journalId]);
-
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
+    // Insert new lines with ALL required fields including fx_rate
+    for (let i = 0; i < preparedLines.length; i++) {
+      const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
-      const amountBaseBI = debitBI > 0n ? debitBI : creditBI;
+      
       await client.query(
         `INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           journalId,
           i + 1,
@@ -765,8 +813,9 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
           l.description || null,
           bigIntToDecimalString(debitBI, 2),
           bigIntToDecimalString(creditBI, 2),
-          baseCurrency,
-          bigIntToDecimalString(amountBaseBI, 2)
+          l.currencyCode,
+          bigIntToDecimalString(l.fxRateMicro, 6),
+          bigIntToDecimalString(l.amountBaseCents, 2)
         ]
       );
     }
@@ -774,8 +823,8 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
     // If journal was rejected, revert back to draft
     await client.query(
       `UPDATE journal_entries
-       SET status='draft', rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2`,
+       SET status = 'draft', rejected_at = NULL, rejected_by = NULL, rejection_reason = NULL, updated_at = NOW()
+       WHERE organization_id = $1 AND id = $2`,
       [orgId, journalId]
     );
 
@@ -788,7 +837,6 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
     client.release();
   }
 }
-
 async function submitDraftJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {

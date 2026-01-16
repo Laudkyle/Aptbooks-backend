@@ -1,9 +1,10 @@
 const express = require("express");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const reports = require("../../../interfaces/reportGeneration.interface");
+const { authRequired } = require("../../../middleware/auth.middleware");
 
 const router = express.Router();
-
+router.use(authRequired)
 router.get("/trial-balance", requirePermission("accounting.balances.read"), async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
