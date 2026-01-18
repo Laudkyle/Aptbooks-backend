@@ -79,7 +79,9 @@ async function addVersionFromBuffer({ orgId, documentId, userId, originalFilenam
 async function submitDocument({ orgId, documentId }) {
   return withTransaction(async (client) => {
     // Lock document to prevent double-submit races
+
     const doc = await repo.getDocumentById({ orgId, documentId, client, forUpdate: true });
+    console.log("doc",doc)
     if (!doc) throw new AppError(404, "Document not found");
     if (doc.workflow_state_code !== "DRAFT") throw new AppError(409, "Only DRAFT documents can be submitted");
     if ((doc.current_version_no || 0) < 1) throw new AppError(409, "Upload at least one document version before submitting");

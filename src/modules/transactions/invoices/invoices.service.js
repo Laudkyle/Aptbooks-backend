@@ -1,5 +1,6 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
+  const { withTransaction } = require("../../../db/tx");
 
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
@@ -378,6 +379,7 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
         [orgId, invoiceId, documentId]
       );
     }
+    console.log("reached",documentId)
 
     // Snapshot current invoice + lines into version 1 (JSON)
     const { rows: lines } = await client.query(
@@ -401,6 +403,7 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
     });
 
     const submitted = await documentsSvc.submitDocument({ orgId, documentId });
+    console.log("submitted")
     return submitted.document;
   });
 }
@@ -442,7 +445,6 @@ async function rejectInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment })
 }
 
 async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
-  const { withTransaction } = require("../../../db/tx");
   return withTransaction(async (client) => {
     const { rows: invRows } = await client.query(
       `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2 FOR UPDATE`,

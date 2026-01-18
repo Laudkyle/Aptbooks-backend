@@ -1,0 +1,44 @@
+{
+  "invoice": {
+    "id": "6f3fa750-86f9-4f6f-8839-1d893ecf8439",
+    "organization_id": "65321c7c-68c9-46b2-8332-0d793056c1fb",
+    "customer_id": "9a64369e-1eee-4879-acf7-965b01b00b7c",
+    "invoice_no": "INV-000001",
+    "invoice_date": "2026-01-01T00:00:00.000Z",
+    "due_date": "2026-01-01T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "Invoice from Postman",
+    "subtotal": "250.00",
+    "total": "250.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-01-18T15:41:01.202Z",
+    "updated_at": "2026-01-18T15:41:01.202Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "8445f15e-bd04-4a91-8bf1-3c5e578a7f83",
+      "invoice_id": "6f3fa750-86f9-4f6f-8839-1d893ecf8439",
+      "line_no": 1,
+      "description": "Consulting services",
+      "quantity": "1.0000",
+      "unit_price": "250.00",
+      "line_total": "250.00",
+      "revenue_account_id": "19a0fa21-a836-4517-a816-43f9ee70bc2f",
+      "created_at": "2026-01-18T15:41:01.202Z",
+      "tax_code_id": null,
+      "tax_amount": "0.00"
+    }
+  ],
+  "snapshot_at": "2026-01-18T16:01:20.755Z"
+}
