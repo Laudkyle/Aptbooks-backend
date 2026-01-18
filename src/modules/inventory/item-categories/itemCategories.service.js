@@ -11,4 +11,22 @@ async function listCategories(orgId) {
   return repo.listCategories(orgId);
 }
 
-module.exports = { createCategory, listCategories };
+async function getCategory(orgId, id) {
+  const c = await repo.getCategory(orgId, id);
+  if (!c) throw new AppError(404, "Category not found");
+  return c;
+}
+
+async function updateCategory(orgId, id, payload) {
+  const updated = await repo.updateCategory(orgId, id, payload);
+  if (!updated) throw new AppError(404, "Category not found");
+  return updated;
+}
+
+async function deleteCategory(orgId, id) {
+  const deleted = await repo.deleteCategory(orgId, id);
+  if (!deleted) throw new AppError(404, "Category not found");
+  return { deleted: true, id };
+}
+
+module.exports = { createCategory, listCategories, getCategory, updateCategory, deleteCategory };

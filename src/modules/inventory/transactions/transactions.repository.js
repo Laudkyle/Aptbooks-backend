@@ -47,6 +47,20 @@ async function insertTransaction(client, orgId, payload) {
   return rows[0];
 }
 
+async function insertDraftTransaction(client, orgId, payload) {
+  const { periodId, txnDate, txnType, sourceWarehouseId, destWarehouseId, reference, memo, idempotencyKey, createdBy } = payload;
+  const { rows } = await client.query(
+    `INSERT INTO inventory_transactions(
+        organization_id, period_id, txn_date, txn_type,
+        source_warehouse_id, dest_warehouse_id,
+        reference, memo, status, status2, idempotency_key, created_by
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'posted','draft',$9,$10)
+     RETURNING *`,
+    [orgId, periodId, txnDate, txnType, sourceWarehouseId, destWarehouseId, reference || null, memo || null, idempotencyKey || null, createdBy || null]
+  );
+  return rows[0];
+}
+
 async function findTransactionByIdempotency(client, orgId, idempotencyKey) {
   if (!idempotencyKey) return null;
   const { rows } = await client.query(
@@ -57,14 +71,66 @@ async function findTransactionByIdempotency(client, orgId, idempotencyKey) {
 }
 
 async function insertTxnLine(client, txnId, line) {
-  const { itemId, quantity, unitCost, extendedCost } = line;
+  const { itemId, quantity, unitCost, extendedCost, direction } = line;
   const { rows } = await client.query(
     `INSERT INTO inventory_transaction_lines(transaction_id, item_id, quantity, unit_cost, extended_cost)
      VALUES($1,$2,$3,$4,$5)
      RETURNING *`,
     [txnId, itemId, quantity, unitCost, extendedCost]
   );
+  if (direction) {
+    await client.query(`UPDATE inventory_transaction_lines SET direction=$2 WHERE id=$1`, [rows[0].id, direction]);
+  }
   return rows[0];
+}
+
+async function setStatus2(client, orgId, txnId, status2, actorUserId, reason) {
+  const fields = [];
+  const params = [orgId, txnId, status2];
+  let i = 4;
+  if (status2 === 'approved') {
+    fields.push(`approved_by=$${i++}`, `approved_at=NOW()`);
+    params.push(actorUserId || null);
+  }
+  if (status2 === 'voided') {
+    fields.push(`voided_by=$${i++}`, `voided_at=NOW()`, `void_reason=$${i++}`);
+    params.push(actorUserId || null, reason || null);
+  }
+  const { rows } = await client.query(
+    `UPDATE inventory_transactions
+     SET status2=$3${fields.length ? ',' + fields.join(',') : ''}
+     WHERE organization_id=$1 AND id=$2
+     RETURNING *`,
+    params
+  );
+  return rows[0] || null;
+}
+
+async function getTransactionWithLines(client, orgId, txnId) {
+  const { rows: txRows } = await client.query(
+    `SELECT * FROM inventory_transactions WHERE organization_id=$1 AND id=$2`,
+    [orgId, txnId]
+  );
+  if (!txRows.length) return null;
+  const { rows: lineRows } = await client.query(
+    `SELECT * FROM inventory_transaction_lines WHERE transaction_id=$1 ORDER BY created_at ASC`,
+    [txnId]
+  );
+  return { txn: txRows[0], lines: lineRows };
+}
+
+async function listTransactions(orgId, query = {}) {
+  const params = [orgId];
+  const where = ['organization_id=$1'];
+  let i = 2;
+  if (query.status2) { where.push(`status2=$${i++}`); params.push(query.status2); }
+  if (query.txnType) { where.push(`txn_type=$${i++}`); params.push(query.txnType); }
+  if (query.periodId) { where.push(`period_id=$${i++}`); params.push(query.periodId); }
+  const { rows } = await pool.query(
+    `SELECT * FROM inventory_transactions WHERE ${where.join(' AND ')} ORDER BY txn_date DESC, created_at DESC`,
+    params
+  );
+  return rows;
 }
 
 async function linkJournal(client, txnId, journalId) {
@@ -117,9 +183,13 @@ module.exports = {
   getItemsWithAccounts,
   getBalanceForUpdate,
   insertTransaction,
+  insertDraftTransaction,
   findTransactionByIdempotency,
   insertTxnLine,
   linkJournal,
   createFifoLayer,
-  consumeFifoLayers
+  consumeFifoLayers,
+  setStatus2,
+  getTransactionWithLines,
+  listTransactions
 };

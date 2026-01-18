@@ -130,4 +130,59 @@ async function listSchedules({ orgId, query }) {
   return rows;
 }
 
-module.exports = { createSchedule, listSchedules };
+async function getSchedule({ orgId, scheduleId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM asset_depreciation_schedules WHERE organization_id=$1 AND id=$2`,
+    [orgId, scheduleId]
+  );
+  return rows[0] || null;
+}
+
+async function updateSchedule({ orgId, scheduleId, payload }) {
+  const { rows } = await pool.query(
+    `
+    UPDATE asset_depreciation_schedules
+    SET method = COALESCE($3, method),
+        useful_life_months = COALESCE($4, useful_life_months),
+        effective_start_date = COALESCE($5, effective_start_date),
+        effective_end_date = COALESCE($6, effective_end_date),
+        status = COALESCE($7, status),
+        updated_at = NOW()
+    WHERE organization_id=$1 AND id=$2
+    RETURNING *
+    `,
+    [
+      orgId,
+      scheduleId,
+      payload.method ?? null,
+      payload.usefulLifeMonths ?? null,
+      payload.effectiveStartDate ?? null,
+      payload.effectiveEndDate ?? null,
+      payload.status ?? null,
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function deleteScheduleIfNoPostings({ orgId, scheduleId }) {
+  const { rows: txRows } = await pool.query(
+    `SELECT 1 FROM asset_depreciation_transactions WHERE organization_id=$1 AND schedule_id=$2 LIMIT 1`,
+    [orgId, scheduleId]
+  );
+  if (txRows.length) {
+    throw new AppError(409, "Cannot delete schedule with posted depreciation transactions");
+  }
+  const { rows } = await pool.query(
+    `DELETE FROM asset_depreciation_schedules WHERE organization_id=$1 AND id=$2 RETURNING id`,
+    [orgId, scheduleId]
+  );
+  return rows[0] || null;
+}
+
+module.exports = {
+  createSchedule,
+  listSchedules,
+  getSchedule,
+  updateSchedule,
+  deleteScheduleIfNoPostings,
+};

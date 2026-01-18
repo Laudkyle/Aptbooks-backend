@@ -19,4 +19,19 @@ router.post("/", idempotency({ required: true }), requirePermission("inventory.c
   } catch (e) { next(e); }
 });
 
+router.get("/:id", requirePermission("inventory.categories.read"), async (req, res, next) => {
+  try { res.json(await svc.getCategory(req.user.organization_id, req.params.id)); }
+  catch (e) { next(e); }
+});
+
+router.put("/:id", requirePermission("inventory.categories.manage"), async (req, res, next) => {
+  try { res.json(await svc.updateCategory(req.user.organization_id, req.params.id, req.body)); }
+  catch (e) { next(e); }
+});
+
+router.delete("/:id", requirePermission("inventory.categories.manage"), async (req, res, next) => {
+  try { res.json(await svc.deleteCategory(req.user.organization_id, req.params.id)); }
+  catch (e) { next(e); }
+});
+
 module.exports = router;

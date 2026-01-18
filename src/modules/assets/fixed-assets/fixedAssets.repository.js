@@ -6,29 +6,57 @@ async function createAsset({ orgId, payload }) {
     INSERT INTO fixed_assets(
       organization_id, category_id, code, name,
       acquisition_date, cost, salvage_value,
+      location_id, department_id, cost_center_id,
       status
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,'draft')
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft')
     RETURNING *
     `,
-    [orgId, payload.categoryId, payload.code, payload.name, payload.acquisitionDate, payload.cost, payload.salvageValue ?? 0]
+    [
+      orgId,
+      payload.categoryId,
+      payload.code,
+      payload.name,
+      payload.acquisitionDate,
+      payload.cost,
+      payload.salvageValue ?? 0,
+      payload.locationId ?? null,
+      payload.departmentId ?? null,
+      payload.costCenterId ?? null
+    ]
   );
   return rows[0];
 }
 
 async function listAssets({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["organization_id=$1"]; 
   let i = 2;
 
   if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
   if (query?.categoryId) { where.push(`category_id=$${i++}`); params.push(query.categoryId); }
+  if (query?.locationId) { where.push(`location_id=$${i++}`); params.push(query.locationId); }
+  if (query?.departmentId) { where.push(`department_id=$${i++}`); params.push(query.departmentId); }
+  if (query?.costCenterId) { where.push(`cost_center_id=$${i++}`); params.push(query.costCenterId); }
+  if (query?.q) {
+    where.push(`(code ILIKE $${i} OR name ILIKE $${i})`);
+    params.push(`%${query.q}%`);
+    i++;
+  }
 
   const { rows } = await pool.query(
     `SELECT * FROM fixed_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
     params
   );
   return rows;
+}
+
+async function getAsset({ orgId, assetId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM fixed_assets WHERE organization_id=$1 AND id=$2`,
+    [orgId, assetId]
+  );
+  return rows[0] || null;
 }
 
 async function getAssetWithCategoryAccounts({ orgId, assetId }) {
@@ -38,6 +66,7 @@ async function getAssetWithCategoryAccounts({ orgId, assetId }) {
       a.*,
       c.asset_account_id,
       c.accum_depr_account_id,
+      c.depr_expense_account_id,
       c.disposal_gain_account_id,
       c.disposal_loss_account_id,
       c.status AS category_status
@@ -47,7 +76,51 @@ async function getAssetWithCategoryAccounts({ orgId, assetId }) {
     `,
     [orgId, assetId]
   );
-  return rows[0];
+  return rows[0] || null;
+}
+
+async function updateAsset({ orgId, assetId, payload }) {
+  const { rows } = await pool.query(
+    `
+    UPDATE fixed_assets
+    SET category_id = COALESCE($3, category_id),
+        code = COALESCE($4, code),
+        name = COALESCE($5, name),
+        acquisition_date = COALESCE($6, acquisition_date),
+        cost = COALESCE($7, cost),
+        salvage_value = COALESCE($8, salvage_value),
+        location_id = COALESCE($9, location_id),
+        department_id = COALESCE($10, department_id),
+        cost_center_id = COALESCE($11, cost_center_id),
+        status = COALESCE($12, status),
+        updated_at = NOW()
+    WHERE organization_id=$1 AND id=$2
+    RETURNING *
+    `,
+    [
+      orgId,
+      assetId,
+      payload.categoryId ?? null,
+      payload.code ?? null,
+      payload.name ?? null,
+      payload.acquisitionDate ?? null,
+      payload.cost ?? null,
+      payload.salvageValue ?? null,
+      payload.locationId ?? null,
+      payload.departmentId ?? null,
+      payload.costCenterId ?? null,
+      payload.status ?? null
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function deleteDraftAsset({ orgId, assetId }) {
+  const { rows } = await pool.query(
+    `DELETE FROM fixed_assets WHERE organization_id=$1 AND id=$2 AND status='draft' RETURNING id`,
+    [orgId, assetId]
+  );
+  return rows[0] || null;
 }
 
 async function updateStatus({ orgId, assetId, status, tsField }) {
@@ -101,11 +174,44 @@ async function markDisposed({ orgId, assetId, actorUserId, journalId, entryDate,
   return rows[0];
 }
 
+async function updateCurrentValue({ orgId, assetId, currentValue, impairmentTotal, lastRevaluationAt }) {
+  const { rows } = await pool.query(
+    `
+    UPDATE fixed_assets
+    SET current_value=$3,
+        impairment_total=COALESCE($4, impairment_total),
+        last_revaluation_at=COALESCE($5, last_revaluation_at),
+        updated_at=NOW()
+    WHERE organization_id=$1 AND id=$2
+    RETURNING *
+    `,
+    [orgId, assetId, currentValue, impairmentTotal, lastRevaluationAt]
+  );
+  return rows[0] || null;
+}
+
+async function insertAssetEvent({ orgId, assetId, eventType, eventDate, reference, memo, payloadJson, createdBy }) {
+  const { rows } = await pool.query(
+    `
+    INSERT INTO asset_events(organization_id, asset_id, event_type, event_date, reference, memo, payload_json, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    RETURNING *
+    `,
+    [orgId, assetId, eventType, eventDate, reference || null, memo || null, payloadJson ? JSON.stringify(payloadJson) : null, createdBy || null]
+  );
+  return rows[0];
+}
+
 module.exports = {
   createAsset,
   listAssets,
+  getAsset,
   getAssetWithCategoryAccounts,
+  updateAsset,
+  deleteDraftAsset,
   updateStatus,
   markAcquired,
   markDisposed,
+  updateCurrentValue,
+  insertAssetEvent,
 };
