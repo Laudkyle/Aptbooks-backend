@@ -111,8 +111,13 @@ async function createTaxCode({ orgId, payload }) {
   const { rows } = await pool.query(
     `INSERT INTO tax_codes(
         organization_id, jurisdiction_id, code, name, tax_type, rate, is_compound,
+        box_code, direction,
         effective_from, effective_to, status
-     ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,false),COALESCE($8,CURRENT_DATE),$9,COALESCE($10,'active'))
+     ) VALUES (
+        $1,$2,$3,$4,$5,$6,COALESCE($7,false),
+        $8,$9,
+        COALESCE($10,CURRENT_DATE),$11,COALESCE($12,'active')
+     )
      RETURNING *`,
     [
       orgId,
@@ -122,6 +127,8 @@ async function createTaxCode({ orgId, payload }) {
       payload.taxType,
       payload.rate,
       payload.isCompound === true,
+      payload.boxCode ?? null,
+      payload.direction ?? null,
       payload.effectiveFrom || null,
       payload.effectiveTo ?? null,
       payload.status || null
@@ -153,6 +160,8 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
     taxType: "tax_type",
     rate: "rate",
     isCompound: "is_compound",
+    boxCode: "box_code",
+    direction: "direction",
     effectiveFrom: "effective_from",
     effectiveTo: "effective_to",
     status: "status"

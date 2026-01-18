@@ -45,9 +45,23 @@ BEGIN
 END $$;
 
 -- Add correct FK.
-ALTER TABLE IF EXISTS ifrs15_contracts
-  ADD CONSTRAINT fk_ifrs15_contracts_business_partner
-  FOREIGN KEY (business_partner_id) REFERENCES business_partners(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+  -- Postgres does not support ADD CONSTRAINT IF NOT EXISTS.
+  -- Guard to keep this migration idempotent across environments where Stage 1
+  -- already created the FK.
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.table_constraints tc
+    WHERE tc.table_name = 'ifrs15_contracts'
+      AND tc.constraint_type = 'FOREIGN KEY'
+      AND tc.constraint_name = 'fk_ifrs15_contracts_business_partner'
+  ) THEN
+    ALTER TABLE ifrs15_contracts
+      ADD CONSTRAINT fk_ifrs15_contracts_business_partner
+      FOREIGN KEY (business_partner_id) REFERENCES business_partners(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_ifrs15_contracts_bp
   ON ifrs15_contracts(business_partner_id);

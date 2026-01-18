@@ -14,13 +14,15 @@ async function listQueue({ orgId, asOfDate, minDaysPastDue = 1, includeDisputed 
         COUNT(*) AS open_invoices,
         SUM(GREATEST(oi.outstanding,0)) AS amount_due,
         MIN(oi.due_date) AS earliest_due_date,
-        MAX(GREATEST(0, DATE_PART('day', $2::date - oi.due_date::date))) AS max_days_past_due
+        -- FIXED: Using integer arithmetic instead of DATE_PART
+        MAX(GREATEST(0, $2::date - oi.due_date::date)) AS max_days_past_due
      FROM reporting_ar_open_items oi
      JOIN business_partners p ON p.id = oi.customer_id AND p.organization_id = oi.organization_id
      WHERE oi.organization_id=$1
        AND (oi.outstanding > 0)
        AND (oi.due_date IS NOT NULL)
-       AND (DATE_PART('day', $2::date - oi.due_date::date) >= $3)
+       -- FIXED: Using integer arithmetic
+       AND ($2::date - oi.due_date::date) >= $3
        ${disputedClause}
      GROUP BY oi.customer_id, p.name
      ORDER BY max_days_past_due DESC, amount_due DESC`,

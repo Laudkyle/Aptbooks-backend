@@ -17,6 +17,11 @@ const createTaxCodeSchema = z.object({
   taxType: z.enum(["VAT", "GST", "SALES"]),
   rate: z.coerce.number().min(0),
   isCompound: z.coerce.boolean().optional(),
+  // Optional mapping used by VAT/tax return reporting.
+  // boxCode is the return "box" identifier (e.g., "BOX_1").
+  boxCode: z.string().min(1).max(50).optional().nullable(),
+  // direction indicates whether the tax is output (sales) or input (purchases).
+  direction: z.enum(["output", "input"]).optional().nullable(),
   effectiveFrom: isoDate.optional(),
   effectiveTo: isoDate.optional().nullable(),
   status: z.enum(["active", "inactive"]).optional()
