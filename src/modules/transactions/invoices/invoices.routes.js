@@ -51,6 +51,90 @@ router.get("/:id", requirePermission("transactions.invoice.read"), async (req, r
   } catch (e) { next(e); }
 });
 
+// -----------------------------------------------------------------------------
+// Stage 5: Approval workflow (Tier 10 Documents)
+// -----------------------------------------------------------------------------
+
+router.post(
+  "/:id/submit-for-approval",
+  idempotency({ required: true }),
+  requirePermission("transactions.invoice.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const doc = await svc.submitInvoiceForApproval({ orgId, actorUserId, invoiceId: req.params.id });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "invoice.submitted_for_approval",
+        entityType: "invoices",
+        entityId: req.params.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: doc
+      });
+
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/approve",
+  idempotency({ required: true }),
+  requirePermission("approvals.act"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const comment = req.body?.comment;
+      const doc = await svc.approveInvoiceWorkflow({ orgId, actorUserId, invoiceId: req.params.id, comment });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "invoice.approved",
+        entityType: "invoices",
+        entityId: req.params.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: doc
+      });
+
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/reject",
+  idempotency({ required: true }),
+  requirePermission("approvals.act"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const comment = req.body?.comment;
+      const doc = await svc.rejectInvoiceWorkflow({ orgId, actorUserId, invoiceId: req.params.id, comment });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "invoice.rejected",
+        entityType: "invoices",
+        entityId: req.params.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: doc
+      });
+
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
 router.post("/:id/issue", idempotency({ required: true }), requirePermission("transactions.invoice.issue"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

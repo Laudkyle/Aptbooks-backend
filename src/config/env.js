@@ -88,6 +88,21 @@ RETURN_RESET_TOKEN_IN_RESPONSE:
   MIGRATION_LOCK_ID: process.env.MIGRATION_LOCK_ID || "874230519223", // bigint as string
   // Destructive operations (e.g., schema reset) are blocked unless explicitly enabled.
   ALLOW_DESTRUCTIVE_MIGRATIONS: (process.env.ALLOW_DESTRUCTIVE_MIGRATIONS || "false").toLowerCase() === "true"
+
+  ,
+
+  // Stage 6: Payments Integrations
+  PAYSTACK_SECRET_KEY: process.env.PAYSTACK_SECRET_KEY || "",
+  PAYSTACK_PUBLIC_KEY: process.env.PAYSTACK_PUBLIC_KEY || "",
+  PAYSTACK_BASE_URL: process.env.PAYSTACK_BASE_URL || "https://api.paystack.co",
+
+  // MTN MoMo (Sandbox)
+  MTN_MOMO_BASE_URL: process.env.MTN_MOMO_BASE_URL || "https://sandbox.momodeveloper.mtn.com",
+  MTN_MOMO_SUBSCRIPTION_KEY: process.env.MTN_MOMO_SUBSCRIPTION_KEY || "",
+  MTN_MOMO_API_USER_ID: process.env.MTN_MOMO_API_USER_ID || "",
+  MTN_MOMO_API_KEY: process.env.MTN_MOMO_API_KEY || "",
+  MTN_MOMO_TARGET_ENV: process.env.MTN_MOMO_TARGET_ENV || "sandbox",
+  MTN_MOMO_CALLBACK_URL: process.env.MTN_MOMO_CALLBACK_URL || ""
 };
 
 function validateRuntimeEnv() {

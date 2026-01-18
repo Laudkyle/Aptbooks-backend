@@ -6,66 +6,88 @@ function assertDate(value, fieldName) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`);
 }
 
-function bucketForDaysPastDue(dpd) {
-  if (dpd <= 0) return "CURRENT";
-  if (dpd <= 30) return "1-30";
-  if (dpd <= 60) return "31-60";
-  if (dpd <= 90) return "61-90";
-  return "90+";
+async function getAgingBuckets({ orgId, bucketSetId }) {
+  // If bucketSetId not supplied, use default.
+  const set = bucketSetId
+    ? (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND id=$2`, [orgId, bucketSetId])).rows[0]
+    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0];
+
+  if (!set) {
+    // Backwards compatibility: if migrations not yet run.
+    return {
+      bucketSet: { id: null, name: 'Legacy' },
+      buckets: [
+        { label: 'CURRENT', start_days: -999999, end_days: 0, sort_order: 1 },
+        { label: '1-30', start_days: 1, end_days: 30, sort_order: 2 },
+        { label: '31-60', start_days: 31, end_days: 60, sort_order: 3 },
+        { label: '61-90', start_days: 61, end_days: 90, sort_order: 4 },
+        { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
+        { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
+      ]
+    };
+  }
+  const { rows: buckets } = await pool.query(
+    `SELECT label, start_days, end_days, sort_order
+       FROM aging_buckets
+      WHERE organization_id=$1 AND bucket_set_id=$2
+      ORDER BY sort_order ASC, id ASC`,
+    [orgId, set.id]
+  );
+  return { bucketSet: set, buckets };
 }
 
-async function agedReceivables({ orgId, asOfDate }) {
+function assignBucketLabel(buckets, daysPastDue) {
+  const dpd = Number(daysPastDue || 0);
+  for (const b of buckets) {
+    const start = Number(b.start_days);
+    const end = b.end_days === null || b.end_days === undefined ? null : Number(b.end_days);
+    if (dpd >= start && (end === null || dpd <= end)) return b.label;
+  }
+  // Fallback
+  return buckets[buckets.length - 1]?.label || 'CURRENT';
+}
+
+async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
   assertDate(asOfDate, "asOfDate");
 
-  // Net outstanding = invoice.total - SUM(posted receipt allocations up to asOfDate)
+  const { buckets } = await getAgingBuckets({ orgId, bucketSetId });
+
+  // Use operational view (includes receipts allocations, discounts, credit notes, and write-offs).
   const { rows } = await pool.query(
-    `
-    WITH alloc AS (
-      SELECT
-        cra.invoice_id,
-        SUM(cra.amount_applied) AS allocated
-      FROM customer_receipt_allocations cra
-      JOIN customer_receipts cr ON cr.id = cra.customer_receipt_id
-      WHERE cr.organization_id=$1
-        AND cr.status='posted'
-        AND cr.receipt_date <= $2::date
-      GROUP BY cra.invoice_id
-    )
-    SELECT
-      i.id AS invoice_id,
-      i.customer_id,
-      bp.name AS customer_name,
-      i.invoice_no,
-      i.invoice_date,
-      i.due_date,
-      i.currency_code,
-      i.total,
-      COALESCE(a.allocated,0) AS allocated,
-      (i.total - COALESCE(a.allocated,0)) AS outstanding,
-      GREATEST(0, ($2::date - i.due_date))::int AS days_past_due
-    FROM invoices i
-    JOIN business_partners bp ON bp.id = i.customer_id
-    LEFT JOIN alloc a ON a.invoice_id = i.id
-    WHERE i.organization_id=$1
-      AND i.status IN ('issued','paid')
-      AND i.invoice_date <= $2::date
-      AND (i.total - COALESCE(a.allocated,0)) > 0
-    ORDER BY bp.name, i.due_date, i.invoice_no
-    `,
+    `SELECT
+        oi.invoice_id,
+        oi.customer_id,
+        bp.name AS customer_name,
+        oi.invoice_no,
+        oi.invoice_date,
+        oi.due_date,
+        oi.currency_code,
+        oi.total,
+        oi.allocated,
+        oi.notes_applied,
+        COALESCE(oi.written_off,0) AS written_off,
+        oi.outstanding,
+        GREATEST(0, DATE_PART('day', $2::date - oi.due_date::date))::int AS days_past_due
+     FROM reporting_ar_open_items oi
+     JOIN business_partners bp ON bp.id=oi.customer_id AND bp.organization_id=oi.organization_id
+     WHERE oi.organization_id=$1
+       AND oi.outstanding > 0
+     ORDER BY bp.name, oi.due_date NULLS LAST, oi.invoice_no`,
     [orgId, asOfDate]
   );
 
   const byCustomer = new Map();
-  const totals = { CURRENT: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0, total: 0 };
+  const totals = { total: 0 };
+  for (const b of buckets) totals[b.label] = 0;
 
   for (const r of rows) {
-    const bucket = bucketForDaysPastDue(Number(r.days_past_due || 0));
+    const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0));
     const outstanding = Number(r.outstanding || 0);
     if (!byCustomer.has(r.customer_id)) {
       byCustomer.set(r.customer_id, {
         customer_id: r.customer_id,
         customer_name: r.customer_name,
-        buckets: { CURRENT: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0, total: 0 },
+        buckets: Object.assign({ total: 0 }, Object.fromEntries(buckets.map(b => [b.label, 0]))),
         invoices: []
       });
     }
@@ -82,6 +104,8 @@ async function agedReceivables({ orgId, asOfDate }) {
       currency_code: r.currency_code,
       total: Number(r.total || 0),
       allocated: Number(r.allocated || 0),
+      notes_applied: Number(r.notes_applied || 0),
+      written_off: Number(r.written_off || 0),
       outstanding,
       days_past_due: Number(r.days_past_due || 0),
       bucket

@@ -16,6 +16,8 @@ const {
   updateAddressSchema
 } = require("../../../shared/validators/business/partners.validators");
 
+const { setCreditPolicySchema } = require("../../../shared/validators/business/creditPolicy.validators");
+
 router.use(authRequired);
 
 // PARTNERS
@@ -81,6 +83,37 @@ router.patch("/:id", requirePermission("partners.manage"), async (req, res, next
     if (e?.code === "23505") return next(new AppError(409, "Partner already exists"));
     next(e);
   }
+});
+
+// CREDIT POLICY
+router.get("/:id/credit-policy", requirePermission("partners.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const policy = await svc.getCreditPolicy({ orgId, partnerId: req.params.id });
+    res.json(policy);
+  } catch (e) { next(e); }
+});
+
+router.put("/:id/credit-policy", requirePermission("partners.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(setCreditPolicySchema, req.body);
+    const out = await svc.setCreditPolicy({ orgId, partnerId: req.params.id, payload });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "partner.credit_policy.updated",
+      entityType: "business_partner_credit_policies",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+
+    res.json(out.after);
+  } catch (e) { next(e); }
 });
 
 // CONTACTS

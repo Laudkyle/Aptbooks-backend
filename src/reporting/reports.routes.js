@@ -24,6 +24,9 @@ router.use("/tax", require("./tax/tax.routes"));
 router.use("/audit", require("./audit/audit.routes"));
 router.use("/exports", require("./exports/exports.routes"));
 
+// Reporting configuration (aging buckets, etc.)
+router.use("/config", require("./config/agingBuckets.routes"));
+
 // Operational visibility (scheduler health KPIs, etc.)
 router.use("/system", require("./system/system.routes"));
 

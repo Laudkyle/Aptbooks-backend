@@ -20,10 +20,13 @@ const accountingStatementRoutes = require("./core/accounting/ledger/statements.r
 const reconciliationRoutes = require("./core/accounting/ledger/reconciliation.routes");
 const accountingImportRoutes = require("./core/accounting/imports/imports.routes");
 const accountingExportRoutes = require("./core/accounting/ledger/exports.routes");
+const taxAdminRoutes = require("./core/accounting/tax/tax.routes");
 
 const webhookRoutes = require("./modules/webhooks/webhooks.routes");
 const businessModuleRoutes = require("./modules/business/business.routes");
 const transactionsModuleRoutes = require("./modules/transactions/transactions.routes");
+const arOpsRoutes = require("./modules/ar/ar.routes");
+const integrationsRoutes = require("./modules/integrations/integrations.routes");
 const permissionsRoutes = require("./core/foundation/permissions/permissions.routes");
 const rolesRoutes = require("./core/foundation/roles/roles.routes");
 const usersRoutes = require("./core/foundation/users/users.routes");
@@ -96,7 +99,13 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, res, buf) => {
+    // Needed for webhook signature verification (e.g., Paystack)
+    req.rawBody = buf;
+  }
+}));
 
 app.use(requestIdMiddleware);
 app.use(globalRateLimit);
@@ -118,6 +127,7 @@ app.use("/core/accounting/periods", periodRoutes);
 app.use("/core/accounting/journals", journalRoutes);
 app.use("/core/accounting/balances", balanceRoutes);
 app.use("/core/accounting/fx", fxRoutes);
+app.use("/core/accounting/tax", taxAdminRoutes);
 app.use("/core/accounting/statements", accountingStatementRoutes);
 app.use("/core/accounting/reconciliation", reconciliationRoutes);
 app.use("/core/accounting/imports", accountingImportRoutes);
@@ -128,9 +138,13 @@ app.use("/modules/webhooks", webhookRoutes);
 
 app.use("/modules/business", businessModuleRoutes);
 app.use("/modules/transactions", transactionsModuleRoutes);
+app.use("/modules/ar", arOpsRoutes);
 app.use("/modules/assets", require("./modules/assets/assets.routes"));
 app.use("/modules/inventory", require("./modules/inventory/inventory.routes"));
 app.use("/modules/banking", require("./modules/banking/banking.routes"));
+
+// Stage 6: Integrations (payments, e-invoicing, tax forms)
+app.use("/modules/integrations", integrationsRoutes);
 
 // Tier 8: Compliance
 app.use("/compliance", complianceRoutes);

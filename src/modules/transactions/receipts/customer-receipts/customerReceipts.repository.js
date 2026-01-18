@@ -35,9 +35,10 @@ async function insertCustomerReceipt(client, {
     INSERT INTO customer_receipts(
       organization_id, customer_id, receipt_no, receipt_date,
       payment_method_id, cash_account_id,
-      amount_total, currency_code, fx_rate, status, memo
+      amount_total, currency_code, fx_rate, status, memo,
+      unapplied_amount, discount_total, settlement_total
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,'draft',$9)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,'draft',$9,0,0,0)
     RETURNING *
     `,
     [orgId, customerId, receiptNo, receiptDate, paymentMethodId || null, cashAccountId, amountTotal, currencyCode, memo || null]
@@ -45,15 +46,34 @@ async function insertCustomerReceipt(client, {
   return rows[0];
 }
 
-async function upsertAllocation(client, { customerReceiptId, invoiceId, amountApplied }) {
+async function upsertAllocation(client, { customerReceiptId, invoiceId, amountApplied, discountTaken }) {
   await client.query(
     `
-    INSERT INTO customer_receipt_allocations(customer_receipt_id, invoice_id, amount_applied)
-    VALUES ($1,$2,$3)
+    INSERT INTO customer_receipt_allocations(customer_receipt_id, invoice_id, amount_applied, discount_taken)
+    VALUES ($1,$2,$3,$4)
     ON CONFLICT (customer_receipt_id, invoice_id)
-    DO UPDATE SET amount_applied=EXCLUDED.amount_applied
+    DO UPDATE SET amount_applied=EXCLUDED.amount_applied, discount_taken=EXCLUDED.discount_taken
     `,
-    [customerReceiptId, invoiceId, amountApplied]
+    [customerReceiptId, invoiceId, amountApplied, discountTaken || "0.00"]
+  );
+}
+
+async function deleteAllocations(client, customerReceiptId) {
+  await client.query(
+    `DELETE FROM customer_receipt_allocations WHERE customer_receipt_id=$1`,
+    [customerReceiptId]
+  );
+}
+
+async function recordAllocationEvent(client, { orgId, customerReceiptId, actorUserId, action, before, after }) {
+  await client.query(
+    `
+    INSERT INTO customer_receipt_allocation_events(
+      organization_id, customer_receipt_id, actor_user_id, action, before, after
+    )
+    VALUES ($1,$2,$3,$4,$5,$6)
+    `,
+    [orgId, customerReceiptId, actorUserId || null, action, before || null, after || null]
   );
 }
 
@@ -93,6 +113,8 @@ module.exports = {
   nextReceiptNo,
   insertCustomerReceipt,
   upsertAllocation,
+  deleteAllocations,
+  recordAllocationEvent,
   getCustomerReceiptById,
   getAllocations,
   listCustomerReceipts

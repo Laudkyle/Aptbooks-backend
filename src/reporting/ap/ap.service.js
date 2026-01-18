@@ -6,65 +6,84 @@ function assertDate(value, fieldName) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`);
 }
 
-function bucketForDaysPastDue(dpd) {
-  if (dpd <= 0) return "CURRENT";
-  if (dpd <= 30) return "1-30";
-  if (dpd <= 60) return "31-60";
-  if (dpd <= 90) return "61-90";
-  return "90+";
+async function getAgingBuckets({ orgId, bucketSetId }) {
+  const set = bucketSetId
+    ? (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND id=$2`, [orgId, bucketSetId])).rows[0]
+    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0];
+
+  if (!set) {
+    return {
+      bucketSet: { id: null, name: 'Legacy' },
+      buckets: [
+        { label: 'CURRENT', start_days: -999999, end_days: 0, sort_order: 1 },
+        { label: '1-30', start_days: 1, end_days: 30, sort_order: 2 },
+        { label: '31-60', start_days: 31, end_days: 60, sort_order: 3 },
+        { label: '61-90', start_days: 61, end_days: 90, sort_order: 4 },
+        { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
+        { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
+      ]
+    };
+  }
+
+  const { rows: buckets } = await pool.query(
+    `SELECT label, start_days, end_days, sort_order
+       FROM aging_buckets
+      WHERE organization_id=$1 AND bucket_set_id=$2
+      ORDER BY sort_order ASC, id ASC`,
+    [orgId, set.id]
+  );
+  return { bucketSet: set, buckets };
 }
 
-async function agedPayables({ orgId, asOfDate }) {
+function assignBucketLabel(buckets, daysPastDue) {
+  const dpd = Number(daysPastDue || 0);
+  for (const b of buckets) {
+    const start = Number(b.start_days);
+    const end = b.end_days === null || b.end_days === undefined ? null : Number(b.end_days);
+    if (dpd >= start && (end === null || dpd <= end)) return b.label;
+  }
+  return buckets[buckets.length - 1]?.label || 'CURRENT';
+}
+
+async function agedPayables({ orgId, asOfDate, bucketSetId }) {
   assertDate(asOfDate, "asOfDate");
 
+  const { buckets } = await getAgingBuckets({ orgId, bucketSetId });
+
   const { rows } = await pool.query(
-    `
-    WITH alloc AS (
-      SELECT
-        vpa.bill_id,
-        SUM(vpa.amount_applied) AS allocated
-      FROM vendor_payment_allocations vpa
-      JOIN vendor_payments vp ON vp.id = vpa.vendor_payment_id
-      WHERE vp.organization_id=$1
-        AND vp.status='posted'
-        AND vp.payment_date <= $2::date
-      GROUP BY vpa.bill_id
-    )
-    SELECT
-      b.id AS bill_id,
-      b.vendor_id,
-      bp.name AS vendor_name,
-      b.bill_no,
-      b.bill_date,
-      b.due_date,
-      b.currency_code,
-      b.total,
-      COALESCE(a.allocated,0) AS allocated,
-      (b.total - COALESCE(a.allocated,0)) AS outstanding,
-      GREATEST(0, ($2::date - b.due_date))::int AS days_past_due
-    FROM bills b
-    JOIN business_partners bp ON bp.id = b.vendor_id
-    LEFT JOIN alloc a ON a.bill_id = b.id
-    WHERE b.organization_id=$1
-      AND b.status IN ('issued','paid')
-      AND b.bill_date <= $2::date
-      AND (b.total - COALESCE(a.allocated,0)) > 0
-    ORDER BY bp.name, b.due_date, b.bill_no
-    `,
+    `SELECT
+        oi.bill_id,
+        oi.vendor_id,
+        bp.name AS vendor_name,
+        oi.bill_no,
+        oi.bill_date,
+        oi.due_date,
+        oi.currency_code,
+        oi.total,
+        oi.allocated,
+        oi.notes_applied,
+        COALESCE(oi.written_off,0) AS written_off,
+        oi.outstanding,
+        GREATEST(0, DATE_PART('day', $2::date - oi.due_date::date))::int AS days_past_due
+     FROM reporting_ap_open_items oi
+     JOIN business_partners bp ON bp.id=oi.vendor_id AND bp.organization_id=oi.organization_id
+     WHERE oi.organization_id=$1 AND oi.outstanding > 0
+     ORDER BY bp.name, oi.due_date NULLS LAST, oi.bill_no`,
     [orgId, asOfDate]
   );
 
   const byVendor = new Map();
-  const totals = { CURRENT: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0, total: 0 };
+  const totals = { total: 0 };
+  for (const b of buckets) totals[b.label] = 0;
 
   for (const r of rows) {
-    const bucket = bucketForDaysPastDue(Number(r.days_past_due || 0));
+    const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0));
     const outstanding = Number(r.outstanding || 0);
     if (!byVendor.has(r.vendor_id)) {
       byVendor.set(r.vendor_id, {
         vendor_id: r.vendor_id,
         vendor_name: r.vendor_name,
-        buckets: { CURRENT: 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0, total: 0 },
+        buckets: Object.assign({ total: 0 }, Object.fromEntries(buckets.map(b => [b.label, 0]))),
         bills: []
       });
     }
@@ -81,17 +100,15 @@ async function agedPayables({ orgId, asOfDate }) {
       currency_code: r.currency_code,
       total: Number(r.total || 0),
       allocated: Number(r.allocated || 0),
+      notes_applied: Number(r.notes_applied || 0),
+      written_off: Number(r.written_off || 0),
       outstanding,
       days_past_due: Number(r.days_past_due || 0),
       bucket
     });
   }
 
-  return {
-    as_of_date: asOfDate,
-    totals,
-    vendors: Array.from(byVendor.values())
-  };
+  return { as_of_date: asOfDate, totals, vendors: Array.from(byVendor.values()) };
 }
 
 async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {

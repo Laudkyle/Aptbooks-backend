@@ -427,3 +427,56 @@ module.exports = {
   addAddress,
   updateAddress
 };
+
+/**
+ * CREDIT POLICY (AR)
+ */
+async function getCreditPolicy({ orgId, partnerId }) {
+  await getPartnerForOrg({ orgId, partnerId });
+  const { rows } = await pool.query(
+    `SELECT * FROM business_partner_credit_policies WHERE organization_id=$1 AND business_partner_id=$2`,
+    [orgId, partnerId]
+  );
+  if (!rows.length) {
+    // lazily create (backwards-compatible)
+    const { rows: created } = await pool.query(
+      `INSERT INTO business_partner_credit_policies(organization_id, business_partner_id)
+       VALUES ($1,$2)
+       ON CONFLICT (organization_id, business_partner_id) DO NOTHING
+       RETURNING *`,
+      [orgId, partnerId]
+    );
+    if (created.length) return created[0];
+    const { rows: again } = await pool.query(
+      `SELECT * FROM business_partner_credit_policies WHERE organization_id=$1 AND business_partner_id=$2`,
+      [orgId, partnerId]
+    );
+    return again[0];
+  }
+  return rows[0];
+}
+
+async function setCreditPolicy({ orgId, partnerId, payload }) {
+  await getPartnerForOrg({ orgId, partnerId });
+  const current = await getCreditPolicy({ orgId, partnerId });
+
+  const next = {
+    credit_limit: payload.creditLimit ?? current.credit_limit,
+    credit_days: payload.creditDays ?? current.credit_days,
+    hold_if_over: payload.holdIfOver ?? current.hold_if_over,
+    notes: payload.notes === undefined ? current.notes : payload.notes
+  };
+
+  const { rows } = await pool.query(
+    `UPDATE business_partner_credit_policies
+     SET credit_limit=$3, credit_days=$4, hold_if_over=$5, notes=$6, updated_at=NOW()
+     WHERE organization_id=$1 AND business_partner_id=$2
+     RETURNING *`,
+    [orgId, partnerId, next.credit_limit, next.credit_days, next.hold_if_over, next.notes]
+  );
+
+  return { before: current, after: rows[0] };
+}
+
+module.exports.getCreditPolicy = getCreditPolicy;
+module.exports.setCreditPolicy = setCreditPolicy;

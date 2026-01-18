@@ -51,6 +51,90 @@ router.get("/:id", requirePermission("transactions.bill.read"), async (req, res,
   } catch (e) { next(e); }
 });
 
+// -----------------------------------------------------------------------------
+// Stage 5: Approval workflow (Tier 10 Documents)
+// -----------------------------------------------------------------------------
+
+router.post(
+  "/:id/submit-for-approval",
+  idempotency({ required: true }),
+  requirePermission("transactions.bill.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const doc = await svc.submitBillForApproval({ orgId, actorUserId, billId: req.params.id });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "bill.submitted_for_approval",
+        entityType: "bills",
+        entityId: req.params.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: doc
+      });
+
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/approve",
+  idempotency({ required: true }),
+  requirePermission("approvals.act"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const comment = req.body?.comment;
+      const doc = await svc.approveBillWorkflow({ orgId, actorUserId, billId: req.params.id, comment });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "bill.approved",
+        entityType: "bills",
+        entityId: req.params.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: doc
+      });
+
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/reject",
+  idempotency({ required: true }),
+  requirePermission("approvals.act"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const comment = req.body?.comment;
+      const doc = await svc.rejectBillWorkflow({ orgId, actorUserId, billId: req.params.id, comment });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "bill.rejected",
+        entityType: "bills",
+        entityId: req.params.id,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: doc
+      });
+
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
 router.post("/:id/issue", idempotency({ required: true }), requirePermission("transactions.bill.issue"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

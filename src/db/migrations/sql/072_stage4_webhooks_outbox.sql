@@ -18,7 +18,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_org_event
   ON webhook_subscriptions (organization_id, event_type, status);
 
 CREATE TABLE IF NOT EXISTS webhook_outbox (
-  id BIGSERIAL PRIMARY KEY,
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   event_type TEXT NOT NULL,
   payload JSONB NOT NULL,

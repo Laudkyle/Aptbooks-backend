@@ -1,0 +1,159 @@
+const { AppError } = require("../../../shared/errors/AppError");
+
+/**
+ * Repository for Credit Notes.
+ * Convention: caller handles transactions by passing `client`.
+ */
+
+async function getById({ orgId, id, client }) {
+  const { rows } = await client.query(
+    `SELECT * FROM credit_notes WHERE organization_id=$1 AND id=$2`,
+    [orgId, id]
+  );
+  return rows[0] || null;
+}
+
+async function getLines({ id, client }) {
+  const { rows } = await client.query(
+    `SELECT * FROM credit_note_lines WHERE credit_note_id=$1 ORDER BY line_no`,
+    [id]
+  );
+  return rows;
+}
+
+async function getApplications({ orgId, id, client }) {
+  const { rows } = await client.query(
+    `SELECT cna.*, inv.invoice_no, inv.invoice_date, inv.due_date
+       FROM credit_note_applications cna
+       JOIN invoices inv ON inv.id = cna.invoice_id
+      WHERE cna.organization_id=$1 AND cna.credit_note_id=$2
+      ORDER BY cna.applied_at ASC`,
+    [orgId, id]
+  );
+  return rows;
+}
+
+async function nextCreditNoteNo({ orgId, client }) {
+  await client.query(
+    `INSERT INTO credit_note_sequences(organization_id, next_no)
+     VALUES ($1, 1) ON CONFLICT (organization_id) DO NOTHING`,
+    [orgId]
+  );
+  const { rows } = await client.query(
+    `UPDATE credit_note_sequences
+        SET next_no = next_no + 1, updated_at=NOW()
+      WHERE organization_id=$1
+      RETURNING next_no`,
+    [orgId]
+  );
+  const no = BigInt(rows[0].next_no) - 1n;
+  return `CN-${String(no).padStart(6, "0")}`;
+}
+
+async function createDraft({ orgId, actorUserId, payload, totals, client }) {
+  const creditNoteNo = await nextCreditNoteNo({ orgId, client });
+  const { rows } = await client.query(
+    `INSERT INTO credit_notes(
+        organization_id, customer_id, credit_note_no, credit_note_date,
+        memo, subtotal, tax_total, total
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     RETURNING *`,
+    [
+      orgId,
+      payload.customerId,
+      creditNoteNo,
+      payload.creditNoteDate,
+      payload.memo || null,
+      totals.subtotal,
+      totals.tax_total,
+      totals.total
+    ]
+  );
+  const cn = rows[0];
+
+  for (let i = 0; i < payload.lines.length; i++) {
+    const l = payload.lines[i];
+    await client.query(
+      `INSERT INTO credit_note_lines(
+          credit_note_id, line_no, description, quantity, unit_price, line_total,
+          revenue_account_id, tax_code_id, tax_amount
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        cn.id,
+        i + 1,
+        l.description,
+        l.quantity ?? 1,
+        l.unitPrice,
+        l.lineTotal,
+        l.revenueAccountId,
+        l.taxCodeId || null,
+        l.taxAmount || 0
+      ]
+    );
+  }
+
+  return cn;
+}
+
+async function list({ orgId, query, client }) {
+  const params = [orgId];
+  const where = ["organization_id=$1"]; 
+  let i = 2;
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
+  if (query?.customerId) { where.push(`customer_id=$${i++}`); params.push(query.customerId); }
+  const { rows } = await client.query(
+    `SELECT * FROM credit_notes WHERE ${where.join(" AND ")}
+     ORDER BY credit_note_date DESC, created_at DESC
+     LIMIT 200`,
+    params
+  );
+  return rows;
+}
+
+async function setIssued({ orgId, id, periodId, journalEntryId, actorUserId, client }) {
+  const { rows } = await client.query(
+    `UPDATE credit_notes
+        SET status='issued', period_id=$3, journal_entry_id=$4,
+            issued_at=NOW(), issued_by=$5
+      WHERE organization_id=$1 AND id=$2 AND status='draft'
+      RETURNING *`,
+    [orgId, id, periodId, journalEntryId, actorUserId]
+  );
+  if (!rows.length) throw new AppError(409, "Only draft credit notes can be issued");
+  return rows[0];
+}
+
+async function insertApplication({ orgId, creditNoteId, invoiceId, amountApplied, actorUserId, client }) {
+  const { rows } = await client.query(
+    `INSERT INTO credit_note_applications(
+        organization_id, credit_note_id, invoice_id, amount_applied, applied_by
+     ) VALUES ($1,$2,$3,$4,$5)
+     RETURNING *`,
+    [orgId, creditNoteId, invoiceId, amountApplied, actorUserId]
+  );
+  return rows[0];
+}
+
+async function setVoided({ orgId, id, reversalJournalEntryId, actorUserId, reason, client }) {
+  const { rows } = await client.query(
+    `UPDATE credit_notes
+        SET status='voided', reversal_journal_entry_id=$3,
+            voided_at=NOW(), voided_by=$4, void_reason=$5
+      WHERE organization_id=$1 AND id=$2 AND status='issued'
+      RETURNING *`,
+    [orgId, id, reversalJournalEntryId, actorUserId, reason || null]
+  );
+  if (!rows.length) throw new AppError(409, "Only issued credit notes can be voided");
+  return rows[0];
+}
+
+module.exports = {
+  getById,
+  getLines,
+  getApplications,
+  createDraft,
+  list,
+  setIssued,
+  insertApplication,
+  setVoided
+};

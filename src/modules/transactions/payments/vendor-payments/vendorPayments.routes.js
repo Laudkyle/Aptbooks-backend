@@ -6,7 +6,9 @@ const { validate } = require("../../../../shared/validators/validate");
 
 const {
   createVendorPaymentSchema,
-  voidVendorPaymentSchema
+  voidVendorPaymentSchema,
+  reallocateVendorPaymentSchema,
+  autoAllocateVendorPaymentSchema
 } = require("../../../../shared/validators/transactions.validators");
 
 const svc = require("./vendorPayments.service");
@@ -48,6 +50,52 @@ router.get("/:id", requirePermission("transactions.vendor_payment.read"), async 
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getVendorPaymentDetails({ orgId, id: req.params.id }));
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/auto-allocate", idempotency({ required: true }), requirePermission("transactions.vendor_payment.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+
+    const body = validate(autoAllocateVendorPaymentSchema, req.body || {});
+    const out = await svc.autoAllocateVendorPayment({ orgId, actorUserId, id: req.params.id, rule: body.rule });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "vendor_payment.auto_allocated",
+      entityType: "vendor_payments",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: out
+    });
+
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/reallocate", idempotency({ required: true }), requirePermission("transactions.allocations.reallocate"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+
+    const body = validate(reallocateVendorPaymentSchema, req.body || {});
+    const out = await svc.reallocateVendorPayment({ orgId, actorUserId, id: req.params.id, allocations: body.allocations });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "vendor_payment.reallocated",
+      entityType: "vendor_payments",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: out
+    });
+
+    res.json(out);
   } catch (e) { next(e); }
 });
 

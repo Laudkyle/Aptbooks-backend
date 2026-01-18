@@ -33,15 +33,15 @@ async function insertVendorPayment(client, { orgId, vendorId, paymentNo, payment
   return rows[0];
 }
 
-async function upsertAllocation(client, { vendorPaymentId, billId, amountApplied }) {
+async function upsertAllocation(client, { vendorPaymentId, billId, amountApplied, discountTaken }) {
   await client.query(
     `
-    INSERT INTO vendor_payment_allocations(vendor_payment_id, bill_id, amount_applied)
-    VALUES ($1,$2,$3)
+    INSERT INTO vendor_payment_allocations(vendor_payment_id, bill_id, amount_applied, discount_taken)
+    VALUES ($1,$2,$3,$4)
     ON CONFLICT (vendor_payment_id, bill_id)
-    DO UPDATE SET amount_applied = EXCLUDED.amount_applied
+    DO UPDATE SET amount_applied=EXCLUDED.amount_applied, discount_taken=EXCLUDED.discount_taken
     `,
-    [vendorPaymentId, billId, amountApplied]
+    [vendorPaymentId, billId, amountApplied, discountTaken || "0.00"]
   );
 }
 
@@ -76,4 +76,34 @@ async function listVendorPayments({ orgId, query }) {
   return rows;
 }
 
-module.exports = { nextPaymentNo, insertVendorPayment, upsertAllocation, getVendorPaymentById, getAllocations, listVendorPayments };
+
+
+async function deleteAllocations(client, vendorPaymentId) {
+  await client.query(
+    `DELETE FROM vendor_payment_allocations WHERE vendor_payment_id=$1`,
+    [vendorPaymentId]
+  );
+}
+
+async function recordAllocationEvent(client, { orgId, vendorPaymentId, actorUserId, action, before, after }) {
+  await client.query(
+    `
+    INSERT INTO vendor_payment_allocation_events(
+      organization_id, vendor_payment_id, actor_user_id, action, before, after
+    )
+    VALUES ($1,$2,$3,$4,$5,$6)
+    `,
+    [orgId, vendorPaymentId, actorUserId || null, action, before || null, after || null]
+  );
+}
+
+module.exports = {
+  nextPaymentNo,
+  insertVendorPayment,
+  upsertAllocation,
+  deleteAllocations,
+  recordAllocationEvent,
+  getVendorPaymentById,
+  getAllocations,
+  listVendorPayments
+};
