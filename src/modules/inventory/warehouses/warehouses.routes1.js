@@ -2,7 +2,7 @@ const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { idempotency } = require("../../../middleware/idempotency.middleware");
-const svc = require("./warehouses.service");
+const svc = require("./warehouses.service1");
 
 router.use(authRequired);
 

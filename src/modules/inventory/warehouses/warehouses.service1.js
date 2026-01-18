@@ -1,4 +1,4 @@
-const repo = require("./warehouses.repository");
+const repo = require("./warehouses.repository1");
 const { AppError } = require("../../../shared/errors/AppError");
 
 async function createWarehouse(orgId, payload) {
