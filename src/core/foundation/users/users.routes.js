@@ -110,7 +110,7 @@ router.get("/:userId/login-history", requirePermission("users.read"), async (req
   } catch (e) { next(e); }
 });
 
-router.post("/", requirePermission("users.manage"), async (req, res, next) => {
+router.post("/create/", requirePermission("users.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const { email, password } = req.body || {};
