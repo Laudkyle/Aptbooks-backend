@@ -8,6 +8,14 @@ const FORECAST_STATUS = ["draft", "active", "archived"];
 // Forecast versions are "scenarios". We keep lifecycle simple and enforce edit locks.
 const VERSION_STATUS = ["draft", "active", "archived"];
 
+function assertEditableWorkflow(version) {
+  if (!version) throw new AppError(404, "Forecast version not found");
+  const locked = new Set(["approved", "archived"]);
+  if (version.workflow_status && locked.has(version.workflow_status)) {
+    throw new AppError(409, `Version workflow_status '${version.workflow_status}' is not editable`);
+  }
+}
+
 function assertName(name, field = "name") {
   if (!name || typeof name !== "string" || !name.trim()) throw new AppError(400, `${field} is required`);
 }
@@ -96,6 +104,7 @@ async function upsertLines({ orgId, forecastId, versionId = null, lines, actorUs
 
   if (!v) throw new AppError(404, "Forecast version not found");
   if (v.status !== "draft") throw new AppError(409, "Only draft forecast versions can be edited");
+  assertEditableWorkflow(v);
 
   const saved = [];
   for (const line of lines) {
@@ -238,6 +247,146 @@ async function finalizeVersion({ orgId, forecastId, versionId, actorUserId, req 
   return updated;
 }
 
+// Stage 2 workflows
+async function submitVersion({ orgId, forecastId, versionId, actorUserId, req }) {
+  assertUuid(forecastId, "forecastId");
+  assertUuid(versionId, "versionId");
+  const v = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!v) throw new AppError(404, "Forecast version not found");
+  if (v.workflow_status !== "draft" && v.workflow_status !== "rejected") {
+    throw new AppError(409, "Only draft/rejected versions can be submitted");
+  }
+  const updated = await repo.updateVersionWorkflow({
+    orgId,
+    forecastId,
+    versionId,
+    patch: {
+      workflowStatus: "in_review",
+      submittedAt: new Date().toISOString(),
+      submittedByUserId: actorUserId,
+      rejectionReason: null,
+    },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.submit",
+    entityType: "forecast_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+  return updated;
+}
+
+async function approveVersion({ orgId, forecastId, versionId, actorUserId, req }) {
+  const v = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!v) throw new AppError(404, "Forecast version not found");
+  if (v.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be approved");
+  const updated = await repo.updateVersionWorkflow({
+    orgId,
+    forecastId,
+    versionId,
+    patch: { workflowStatus: "approved", approvedAt: new Date().toISOString(), approvedByUserId: actorUserId },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.approve",
+    entityType: "forecast_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+  return updated;
+}
+
+async function rejectVersion({ orgId, forecastId, versionId, reason, actorUserId, req }) {
+  const v = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!v) throw new AppError(404, "Forecast version not found");
+  if (v.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be rejected");
+  const updated = await repo.updateVersionWorkflow({
+    orgId,
+    forecastId,
+    versionId,
+    patch: {
+      workflowStatus: "rejected",
+      rejectedAt: new Date().toISOString(),
+      rejectedByUserId: actorUserId,
+      rejectionReason: reason || "Rejected",
+    },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.reject",
+    entityType: "forecast_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+  return updated;
+}
+
+async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, name, scenarioKey, probabilityWeight, actorUserId, req }) {
+  const src = await repo.getVersionById({ orgId, id: sourceVersionId, forecastId });
+  if (!src) throw new AppError(404, "Source forecast version not found");
+  if (!Number.isInteger(newVersionNo) || newVersionNo <= 0) throw new AppError(400, "newVersionNo must be a positive integer");
+  const created = await repo.copyVersion({
+    orgId,
+    forecastId,
+    sourceVersionId,
+    newVersionNo,
+    name,
+    scenarioKey,
+    probabilityWeight,
+    createdByUserId: actorUserId,
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.copy",
+    entityType: "forecast_version",
+    entityId: created?.id || null,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: { sourceVersionId, created },
+  });
+  return created;
+}
+
+async function compareVersions({ orgId, forecastId, baseVersionId, compareVersionId, periodId }) {
+  assertUuid(forecastId, "forecastId");
+  assertUuid(baseVersionId, "baseVersionId");
+  assertUuid(compareVersionId, "compareVersionId");
+  const rows = await repo.compareVersions({ orgId, forecastId, baseVersionId, compareVersionId, periodId: periodId || null });
+  return { forecastId, baseVersionId, compareVersionId, periodId: periodId || null, lines: rows };
+}
+
+async function forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId }) {
+  assertUuid(forecastVersionId, "forecastVersionId");
+  assertUuid(budgetVersionId, "budgetVersionId");
+  assertUuid(periodId, "periodId");
+  const rows = await repo.forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId });
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.forecast += Number(r.forecast_amount || 0);
+      acc.budget += Number(r.budget_amount || 0);
+      acc.variance += Number(r.variance || 0);
+      return acc;
+    },
+    { forecast: 0, budget: 0, variance: 0 }
+  );
+  return { periodId, forecastVersionId, budgetVersionId, totals, lines: rows };
+}
+
 module.exports = {
   listForecasts,
   createForecast,
@@ -247,4 +396,10 @@ module.exports = {
   activateForecast,
   archiveForecast,
   finalizeVersion,
+  submitVersion,
+  approveVersion,
+  rejectVersion,
+  copyVersion,
+  compareVersions,
+  forecastVsBudget,
 };

@@ -32,17 +32,20 @@ async function createDefinition({
   status,
   accountId,
   expressionJson,
+  category,
+  ownerUserId,
+  documentation,
 }) {
   const { rows } = await pool.query(
     `
     INSERT INTO kpi_definitions(
       organization_id, code, name, kpi_type, status,
-      account_id, expression
+      account_id, expression, category, owner_user_id, documentation
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
     RETURNING *
     `,
-    [orgId, code, name, kpiType, status, accountId || null, expressionJson]
+    [orgId, code, name, kpiType, status, accountId || null, expressionJson, category || null, ownerUserId || null, documentation || null]
   );
   return rows[0];
 }
@@ -57,6 +60,9 @@ async function updateDefinition({ orgId, id, patch }) {
     status: "status",
     accountId: "account_id",
     expressionJson: "expression",
+    category: "category",
+    ownerUserId: "owner_user_id",
+    documentation: "documentation",
   };
 
   for (const [k, col] of Object.entries(allowed)) {
@@ -71,6 +77,69 @@ async function updateDefinition({ orgId, id, patch }) {
     values
   );
   return rows.length ? rows[0] : null;
+}
+
+// KPI Targets
+async function listTargets({ orgId, kpiDefinitionId, includeArchived = false }) {
+  const params = [orgId, kpiDefinitionId];
+  let where = "WHERE organization_id=$1 AND kpi_definition_id=$2";
+  if (!includeArchived) {
+    where += " AND is_archived = false";
+  }
+  const { rows } = await pool.query(
+    `SELECT * FROM kpi_targets ${where} ORDER BY period_id NULLS LAST, created_at DESC`,
+    params
+  );
+  return rows;
+}
+
+async function getTarget({ orgId, id }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM kpi_targets WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, id]
+  );
+  return rows[0] || null;
+}
+
+async function upsertTarget({ orgId, kpiDefinitionId, periodId, direction, targetValue, amberThreshold, redThreshold }) {
+  const { rows } = await pool.query(
+    `
+    INSERT INTO kpi_targets(organization_id, kpi_definition_id, period_id, direction, target_value, amber_threshold, red_threshold)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    RETURNING *
+    `,
+    [orgId, kpiDefinitionId, periodId || null, direction, targetValue, amberThreshold === undefined ? null : amberThreshold, redThreshold === undefined ? null : redThreshold]
+  );
+  return rows[0];
+}
+
+async function updateTarget({ orgId, id, patch }) {
+  const { direction, targetValue, amberThreshold, redThreshold, periodId, isArchived } = patch || {};
+  const { rows } = await pool.query(
+    `
+    UPDATE kpi_targets
+    SET period_id = COALESCE($3, period_id),
+        direction = COALESCE($4, direction),
+        target_value = COALESCE($5, target_value),
+        amber_threshold = COALESCE($6, amber_threshold),
+        red_threshold = COALESCE($7, red_threshold),
+        is_archived = COALESCE($8, is_archived),
+        updated_at = NOW()
+    WHERE organization_id=$1 AND id=$2
+    RETURNING *
+    `,
+    [
+      orgId,
+      id,
+      periodId === undefined ? null : periodId,
+      direction || null,
+      targetValue === undefined ? null : targetValue,
+      amberThreshold === undefined ? null : amberThreshold,
+      redThreshold === undefined ? null : redThreshold,
+      isArchived === undefined ? null : !!isArchived,
+    ]
+  );
+  return rows[0] || null;
 }
 
 async function archiveDefinition({ orgId, id }) {
@@ -134,6 +203,22 @@ async function getNormalisedAccountActual({ orgId, periodId, accountId }) {
   return rows.length ? Number(rows[0].actual_normal || 0) : 0;
 }
 
+async function getApplicableTarget({ orgId, kpiDefinitionId, periodId }) {
+  // Prefer exact period match, fallback to global target (period_id IS NULL)
+  const { rows } = await pool.query(
+    `
+    SELECT *
+    FROM kpi_targets
+    WHERE organization_id=$1 AND kpi_definition_id=$2 AND is_archived=FALSE
+      AND (period_id=$3 OR period_id IS NULL)
+    ORDER BY (period_id IS NULL) ASC, updated_at DESC
+    LIMIT 1
+    `,
+    [orgId, kpiDefinitionId, periodId]
+  );
+  return rows[0] || null;
+}
+
 module.exports = {
   listDefinitions,
   getDefinition,
@@ -143,4 +228,9 @@ module.exports = {
   upsertValue,
   listValues,
   getNormalisedAccountActual,
+  listTargets,
+  getTarget,
+  upsertTarget,
+  updateTarget,
+  getApplicableTarget,
 };

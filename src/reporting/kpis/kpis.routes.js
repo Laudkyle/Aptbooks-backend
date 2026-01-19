@@ -79,4 +79,46 @@ router.post("/values/compute", requirePermission("reporting.kpis.manage"), idemp
   }
 });
 
+// KPI Targets/Thresholds
+router.get("/definitions/:id/targets", requirePermission("reporting.kpis.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { includeArchived } = req.query;
+    const data = await svc.listTargets({ orgId, kpiDefinitionId: req.params.id, includeArchived: includeArchived === "true" });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/definitions/:id/targets", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.createTarget({ orgId, kpiDefinitionId: req.params.id, actorUserId, req, ...req.body });
+    res.status(201).json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/targets/:targetId", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.updateTarget({ orgId, actorUserId, req, targetId: req.params.targetId, patch: req.body });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/targets/:targetId", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.archiveTarget({ orgId, actorUserId, req, targetId: req.params.targetId });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

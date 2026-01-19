@@ -235,6 +235,165 @@ async function createVersion({ orgId, forecastId, versionNo, name, status, creat
   return rows[0];
 }
 
+async function updateVersionWorkflow({ orgId, forecastId, versionId, patch }) {
+  const {
+    workflowStatus,
+    submittedAt,
+    submittedByUserId,
+    approvedAt,
+    approvedByUserId,
+    rejectedAt,
+    rejectedByUserId,
+    rejectionReason,
+    scenarioKey,
+    probabilityWeight,
+    templateSourceVersionId,
+  } = patch || {};
+
+  const { rows } = await pool.query(
+    `
+    UPDATE forecast_versions
+    SET workflow_status = COALESCE($4, workflow_status),
+        submitted_at = COALESCE($5, submitted_at),
+        submitted_by_user_id = COALESCE($6, submitted_by_user_id),
+        approved_at = COALESCE($7, approved_at),
+        approved_by_user_id = COALESCE($8, approved_by_user_id),
+        rejected_at = COALESCE($9, rejected_at),
+        rejected_by_user_id = COALESCE($10, rejected_by_user_id),
+        rejection_reason = COALESCE($11, rejection_reason),
+        scenario_key = COALESCE($12, scenario_key),
+        probability_weight = COALESCE($13, probability_weight),
+        template_source_version_id = COALESCE($14, template_source_version_id),
+        updated_at = NOW()
+    WHERE organization_id=$1 AND forecast_id=$2 AND id=$3
+    RETURNING *
+    `,
+    [
+      orgId,
+      forecastId,
+      versionId,
+      workflowStatus || null,
+      submittedAt || null,
+      submittedByUserId || null,
+      approvedAt || null,
+      approvedByUserId || null,
+      rejectedAt || null,
+      rejectedByUserId || null,
+      rejectionReason || null,
+      scenarioKey || null,
+      probabilityWeight === undefined ? null : probabilityWeight,
+      templateSourceVersionId || null,
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, name, scenarioKey, probabilityWeight, createdByUserId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: vrows } = await client.query(
+      `
+      INSERT INTO forecast_versions(organization_id, forecast_id, version_no, name, status, created_by_user_id, workflow_status, scenario_key, probability_weight, template_source_version_id)
+      SELECT organization_id, forecast_id, $4, COALESCE($5, name), 'draft', $8, 'draft', COALESCE($6, scenario_key), COALESCE($7, probability_weight), $3
+      FROM forecast_versions
+      WHERE organization_id=$1 AND forecast_id=$2 AND id=$3
+      RETURNING *
+      `,
+      [orgId, forecastId, sourceVersionId, newVersionNo, name || null, scenarioKey || null, probabilityWeight === undefined ? null : probabilityWeight, createdByUserId || null]
+    );
+    const created = vrows[0];
+    if (!created) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `
+      INSERT INTO forecast_lines(organization_id, forecast_id, forecast_version_id, account_id, period_id, amount, dimension_json)
+      SELECT organization_id, forecast_id, $2, account_id, period_id, amount, dimension_json
+      FROM forecast_lines
+      WHERE organization_id=$1 AND forecast_version_id=$3
+      `,
+      [orgId, created.id, sourceVersionId]
+    );
+    await client.query("COMMIT");
+    return created;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function compareVersions({ orgId, forecastId, baseVersionId, compareVersionId, periodId }) {
+  const params = [orgId, forecastId, baseVersionId, compareVersionId];
+  let periodFilter = "";
+  if (periodId) {
+    params.push(periodId);
+    periodFilter = ` AND period_id=$${params.length}`;
+  }
+  const { rows } = await pool.query(
+    `
+    WITH base AS (
+      SELECT account_id, period_id, SUM(amount) AS amount
+      FROM forecast_lines
+      WHERE organization_id=$1 AND forecast_id=$2 AND forecast_version_id=$3 ${periodFilter}
+      GROUP BY account_id, period_id
+    ), cmp AS (
+      SELECT account_id, period_id, SUM(amount) AS amount
+      FROM forecast_lines
+      WHERE organization_id=$1 AND forecast_id=$2 AND forecast_version_id=$4 ${periodFilter}
+      GROUP BY account_id, period_id
+    )
+    SELECT COALESCE(b.account_id, c.account_id) AS account_id,
+           coa.code AS account_code,
+           coa.name AS account_name,
+           COALESCE(b.period_id, c.period_id) AS period_id,
+           COALESCE(b.amount, 0) AS base_amount,
+           COALESCE(c.amount, 0) AS compare_amount,
+           (COALESCE(c.amount, 0) - COALESCE(b.amount, 0)) AS delta
+    FROM base b
+    FULL OUTER JOIN cmp c
+      ON c.account_id=b.account_id AND c.period_id=b.period_id
+    JOIN chart_of_accounts coa ON coa.id = COALESCE(b.account_id, c.account_id)
+    ORDER BY coa.code
+    `,
+    params
+  );
+  return rows;
+}
+
+async function forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId }) {
+  const { rows } = await pool.query(
+    `
+    WITH f AS (
+      SELECT account_id, SUM(amount) AS forecast_amount
+      FROM forecast_lines
+      WHERE organization_id=$1 AND forecast_version_id=$2 AND period_id=$4
+      GROUP BY account_id
+    ), b AS (
+      SELECT account_id, SUM(amount) AS budget_amount
+      FROM budget_lines
+      WHERE organization_id=$1 AND budget_version_id=$3 AND period_id=$4
+      GROUP BY account_id
+    )
+    SELECT COALESCE(f.account_id, b.account_id) AS account_id,
+           coa.code AS account_code,
+           coa.name AS account_name,
+           COALESCE(b.budget_amount, 0) AS budget_amount,
+           COALESCE(f.forecast_amount, 0) AS forecast_amount,
+           (COALESCE(f.forecast_amount, 0) - COALESCE(b.budget_amount, 0)) AS variance
+    FROM f
+    FULL OUTER JOIN b ON b.account_id=f.account_id
+    JOIN chart_of_accounts coa ON coa.id = COALESCE(f.account_id, b.account_id)
+    ORDER BY coa.code
+    `,
+    [orgId, forecastVersionId, budgetVersionId, periodId]
+  );
+  return rows;
+}
+
 async function upsertLine({ orgId, forecastId, forecastVersionId, accountId, periodId, amount, dimensionJson }) {
   const { rows } = await pool.query(
     `
@@ -361,6 +520,10 @@ module.exports = {
   getLatestDraftVersion,
   getLatestActiveOrDraftVersion,
   createVersion,
+  updateVersionWorkflow,
+  copyVersion,
+  compareVersions,
+  forecastVsBudget,
   activateForecast,
   archiveForecast,
   finalizeVersion,

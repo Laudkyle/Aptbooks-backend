@@ -92,6 +92,177 @@ async function upsertLine({ orgId, versionId, accountId, periodId, amount, dimen
   return rows[0];
 }
 
+async function updateVersionWorkflow({ orgId, budgetId, versionId, patch }) {
+  const {
+    workflowStatus,
+    submittedAt,
+    submittedByUserId,
+    approvedAt,
+    approvedByUserId,
+    rejectedAt,
+    rejectedByUserId,
+    rejectionReason,
+    scenarioKey,
+    templateSourceVersionId,
+  } = patch || {};
+
+  const { rows } = await pool.query(
+    `
+    UPDATE budget_versions
+    SET workflow_status = COALESCE($4, workflow_status),
+        submitted_at = COALESCE($5, submitted_at),
+        submitted_by_user_id = COALESCE($6, submitted_by_user_id),
+        approved_at = COALESCE($7, approved_at),
+        approved_by_user_id = COALESCE($8, approved_by_user_id),
+        rejected_at = COALESCE($9, rejected_at),
+        rejected_by_user_id = COALESCE($10, rejected_by_user_id),
+        rejection_reason = COALESCE($11, rejection_reason),
+        scenario_key = COALESCE($12, scenario_key),
+        template_source_version_id = COALESCE($13, template_source_version_id),
+        updated_at = NOW()
+    WHERE organization_id = $1 AND budget_id = $2 AND id = $3
+    RETURNING *
+    `,
+    [
+      orgId,
+      budgetId,
+      versionId,
+      workflowStatus || null,
+      submittedAt || null,
+      submittedByUserId || null,
+      approvedAt || null,
+      approvedByUserId || null,
+      rejectedAt || null,
+      rejectedByUserId || null,
+      rejectionReason || null,
+      scenarioKey || null,
+      templateSourceVersionId || null,
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function copyVersion({ orgId, budgetId, sourceVersionId, newVersionNo, name, scenarioKey, createdByUserId }) {
+  // Create new version
+  const { rows: vrows } = await pool.query(
+    `
+    INSERT INTO budget_versions(organization_id, budget_id, version_no, name, status, created_by_user_id, workflow_status, scenario_key, template_source_version_id)
+    SELECT organization_id, budget_id, $4, COALESCE($5, name), 'draft', $6, 'draft', COALESCE($7, scenario_key), $3
+    FROM budget_versions
+    WHERE organization_id=$1 AND budget_id=$2 AND id=$3
+    RETURNING *
+    `,
+    [orgId, budgetId, sourceVersionId, newVersionNo, name || null, createdByUserId || null, scenarioKey || null]
+  );
+  const created = vrows[0];
+  if (!created) return null;
+
+  // Copy lines
+  await pool.query(
+    `
+    INSERT INTO budget_lines(organization_id, budget_version_id, account_id, period_id, amount, dimension_json)
+    SELECT organization_id, $2, account_id, period_id, amount, dimension_json
+    FROM budget_lines
+    WHERE organization_id=$1 AND budget_version_id=$3
+    `,
+    [orgId, created.id, sourceVersionId]
+  );
+
+  return created;
+}
+
+async function massAdjustLines({ orgId, versionId, pct, accountId, periodId, dimensionJson }) {
+  const multiplier = 1 + Number(pct) / 100;
+  if (!Number.isFinite(multiplier)) throw new Error("Invalid pct");
+
+  const params = [orgId, versionId, multiplier];
+  let where = "WHERE organization_id=$1 AND budget_version_id=$2";
+  let idx = 4;
+  if (accountId) {
+    params.push(accountId);
+    where += ` AND account_id=$${idx++}`;
+  }
+  if (periodId) {
+    params.push(periodId);
+    where += ` AND period_id=$${idx++}`;
+  }
+  if (dimensionJson) {
+    params.push(JSON.stringify(dimensionJson));
+    where += ` AND dimension_json @> $${idx++}::jsonb`;
+  }
+  const { rowCount } = await pool.query(
+    `
+    UPDATE budget_lines
+    SET amount = ROUND((amount * $3)::numeric, 2),
+        updated_at = NOW()
+    ${where}
+    `,
+    params
+  );
+  return { affected: rowCount };
+}
+
+async function listAlertRules({ orgId, budgetId }) {
+  const { rows } = await pool.query(
+    `
+    SELECT *
+    FROM budget_alert_rules
+    WHERE organization_id=$1 AND budget_id=$2
+    ORDER BY created_at DESC
+    `,
+    [orgId, budgetId]
+  );
+  return rows;
+}
+
+async function createAlertRule({ orgId, budgetId, name, thresholdPct, accountId, dimensionJson, isEnabled }) {
+  const { rows } = await pool.query(
+    `
+    INSERT INTO budget_alert_rules(organization_id, budget_id, name, threshold_pct, account_id, dimension_json, is_enabled)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    RETURNING *
+    `,
+    [orgId, budgetId, name, thresholdPct, accountId || null, dimensionJson || {}, isEnabled === undefined ? true : !!isEnabled]
+  );
+  return rows[0];
+}
+
+async function getAlertRule({ orgId, budgetId, ruleId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM budget_alert_rules WHERE organization_id=$1 AND budget_id=$2 AND id=$3 LIMIT 1`,
+    [orgId, budgetId, ruleId]
+  );
+  return rows[0] || null;
+}
+
+async function updateAlertRule({ orgId, budgetId, ruleId, patch }) {
+  const { name, thresholdPct, accountId, dimensionJson, isEnabled } = patch || {};
+  const { rows } = await pool.query(
+    `
+    UPDATE budget_alert_rules
+    SET name = COALESCE($4, name),
+        threshold_pct = COALESCE($5, threshold_pct),
+        account_id = COALESCE($6, account_id),
+        dimension_json = COALESCE($7, dimension_json),
+        is_enabled = COALESCE($8, is_enabled),
+        updated_at = NOW()
+    WHERE organization_id=$1 AND budget_id=$2 AND id=$3
+    RETURNING *
+    `,
+    [
+      orgId,
+      budgetId,
+      ruleId,
+      name || null,
+      thresholdPct === undefined ? null : thresholdPct,
+      accountId === undefined ? null : accountId,
+      dimensionJson === undefined ? null : dimensionJson,
+      isEnabled === undefined ? null : !!isEnabled,
+    ]
+  );
+  return rows[0] || null;
+}
+
 
 async function getAccountingPeriod({ orgId, periodId }) {
   const { rows } = await pool.query(
@@ -123,6 +294,13 @@ module.exports = {
   createVersion,
   getVersion,
   upsertLine,
+  updateVersionWorkflow,
+  copyVersion,
+  massAdjustLines,
+  listAlertRules,
+  createAlertRule,
+  getAlertRule,
+  updateAlertRule,
   getVariance,
   getAccountingPeriod,
   listPeriodsByStartYear,

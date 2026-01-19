@@ -1,10 +1,16 @@
 const express = require("express");
 const { authRequired } = require("../middleware/auth.middleware");
+const { enforceDimensionAccess } = require("../middleware/dimensionAccess.middleware");
 
 const router = express.Router();
 
 // All reporting endpoints require authentication.
 router.use(authRequired);
+
+// Stage 4: Dimension-level access control applies when a request includes a
+// dimensionJson filter (query or body). This is intentionally non-breaking:
+// if no rules exist, the request proceeds.
+router.use(enforceDimensionAccess);
 
 router.use(
   "/financial-statements",
@@ -23,6 +29,12 @@ router.use("/allocations", require("./allocations/allocations.routes"));
 router.use("/tax", require("./tax/tax.routes"));
 router.use("/audit", require("./audit/audit.routes"));
 router.use("/exports", require("./exports/exports.routes"));
+router.use("/analytics", require("./analytics/analytics.routes"));
+
+// Stage 3: saved report builder, dashboards, management reports
+router.use("/reports", require("./report-builder/reportBuilder.routes"));
+router.use("/dashboards", require("./dashboards/dashboards.routes"));
+router.use("/management", require("./management/managementReports.routes"));
 
 // Reporting configuration (aging buckets, etc.)
 router.use("/config", require("./config/agingBuckets.routes"));

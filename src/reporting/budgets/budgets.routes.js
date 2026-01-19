@@ -122,6 +122,145 @@ router.post(
   }
 );
 
+// Stage 2 workflow endpoints
+router.post(
+  "/:id/versions/:versionId/submit",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.submitVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/approve",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.approveVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/reject",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.rejectVersion({
+        orgId,
+        budgetId: req.params.id,
+        versionId: req.params.versionId,
+        reason: req.body?.reason,
+        actorUserId,
+        req,
+      });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/copy",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.copyVersion({
+        orgId,
+        budgetId: req.params.id,
+        sourceVersionId: req.params.versionId,
+        newVersionNo: req.body?.newVersionNo,
+        name: req.body?.name,
+        scenarioKey: req.body?.scenarioKey,
+        actorUserId,
+        req,
+      });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/mass-adjust",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { pct, accountId, periodId, dimensionJson } = req.body || {};
+      const data = await svc.massAdjustLines({
+        orgId,
+        budgetId: req.params.id,
+        versionId: req.params.versionId,
+        pct,
+        accountId,
+        periodId,
+        dimensionJson,
+        actorUserId,
+        req,
+      });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Budget alert rules
+router.get("/:id/alerts", requirePermission("reporting.budgets.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const data = await svc.listAlertRules({ orgId, budgetId: req.params.id });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/alerts", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.createAlertRule({ orgId, budgetId: req.params.id, actorUserId, req, ...req.body });
+    res.status(201).json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put(
+  "/:id/alerts/:ruleId",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.updateAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId, patch: req.body, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Variance (Budget vs Actual)
 // GET /reporting/budgets/:id/versions/:versionId/variance?periodId=<accounting_period_id>
 router.get("/:id/versions/:versionId/variance", requirePermission("reporting.budgets.read"), async (req, res, next) => {

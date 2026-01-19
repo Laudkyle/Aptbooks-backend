@@ -41,6 +41,7 @@ router.post("/", requirePermission("reporting.projects.manage"), idempotency({ r
   }
 });
 
+// Phases
 router.post("/:projectId/phases", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
@@ -61,6 +62,34 @@ router.get("/:projectId/phases", requirePermission("reporting.projects.read"), a
   }
 });
 
+router.put("/:projectId/phases/:phaseId", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.updatePhase({
+      orgId,
+      projectId: req.params.projectId,
+      id: req.params.phaseId,
+      actorUserId,
+      req,
+      ...req.body,
+    });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/:projectId/phases/:phaseId", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    await svc.archivePhase({ orgId, projectId: req.params.projectId, id: req.params.phaseId, actorUserId, req });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Tasks
 router.post("/:projectId/phases/:phaseId/tasks", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
@@ -88,6 +117,42 @@ router.get("/:projectId/phases/:phaseId/tasks", requirePermission("reporting.pro
   }
 });
 
+router.put("/:projectId/phases/:phaseId/tasks/:taskId", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.updateTask({
+      orgId,
+      projectId: req.params.projectId,
+      phaseId: req.params.phaseId,
+      id: req.params.taskId,
+      actorUserId,
+      req,
+      ...req.body,
+    });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete("/:projectId/phases/:phaseId/tasks/:taskId", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    await svc.archiveTask({
+      orgId,
+      projectId: req.params.projectId,
+      phaseId: req.params.phaseId,
+      id: req.params.taskId,
+      actorUserId,
+      req,
+    });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Project lifecycle
 router.put("/:projectId", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;

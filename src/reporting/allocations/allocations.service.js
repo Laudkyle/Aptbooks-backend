@@ -239,7 +239,7 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
     // normalise to management-reporting sign (positive = "natural" direction)
     // eslint-disable-next-line no-await-in-loop
     const nb = await fetchAccountNormalBalances({ orgId, accountIds: [rule.sourceAccountId] });
-    const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance: nb[rule.sourceAccountId] });
+    const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance: nb.get(rule.sourceAccountId) });
     const baseAmount = Math.abs(normalised);
 
     const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
@@ -527,6 +527,181 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
   }
 }
 
+
+async function previewCompute({ orgId, periodId, ruleIds }) {
+  assertUuid(periodId, "periodId");
+  if (!Array.isArray(ruleIds) || ruleIds.length === 0) throw new AppError(400, "ruleIds must be a non-empty array");
+  for (const id of ruleIds) assertUuid(id, "ruleId");
+
+  // validate period exists
+  const period = await pool.query(
+    `SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!period.rows.length) throw new AppError(404, "Period not found");
+
+  const previews = [];
+
+  for (const ruleId of ruleIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const ruleRes = await pool.query(
+      `SELECT id, code, name, source_account_id AS "sourceAccountId", payload_json AS "payloadJson", status
+         FROM allocation_rules
+        WHERE organization_id=$1 AND id=$2`,
+      [orgId, ruleId]
+    );
+    if (!ruleRes.rows.length) throw new AppError(404, `Allocation rule not found: ${ruleId}`);
+    const rule = ruleRes.rows[0];
+    if (rule.status === "archived") throw new AppError(409, `Allocation rule is archived: ${rule.code}`);
+
+    const targets = assertTargets(rule.payloadJson || {});
+
+    // Pull source balance for period from GL balances
+    // eslint-disable-next-line no-await-in-loop
+    const gl = await pool.query(
+      `SELECT debit_total, credit_total
+         FROM general_ledger_balances
+        WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
+      [orgId, periodId, rule.sourceAccountId]
+    );
+    const debit = Number(gl.rows[0]?.debit_total || 0);
+    const credit = Number(gl.rows[0]?.credit_total || 0);
+    const signedNet = debit - credit;
+
+    // normalise to management-reporting sign
+    // eslint-disable-next-line no-await-in-loop
+    const nb = await fetchAccountNormalBalances({ orgId, accountIds: [rule.sourceAccountId] });
+    const normalBalance = nb.get(rule.sourceAccountId);
+    const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance });
+
+    const baseAmount = Math.abs(normalised);
+    const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
+    if (totalWeight <= 0) throw new AppError(400, "Total target weight must be > 0");
+
+    const lines = [];
+    let allocatedSum = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      const w = Number(t.weight);
+      let amt = (baseAmount * w) / totalWeight;
+      if (i === targets.length - 1) {
+        amt = baseAmount - allocatedSum;
+      }
+      allocatedSum += amt;
+      lines.push({
+        lineNo: i + 1,
+        toAccountId: t.toAccountId,
+        amount: amt,
+        weight: w,
+        notes: t.notes || null,
+        dimensionJson: t.dimensionJson || {},
+      });
+    }
+
+    previews.push({
+      ruleId: rule.id,
+      ruleCode: rule.code,
+      ruleName: rule.name,
+      periodId,
+      sourceAccountId: rule.sourceAccountId,
+      signedNet,
+      normalisedNet: normalised,
+      baseAmount,
+      totalWeight,
+      lines,
+    });
+  }
+
+  return previews;
+}
+
+
+async function previewCompute({ orgId, periodId, ruleIds }) {
+  assertUuid(periodId, "periodId");
+  if (!Array.isArray(ruleIds) || ruleIds.length === 0) throw new AppError(400, "ruleIds must be a non-empty array");
+  for (const id of ruleIds) assertUuid(id, "ruleId");
+
+  // validate period exists
+  const period = await pool.query(
+    `SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!period.rows.length) throw new AppError(404, "Period not found");
+
+  const previews = [];
+
+  for (const ruleId of ruleIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const ruleRes = await pool.query(
+      `SELECT id, code, name, source_account_id AS "sourceAccountId", payload_json AS "payloadJson", status
+         FROM allocation_rules
+        WHERE organization_id=$1 AND id=$2`,
+      [orgId, ruleId]
+    );
+    if (!ruleRes.rows.length) throw new AppError(404, `Allocation rule not found: ${ruleId}`);
+    const rule = ruleRes.rows[0];
+    if (rule.status === "archived") throw new AppError(409, `Allocation rule is archived: ${rule.code}`);
+
+    const targets = assertTargets(rule.payloadJson || {});
+
+    // Pull source balance for period from GL balances
+    // eslint-disable-next-line no-await-in-loop
+    const gl = await pool.query(
+      `SELECT debit_total, credit_total
+         FROM general_ledger_balances
+        WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
+      [orgId, periodId, rule.sourceAccountId]
+    );
+    const debit = Number(gl.rows[0]?.debit_total || 0);
+    const credit = Number(gl.rows[0]?.credit_total || 0);
+    const signedNet = debit - credit;
+
+    // normalise to management-reporting sign
+    // eslint-disable-next-line no-await-in-loop
+    const nb = await fetchAccountNormalBalances({ orgId, accountIds: [rule.sourceAccountId] });
+    const normalBalance = nb.get(rule.sourceAccountId);
+    const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance });
+
+    const baseAmount = Math.abs(normalised);
+    const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
+    if (totalWeight <= 0) throw new AppError(400, "Total target weight must be > 0");
+
+    const lines = [];
+    let allocatedSum = 0;
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i];
+      const w = Number(t.weight);
+      let amt = (baseAmount * w) / totalWeight;
+      if (i === targets.length - 1) {
+        amt = baseAmount - allocatedSum;
+      }
+      allocatedSum += amt;
+      lines.push({
+        lineNo: i + 1,
+        toAccountId: t.toAccountId,
+        amount: amt,
+        weight: w,
+        notes: t.notes || null,
+        dimensionJson: t.dimensionJson || {},
+      });
+    }
+
+    previews.push({
+      ruleId: rule.id,
+      ruleCode: rule.code,
+      ruleName: rule.name,
+      periodId,
+      sourceAccountId: rule.sourceAccountId,
+      signedNet,
+      normalisedNet: normalised,
+      baseAmount,
+      totalWeight,
+      lines,
+    });
+  }
+
+  return previews;
+}
 module.exports = {
   listBases,
   createBase,
@@ -534,4 +709,5 @@ module.exports = {
   createRule,
   computeAndPersist,
   postAllocation,
+  previewCompute
 };

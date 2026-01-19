@@ -31,6 +31,7 @@ const permissionsRoutes = require("./core/foundation/permissions/permissions.rou
 const rolesRoutes = require("./core/foundation/roles/roles.routes");
 const usersRoutes = require("./core/foundation/users/users.routes");
 const settingsRoutes = require("./core/foundation/system-settings/system-settings.routes");
+const dimensionSecurityRoutes = require("./core/foundation/dimension-security/dimensionSecurity.routes");
 const accrualRoutes = require("./core/accounting/accruals/accruals.routes");
 const notificationsRoutes = require("./notifications/notifications.routes");
 const searchRoutes = require("./search/search.routes");
@@ -119,6 +120,7 @@ app.use("/core/roles", rolesRoutes);
 app.use("/core/organizations", orgRoutes);
 app.use("/core/permissions", permissionsRoutes);
 app.use("/core/settings", settingsRoutes);
+app.use("/core/dimension-security", dimensionSecurityRoutes);
 app.use("/core/api-keys", require("./core/foundation/api-keys/apiKeys.routes"));
 app.use("/core/accounting/accruals", accrualRoutes);
 

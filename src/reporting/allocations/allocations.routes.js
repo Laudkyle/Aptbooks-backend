@@ -47,7 +47,19 @@ router.post("/rules", requirePermission("reporting.allocations.manage"), idempot
   }
 });
 
-// Compute allocations snapshot
+// Preview allocations (no persistence)
+router.post("/preview", requirePermission("reporting.allocations.manage"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { ruleIds, periodId } = req.body;
+    const data = await svc.previewCompute({ orgId, ruleIds, periodId });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Compute allocations snapshot (persist)
 router.post("/compute", requirePermission("reporting.allocations.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;

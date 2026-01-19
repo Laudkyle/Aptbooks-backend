@@ -64,7 +64,7 @@ async function listDefinitions({ orgId, status, limit, offset }) {
   return repo.listDefinitions({ orgId, status: status || null, limit, offset });
 }
 
-async function createDefinition({ orgId, actorUserId, req, code, name, kpiType, accountId, status, expressionJson }) {
+async function createDefinition({ orgId, actorUserId, req, code, name, kpiType, accountId, status, expressionJson, category, ownerUserId, documentation }) {
   assertCode(code, "code");
   assertName(name, "name");
   assertEnum(kpiType, KPI_TYPES, "kpiType");
@@ -84,6 +84,9 @@ async function createDefinition({ orgId, actorUserId, req, code, name, kpiType, 
     status: status || "active",
     accountId: accountId || null,
     expressionJson: expr,
+    category: category || null,
+    ownerUserId: ownerUserId || null,
+    documentation: documentation || null,
   });
 
   await writeAudit({
@@ -130,7 +133,16 @@ async function updateDefinition({ orgId, actorUserId, req, id, patch }) {
   if (patch.expressionJson !== undefined) {
     outPatch.expressionJson = parseExpressionJson(patch.expressionJson);
   }
-
+  if (patch.category !== undefined) {
+    outPatch.category = patch.category;
+  }
+  if (patch.ownerUserId !== undefined) {
+    if (patch.ownerUserId !== null) assertUuid(patch.ownerUserId, "ownerUserId");
+    outPatch.ownerUserId = patch.ownerUserId;
+  }
+  if (patch.documentation !== undefined) {
+    outPatch.documentation = patch.documentation;
+  }
   const updated = await repo.updateDefinition({ orgId, id, patch: outPatch });
 
   await writeAudit({
@@ -203,6 +215,19 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
 
     if (Number.isNaN(value) || !Number.isFinite(value)) throw new AppError(400, "Computed KPI value is invalid");
 
+    const target = await repo.getApplicableTarget({ orgId, kpiDefinitionId: id, periodId });
+    if (target) {
+      meta = {
+        ...meta,
+        target: {
+          direction: target.direction,
+          target_value: Number(target.target_value),
+          amber_threshold: target.amber_threshold === null ? null : Number(target.amber_threshold),
+          red_threshold: target.red_threshold === null ? null : Number(target.red_threshold),
+        },
+      };
+    }
+
     const row = await repo.upsertValue({
       orgId,
       kpiDefinitionId: id,
@@ -234,6 +259,63 @@ async function listValues({ orgId, periodId, limit, offset }) {
   return repo.listValues({ orgId, periodId: periodId || null, limit, offset });
 }
 
+// KPI Targets
+async function listTargets({ orgId, kpiDefinitionId, includeArchived = false }) {
+  assertUuid(kpiDefinitionId, "kpiDefinitionId");
+  return repo.listTargets({ orgId, kpiDefinitionId, includeArchived });
+}
+
+async function createTarget({ orgId, actorUserId, req, kpiDefinitionId, periodId, direction = "higher", targetValue, amberThreshold, redThreshold }) {
+  assertUuid(kpiDefinitionId, "kpiDefinitionId");
+  if (periodId !== undefined && periodId !== null) assertUuid(periodId, "periodId");
+  if (!targetValue && targetValue !== 0) throw new AppError(400, "targetValue is required");
+  if (!["higher", "lower"].includes(direction)) throw new AppError(400, "direction must be 'higher' or 'lower'");
+  const created = await repo.upsertTarget({
+    orgId,
+    kpiDefinitionId,
+    periodId: periodId || null,
+    direction,
+    targetValue: Number(targetValue),
+    amberThreshold: amberThreshold === undefined ? undefined : Number(amberThreshold),
+    redThreshold: redThreshold === undefined ? undefined : Number(redThreshold),
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.kpi.target.create",
+    entityType: "kpi_target",
+    entityId: created.id,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: created,
+  });
+  return created;
+}
+
+async function updateTarget({ orgId, actorUserId, req, targetId, patch }) {
+  assertUuid(targetId, "targetId");
+  const before = await repo.getTarget({ orgId, id: targetId });
+  if (!before) throw new AppError(404, "KPI target not found");
+  const updated = await repo.updateTarget({ orgId, id: targetId, patch });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.kpi.target.update",
+    entityType: "kpi_target",
+    entityId: targetId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before,
+    after: updated,
+  });
+  return updated;
+}
+
+async function archiveTarget({ orgId, actorUserId, req, targetId }) {
+  return updateTarget({ orgId, actorUserId, req, targetId, patch: { isArchived: true } });
+}
+
 module.exports = {
   listDefinitions,
   createDefinition,
@@ -241,4 +323,8 @@ module.exports = {
   archiveDefinition,
   computeValues,
   listValues,
+  listTargets,
+  createTarget,
+  updateTarget,
+  archiveTarget,
 };

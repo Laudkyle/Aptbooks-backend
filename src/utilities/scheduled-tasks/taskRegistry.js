@@ -11,6 +11,13 @@ const { computeDeferredTaxDraftDaily, checkIas12ConfigDaily } = require("./ias12
 const { ifrs16AutoPostDaily } = require("./ifrs16.jobs");
 const { ifrs15AutoPostRevenueDaily } = require("./ifrs15.jobs");
 const { ifrs9AutoComputeAndFinalizeEclDaily } = require("./ifrs9.jobs");
+const { runDueSavedReportSchedulesHourly } = require("./reports.jobs");
+const {
+  maintenanceRetentionDaily,
+  maintenanceRateLimitCleanupDaily,
+  purgeReportCacheHourly,
+  purgeSavedReportRunsDaily,
+} = require("./maintenance.jobs");
 
 function listTasks() {
   return [
@@ -67,6 +74,36 @@ function listTasks() {
       name: "IFRS9 ECL compute & finalize (period end)",
       schedule: { type: "daily_at_utc", dailyHourUtc: 23, dailyMinuteUtc: 45 },
       handler: async () => ifrs9AutoComputeAndFinalizeEclDaily()
+    },
+    {
+      code: "reporting.saved_reports.run_due.hourly",
+      name: "Run due saved report schedules (hourly)",
+      schedule: { type: "interval_seconds", intervalSeconds: 3600 },
+      handler: async () => runDueSavedReportSchedulesHourly()
+    },
+    {
+      code: "maintenance.scheduler_retention.daily",
+      name: "Purge scheduler operational logs (daily)",
+      schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 0 },
+      handler: async () => maintenanceRetentionDaily(),
+    },
+    {
+      code: "maintenance.rate_limit.cleanup.daily",
+      name: "Purge rate limit windows (daily)",
+      schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 10 },
+      handler: async () => maintenanceRateLimitCleanupDaily(),
+    },
+    {
+      code: "reporting.report_cache.purge.hourly",
+      name: "Purge expired report cache (hourly)",
+      schedule: { type: "interval_seconds", intervalSeconds: 3600 },
+      handler: async () => purgeReportCacheHourly(),
+    },
+    {
+      code: "reporting.saved_report_runs.retention.daily",
+      name: "Purge saved report run history per retention (daily)",
+      schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 20 },
+      handler: async () => purgeSavedReportRunsDaily(),
     }
   ];
 }

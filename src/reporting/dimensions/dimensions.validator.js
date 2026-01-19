@@ -13,9 +13,18 @@ const ALLOWED_KEYS = [
   "projectTaskId",
 ];
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 async function assertExists({ table, orgId, id, name, allowStatuses }) {
   const { rows } = await pool.query(
-    `SELECT id, status FROM ${table} WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    `SELECT id, status,
+            COALESCE(is_blocked, FALSE) AS is_blocked,
+            valid_from, valid_to
+       FROM ${table}
+      WHERE organization_id=$1 AND id=$2
+      LIMIT 1`,
     [orgId, id]
   );
   if (!rows.length) throw new AppError(400, `${name} not found`);
@@ -23,19 +32,24 @@ async function assertExists({ table, orgId, id, name, allowStatuses }) {
   if (allowStatuses && !allowStatuses.includes(row.status)) {
     throw new AppError(409, `${name} is ${row.status}`);
   }
+  if (row.is_blocked) {
+    throw new AppError(409, `${name} is blocked`);
+  }
+
+  // Effective dating is optional; enforce only when configured.
+  const t = todayIsoDate();
+  if (row.valid_from && String(row.valid_from) > t) {
+    throw new AppError(409, `${name} is not yet effective`);
+  }
+  if (row.valid_to && String(row.valid_to) < t) {
+    throw new AppError(409, `${name} is no longer effective`);
+  }
 }
 
 /**
  * Validate the shape of dimensionJson and ensure referenced dimension entities exist.
  *
  * Intended usage: budgets/forecasts line writes.
- *
- * Rules:
- * - dimensionJson must be an object (or null/undefined).
- * - Only ALLOWED_KEYS are accepted.
- * - Values must be UUID strings.
- * - Referenced entities must belong to the same organization.
- * - Archived dimensions are rejected for new writes.
  */
 async function validateDimensionJson({ orgId, dimensionJson }) {
   if (dimensionJson === null || dimensionJson === undefined) return {};
@@ -88,18 +102,17 @@ async function validateDimensionJson({ orgId, dimensionJson }) {
       orgId,
       id: dimensionJson.projectId,
       name: "projectId",
-      allowStatuses: ["active", "on_hold", "closed"],
+      allowStatuses: ["active", "completed"],
     });
   }
   if (dimensionJson.projectPhaseId) {
-    // Phase must be within project if provided.
     const { rows } = await pool.query(
       `SELECT id, project_id, status FROM project_phases WHERE organization_id=$1 AND id=$2 LIMIT 1`,
       [orgId, dimensionJson.projectPhaseId]
     );
     if (!rows.length) throw new AppError(400, "projectPhaseId not found");
     const phase = rows[0];
-    if (!["active", "closed"].includes(phase.status)) throw new AppError(409, `projectPhaseId is ${phase.status}`);
+    if (!['active','closed'].includes(phase.status)) throw new AppError(409, `projectPhaseId is ${phase.status}`);
     if (dimensionJson.projectId && phase.project_id !== dimensionJson.projectId) {
       throw new AppError(400, "projectPhaseId does not belong to projectId");
     }
@@ -111,7 +124,7 @@ async function validateDimensionJson({ orgId, dimensionJson }) {
     );
     if (!rows.length) throw new AppError(400, "projectTaskId not found");
     const task = rows[0];
-    if (!["active", "done"].includes(task.status)) throw new AppError(409, `projectTaskId is ${task.status}`);
+    if (!["active", "closed"].includes(task.status)) throw new AppError(409, `projectTaskId is ${task.status}`);
     if (dimensionJson.projectId && task.project_id !== dimensionJson.projectId) {
       throw new AppError(400, "projectTaskId does not belong to projectId");
     }

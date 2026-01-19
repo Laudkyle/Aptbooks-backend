@@ -9,7 +9,19 @@ router.get("/:type", requirePermission("reporting.centers.read"), async (req, re
   try {
     const { organization_id: orgId } = req.user;
     const { type } = req.params;
-    const data = await svc.listCenters({ orgId, type });
+    const { status } = req.query;
+    const data = await svc.listCenters({ orgId, type, status });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/:type/:id/usage", requirePermission("reporting.centers.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { type, id } = req.params;
+    const data = await svc.usageForCenter({ orgId, type, id });
     res.json({ data });
   } catch (err) {
     next(err);

@@ -103,6 +103,109 @@ router.post(
   }
 );
 
+// Stage 2 workflow endpoints
+router.post(
+  "/:id/versions/:versionId/submit",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.submitVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/approve",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.approveVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/reject",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.rejectVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, reason: req.body?.reason, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.post(
+  "/:id/versions/:versionId/copy",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { newVersionNo, name, scenarioKey, probabilityWeight } = req.body || {};
+      const data = await svc.copyVersion({
+        orgId,
+        forecastId: req.params.id,
+        sourceVersionId: req.params.versionId,
+        newVersionNo,
+        name,
+        scenarioKey,
+        probabilityWeight,
+        actorUserId,
+        req,
+      });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// Comparisons
+router.get(
+  "/:id/compare",
+  requirePermission("reporting.forecasts.read"),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId } = req.user;
+      const { baseVersionId, compareVersionId, periodId } = req.query;
+      const data = await svc.compareVersions({ orgId, forecastId: req.params.id, baseVersionId, compareVersionId, periodId });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.get(
+  "/vs-budget",
+  requirePermission("reporting.forecasts.read"),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId } = req.user;
+      const { forecastVersionId, budgetVersionId, periodId } = req.query;
+      const data = await svc.forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Upsert lines into the latest draft version
 router.post(
   "/:id/lines",

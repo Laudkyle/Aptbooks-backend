@@ -122,7 +122,7 @@ async function createVersion({ orgId, budgetId, versionNo, name, status, actorUs
 async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req }) {
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
-  if (v.status !== "draft") throw new AppError(409, "Budget version is not editable (status must be draft)");
+  assertEditableWorkflow(v);
   const budget = await getBudget({ orgId, id: budgetId });
   if (!Array.isArray(lines)) throw new AppError(400, "lines must be an array");
 
@@ -132,29 +132,14 @@ async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req
     if (!line.periodId) throw new AppError(400, "Each line requires periodId");
     if (line.amount === undefined || line.amount === null) throw new AppError(400, "Each line requires amount");
 
- const p = await repo.getAccountingPeriod({ orgId, periodId: line.periodId });
-if (!p) throw new AppError(400, `Invalid periodId: ${line.periodId}`);
-
-console.log('DEBUG - Period data:', {
-  periodId: line.periodId,
-  startDate: p.start_date,
-  startDateType: typeof p.start_date,
-  startDateObject: new Date(p.start_date),
-  startDateUTCYear: new Date(p.start_date).getUTCFullYear(),
-  startDateUTCYearType: typeof new Date(p.start_date).getUTCFullYear(),
-  budgetFiscalYear: budget.fiscal_year,
-  budgetFiscalYearType: typeof budget.fiscal_year,
-  comparison: Number(new Date(p.start_date).getUTCFullYear()) !== Number(budget.fiscal_year)
-});
-
-if (budget.fiscal_year) {
-  const y = new Date(p.start_date).getUTCFullYear();
-  console.log(`Comparing: y=${y} (type: ${typeof y}) vs budget.fiscal_year=${budget.fiscal_year} (type: ${typeof budget.fiscal_year})`);
-  
-  if (Number(y) !== Number(budget.fiscal_year)) {
-    throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}. Period year: ${y}, Budget year: ${budget.fiscal_year}`);
-  }
-}
+    const p = await repo.getAccountingPeriod({ orgId, periodId: line.periodId });
+    if (!p) throw new AppError(400, `Invalid periodId: ${line.periodId}`);
+    if (budget.fiscal_year) {
+      const y = new Date(p.start_date).getUTCFullYear();
+      if (Number(y) !== Number(budget.fiscal_year)) {
+        throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}`);
+      }
+    }
     const amountNum = Number(line.amount);
     if (Number.isNaN(amountNum)) throw new AppError(400, "Each line amount must be numeric");
     const dim = await validateDimensionJson({ orgId, dimensionJson: line.dimensionJson || {} });
@@ -185,11 +170,198 @@ if (budget.fiscal_year) {
   return saved;
 }
 
+function assertEditableWorkflow(version) {
+  if (!version) throw new AppError(404, "Budget version not found");
+  const locked = new Set(["approved", "archived"]);
+  if (locked.has(version.workflow_status)) {
+    throw new AppError(409, `Version workflow_status '${version.workflow_status}' is not editable`);
+  }
+}
+
+async function submitVersion({ orgId, budgetId, versionId, actorUserId, req }) {
+  const v = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!v) throw new AppError(404, "Budget version not found");
+  if (v.workflow_status !== "draft" && v.workflow_status !== "rejected") {
+    throw new AppError(409, "Only draft/rejected versions can be submitted");
+  }
+  const updated = await repo.updateVersionWorkflow({
+    orgId,
+    budgetId,
+    versionId,
+    patch: {
+      workflowStatus: "in_review",
+      submittedAt: new Date().toISOString(),
+      submittedByUserId: actorUserId,
+      rejectionReason: null,
+    },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.version.submit",
+    entityType: "budget_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+  return updated;
+}
+
+async function approveVersion({ orgId, budgetId, versionId, actorUserId, req }) {
+  const v = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!v) throw new AppError(404, "Budget version not found");
+  if (v.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be approved");
+  const updated = await repo.updateVersionWorkflow({
+    orgId,
+    budgetId,
+    versionId,
+    patch: {
+      workflowStatus: "approved",
+      approvedAt: new Date().toISOString(),
+      approvedByUserId: actorUserId,
+    },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.version.approve",
+    entityType: "budget_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+  return updated;
+}
+
+async function rejectVersion({ orgId, budgetId, versionId, reason, actorUserId, req }) {
+  const v = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!v) throw new AppError(404, "Budget version not found");
+  if (v.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be rejected");
+  const updated = await repo.updateVersionWorkflow({
+    orgId,
+    budgetId,
+    versionId,
+    patch: {
+      workflowStatus: "rejected",
+      rejectedAt: new Date().toISOString(),
+      rejectedByUserId: actorUserId,
+      rejectionReason: reason || "Rejected",
+    },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.version.reject",
+    entityType: "budget_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: v,
+    after: updated,
+  });
+  return updated;
+}
+
+async function copyVersion({ orgId, budgetId, sourceVersionId, newVersionNo, name, scenarioKey, actorUserId, req }) {
+  const source = await repo.getVersion({ orgId, budgetId, versionId: sourceVersionId });
+  if (!source) throw new AppError(404, "Source budget version not found");
+  const created = await repo.copyVersion({
+    orgId,
+    budgetId,
+    sourceVersionId,
+    newVersionNo,
+    name,
+    scenarioKey,
+    createdByUserId: actorUserId,
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.version.copy",
+    entityType: "budget_version",
+    entityId: created.id,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: { sourceVersionId, created },
+  });
+  return created;
+}
+
+async function massAdjustLines({ orgId, budgetId, versionId, pct, accountId, periodId, dimensionJson, actorUserId, req }) {
+  const v = await repo.getVersion({ orgId, budgetId, versionId });
+  assertEditableWorkflow(v);
+  const dim = dimensionJson ? await validateDimensionJson({ orgId, dimensionJson }) : null;
+  const result = await repo.massAdjustLines({ orgId, versionId, pct, accountId, periodId, dimensionJson: dim });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.lines.mass_adjust",
+    entityType: "budget_lines",
+    entityId: null,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: { budgetId, versionId, pct, accountId, periodId, affected: result.affected },
+  });
+  return result;
+}
+
+async function listAlertRules({ orgId, budgetId }) {
+  return repo.listAlertRules({ orgId, budgetId });
+}
+
+async function createAlertRule({ orgId, budgetId, name, thresholdPct, accountId, dimensionJson, isEnabled, actorUserId, req }) {
+  if (!name) throw new AppError(400, "name is required");
+  if (thresholdPct === undefined || thresholdPct === null) throw new AppError(400, "thresholdPct is required");
+  const dim = await validateDimensionJson({ orgId, dimensionJson: dimensionJson || {} });
+  const created = await repo.createAlertRule({ orgId, budgetId, name, thresholdPct, accountId, dimensionJson: dim, isEnabled });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.alert_rule.create",
+    entityType: "budget_alert_rule",
+    entityId: created.id,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: created,
+  });
+  return created;
+}
+
+async function updateAlertRule({ orgId, budgetId, ruleId, patch, actorUserId, req }) {
+  const before = await repo.getAlertRule({ orgId, budgetId, ruleId });
+  if (!before) throw new AppError(404, "Alert rule not found");
+  const dim = patch && patch.dimensionJson ? await validateDimensionJson({ orgId, dimensionJson: patch.dimensionJson }) : undefined;
+  const updated = await repo.updateAlertRule({
+    orgId,
+    budgetId,
+    ruleId,
+    patch: { ...patch, dimensionJson: dim === undefined ? undefined : dim },
+  });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.alert_rule.update",
+    entityType: "budget_alert_rule",
+    entityId: ruleId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before,
+    after: updated,
+  });
+  return updated;
+}
+
 async function getVariance({ orgId, budgetId, versionId, periodId }) {
   if (!periodId) throw new AppError(400, "periodId is required");
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
-  if (v.status !== "draft") throw new AppError(409, "Budget version is not editable (status must be draft)");
   const budget = await getBudget({ orgId, id: budgetId });
 
   const rows = await repo.getVariance({ orgId, budgetVersionId: versionId, periodId });
@@ -210,7 +382,6 @@ async function getVariance({ orgId, budgetId, versionId, periodId }) {
 async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId, req }) {
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
-  if (v.status !== "draft") throw new AppError(409, "Budget version is not editable (status must be draft)");
 
   const budget = await getBudget({ orgId, id: budgetId });
   const payloadItems = Array.isArray(items) ? items : [];
@@ -332,4 +503,12 @@ module.exports = {
   getVariance,
   distributeAnnual,
   finalizeVersion,
+  submitVersion,
+  approveVersion,
+  rejectVersion,
+  copyVersion,
+  massAdjustLines,
+  listAlertRules,
+  createAlertRule,
+  updateAlertRule,
 };

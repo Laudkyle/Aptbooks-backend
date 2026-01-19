@@ -287,6 +287,70 @@ async function updateTask({ orgId, projectId, phaseId, id, code, name, status, a
   return updated;
 }
 
+async function archivePhase({ orgId, projectId, id, actorUserId, req }) {
+  const proj = await getProject({ orgId, id: projectId });
+  if (!proj) throw new AppError(404, "Project not found");
+  if (proj.status === "archived") throw new AppError(409, "Project is archived");
+  if (proj.status === "closed") throw new AppError(409, "Closed projects are read-only");
+
+  const { rows: currRows } = await pool.query(
+    `SELECT * FROM project_phases WHERE organization_id=$1 AND id=$2 AND project_id=$3`,
+    [orgId, id, projectId]
+  );
+  const before = currRows[0];
+  if (!before) return;
+  if (before.status === "archived") return;
+
+  const { rows } = await pool.query(
+    `UPDATE project_phases SET status='archived', updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND project_id=$3 RETURNING *`,
+    [orgId, id, projectId]
+  );
+  const after = rows[0];
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.project_phase.archive",
+    entityType: "project_phase",
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before,
+    after,
+  });
+}
+
+async function archiveTask({ orgId, projectId, phaseId, id, actorUserId, req }) {
+  const proj = await getProject({ orgId, id: projectId });
+  if (!proj) throw new AppError(404, "Project not found");
+  if (proj.status === "archived") throw new AppError(409, "Project is archived");
+  if (proj.status === "closed") throw new AppError(409, "Closed projects are read-only");
+
+  const { rows: currRows } = await pool.query(
+    `SELECT * FROM project_tasks WHERE organization_id=$1 AND id=$2 AND project_id=$3 AND phase_id=$4`,
+    [orgId, id, projectId, phaseId]
+  );
+  const before = currRows[0];
+  if (!before) return;
+  if (before.status === "archived") return;
+
+  const { rows } = await pool.query(
+    `UPDATE project_tasks SET status='archived', updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND project_id=$3 AND phase_id=$4 RETURNING *`,
+    [orgId, id, projectId, phaseId]
+  );
+  const after = rows[0];
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.project_task.archive",
+    entityType: "project_task",
+    entityId: id,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before,
+    after,
+  });
+}
+
 module.exports = {
   listProjects,
   getProject,
