@@ -13,7 +13,46 @@ async function createStatement(orgId, createdBy, payload, client = null) {
   return rows[0];
 }
 
-async function addLines(statementId, lines, client = null) {
+async function getStatement(orgId, statementId, client = null) {
+  const { rows } = await db(client).query(
+    `SELECT * FROM bank_statements WHERE organization_id=$1 AND id=$2`,
+    [orgId, statementId]
+  );
+  return rows[0] || null;
+}
+
+async function listStatementLines(orgId, statementId, { limit = 200, offset = 0, matched } = {}, client = null) {
+  const params = [orgId, statementId, limit, offset];
+  let matchedClause = "";
+  if (typeof matched === "boolean") {
+    params.splice(2, 0, matched);
+    matchedClause = ` AND l.matched=$3`;
+    // shift limit/offset positions
+    params[3] = limit;
+    params[4] = offset;
+  }
+
+  const { rows } = await db(client).query(
+    `
+    SELECT
+      l.*,
+      m.journal_entry_id AS match_journal_entry_id,
+      m.matched_amount AS match_amount,
+      m.matched_at AS match_at,
+      m.matched_by AS match_by
+    FROM bank_statement_lines l
+    JOIN bank_statements s ON s.id = l.statement_id
+    LEFT JOIN bank_matches m ON m.bank_statement_line_id = l.id
+    WHERE s.organization_id=$1 AND s.id=$2${matchedClause}
+    ORDER BY l.txn_date DESC, l.created_at DESC
+    LIMIT $${typeof matched === "boolean" ? 4 : 3} OFFSET $${typeof matched === "boolean" ? 5 : 4}
+    `,
+    params
+  );
+  return rows;
+}
+
+async function addLines(orgId, bankAccountId, statementId, lines, userId, client = null) {
   const conn = db(client);
   const results = [];
 
@@ -34,6 +73,30 @@ async function addLines(statementId, lines, client = null) {
         ]
       );
       results.push(rows[0]);
+
+      // Create a corresponding bank transaction for cashbook view.
+      // Use a deterministic external_id so repeated imports do not duplicate.
+      await conn.query(
+        `
+        INSERT INTO bank_transactions(
+          organization_id, bank_account_id, txn_date, amount, description, reference,
+          source_type, source_id, statement_line_id, created_by, external_id
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,'statement_line',$7,$7,$8,$9)
+        ON CONFLICT (organization_id, bank_account_id, external_id) DO NOTHING
+        `,
+        [
+          orgId,
+          bankAccountId,
+          rows[0].txn_date,
+          rows[0].amount,
+          rows[0].description,
+          rows[0].reference,
+          rows[0].id,
+          userId || null,
+          `stmtline:${rows[0].id}`
+        ]
+      );
     } catch (e) {
       // Handle repeat imports: if unique identity already exists, return the existing row.
       if (e && e.code === "23505") {
@@ -91,6 +154,28 @@ async function matchLine(orgId, lineId, { journalEntryId, matchedBy, matchMethod
      WHERE id=$1`,
     [lineId, journalEntryId, matchedBy || null, matchMethod || null, matchReason || null, matchRuleVersion || null]
   );
+
+  // Record explicit match row (idempotent) + link the bank_transaction row.
+  await conn.query(
+    `INSERT INTO bank_matches(
+        organization_id, bank_statement_line_id, journal_entry_id, matched_amount, matched_by
+      )
+     SELECT s.organization_id, l.id, $2, l.amount, $3
+     FROM bank_statement_lines l
+     JOIN bank_statements s ON s.id = l.statement_id
+     WHERE l.id=$1
+     ON CONFLICT (bank_statement_line_id)
+     DO UPDATE SET journal_entry_id=EXCLUDED.journal_entry_id, matched_amount=EXCLUDED.matched_amount,
+                  matched_at=NOW(), matched_by=EXCLUDED.matched_by`,
+    [lineId, journalEntryId, matchedBy || null]
+  );
+
+  await conn.query(
+    `UPDATE bank_transactions
+     SET journal_entry_id=$2, source_type='journal', source_id=$2
+     WHERE statement_line_id=$1`,
+    [lineId, journalEntryId]
+  );
   const { rows } = await conn.query(`SELECT * FROM bank_statement_lines WHERE id=$1`, [lineId]);
   return rows[0];
 }
@@ -103,4 +188,11 @@ async function listStatements(orgId) {
   return rows;
 }
 
-module.exports = { createStatement, addLines, matchLine, listStatements };
+module.exports = {
+  createStatement,
+  getStatement,
+  listStatementLines,
+  addLines,
+  matchLine,
+  listStatements
+};

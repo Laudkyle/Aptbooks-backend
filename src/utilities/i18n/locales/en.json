@@ -1,0 +1,7 @@
+{
+  "app.title": "ERP Backend",
+  "errors.unauthorized": "Unauthorized",
+  "errors.forbidden": "Forbidden",
+  "banking.cashbook": "Cashbook",
+  "workflow.approvals.inbox": "Approvals Inbox"
+}

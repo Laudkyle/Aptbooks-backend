@@ -2,6 +2,7 @@ const { AppError } = require("../../shared/errors/AppError");
 const repo = require("./budgets.repository");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { validateDimensionJson } = require("../dimensions/dimensions.validator");
+const { parseCsvText } = require("../../shared/utils/csv");
 
 function assertName(name) {
   if (!name || typeof name !== "string") throw new AppError(400, "name is required");
@@ -168,6 +169,31 @@ async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req
   });
 
   return saved;
+}
+
+
+async function importLinesCsv({ orgId, budgetId, versionId, csvText, actorUserId, req }) {
+  const rows = parseCsvText(csvText);
+  const lines = [];
+
+  for (const r of rows) {
+    const accountId = r.accountId || r.account_id;
+    const periodId = r.periodId || r.period_id;
+    const amount = r.amount;
+
+    let dimensionJson = r.dimensionJson || r.dimension_json || r.dimensions || r.dimension || null;
+    if (dimensionJson && typeof dimensionJson === "string") {
+      try {
+        dimensionJson = JSON.parse(dimensionJson);
+      } catch (e) {
+        throw new AppError(400, `Invalid dimensionJson JSON for accountId=${accountId || ""} periodId=${periodId || ""}`);
+      }
+    }
+
+    lines.push({ accountId, periodId, amount, dimensionJson: dimensionJson || {} });
+  }
+
+  return upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req });
 }
 
 function assertEditableWorkflow(version) {
@@ -500,6 +526,7 @@ module.exports = {
   updateBudget,
   createVersion,
   upsertLines,
+  importLinesCsv,
   getVariance,
   distributeAnnual,
   finalizeVersion,

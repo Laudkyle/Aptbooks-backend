@@ -3,6 +3,7 @@ const repo = require("./forecasts.repository");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { assertMoneyAmount, assertUuid, normalizeStatus } = require("../_util");
 const { validateDimensionJson } = require("../dimensions/dimensions.validator");
+const { parseCsvText } = require("../../shared/utils/csv");
 
 const FORECAST_STATUS = ["draft", "active", "archived"];
 // Forecast versions are "scenarios". We keep lifecycle simple and enforce edit locks.
@@ -387,6 +388,30 @@ async function forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, per
   return { periodId, forecastVersionId, budgetVersionId, totals, lines: rows };
 }
 
+
+
+async function importLinesCsv({ orgId, forecastId, versionId, csvText, actorUserId, req }) {
+  const rows = parseCsvText(csvText);
+  const lines = rows.map((r) => {
+    const accountId = r.accountId || r.account_id || r.account || r.accountCode || r.account_code;
+    const periodId = r.periodId || r.period_id || r.period;
+    const amount = r.amount ?? r.value;
+    let dimensionJson = r.dimensionJson || r.dimension_json || r.dimensions || r.dimension;
+    if (typeof dimensionJson === "string" && dimensionJson.trim().length) {
+      try {
+        dimensionJson = JSON.parse(dimensionJson);
+      } catch (e) {
+        throw new AppError(400, `Invalid dimensionJson JSON for accountId=${accountId || ""} periodId=${periodId || ""}`);
+      }
+    } else {
+      dimensionJson = {};
+    }
+
+    return { accountId, periodId, amount, dimensionJson };
+  });
+
+  return upsertLines({ orgId, forecastId, versionId, lines, actorUserId, req });
+}
 module.exports = {
   listForecasts,
   createForecast,
@@ -402,4 +427,5 @@ module.exports = {
   copyVersion,
   compareVersions,
   forecastVsBudget,
+  importLinesCsv,
 };

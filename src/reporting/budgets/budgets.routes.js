@@ -73,6 +73,30 @@ router.post("/:id/versions/:versionId/lines", requirePermission("reporting.budge
   }
 });
 
+// CSV import of budget version lines (text/csv body)
+router.post(
+  "/:id/versions/:versionId/lines/import-csv",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.importLinesCsv({
+        orgId,
+        budgetId: req.params.id,
+        versionId: req.params.versionId,
+        actorUserId,
+        req,
+        csvText: req.body,
+      });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 
 // Distribute annual amounts across periods (standard budgeting helper)
 // POST /reporting/budgets/:id/versions/:versionId/distribute

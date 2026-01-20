@@ -121,4 +121,23 @@ router.delete("/targets/:targetId", requirePermission("reporting.kpis.manage"), 
   }
 });
 
+
+// CSV import of KPI values (text/csv body)
+// Required columns: kpiDefinitionId or kpiCode, periodId, value. Optional: asOfDate, metaJson
+router.post(
+  "/values/import-csv",
+  requirePermission("reporting.kpis.manage"),
+  idempotency({ required: true }),
+  express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.importValuesCsv({ orgId, actorUserId, req, csvText: req.body });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 module.exports = router;

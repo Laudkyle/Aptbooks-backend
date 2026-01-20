@@ -62,6 +62,11 @@ const { swaggerDocument } = require("./docs/swagger");
 app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
 app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
+app.use("/utilities/client-logs", require("./utilities/client-logs/clientLogs.routes"));
+app.use("/utilities/i18n", require("./utilities/i18n/i18n.routes"));
+app.use("/utilities/a11y", require("./utilities/a11y/a11y.routes"));
+app.use("/utilities/release", require("./utilities/release/release.routes"));
+app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
 
 app.use(helmet({
   // API-first backend; Swagger UI uses inline scripts/styles.
@@ -156,6 +161,7 @@ app.use("/reporting", require("./reporting/reports.routes"));
 
 // Tier 10: Documents & Workflow
 app.use("/workflow/documents", documentsWorkflowRoutes);
+app.use("/workflow/approvals", require("./workflow/approvals/approvals.routes"));
 
 // Phase 2: Notifications + Global Search
 app.use("/core/notifications", notificationsRoutes);

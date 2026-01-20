@@ -24,6 +24,15 @@ async function getDefinition({ orgId, id }) {
   return rows.length ? rows[0] : null;
 }
 
+
+
+async function getDefinitionByCode({ orgId, code }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM kpi_definitions WHERE organization_id=$1 AND code=$2 LIMIT 1`,
+    [orgId, code]
+  );
+  return rows[0] || null;
+}
 async function createDefinition({
   orgId,
   code,
@@ -222,6 +231,7 @@ async function getApplicableTarget({ orgId, kpiDefinitionId, periodId }) {
 module.exports = {
   listDefinitions,
   getDefinition,
+  getDefinitionByCode,
   createDefinition,
   updateDefinition,
   archiveDefinition,

@@ -2,6 +2,7 @@ const repo = require("./kpis.repository");
 const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { assertUuid, assertCode, assertName } = require("../_util");
+const { parseCsvText } = require("../../shared/utils/csv");
 
 const KPI_TYPES = ["ACCOUNT_BALANCE", "EXPRESSION"];
 const KPI_STATUS = ["active", "archived"];
@@ -316,7 +317,59 @@ async function archiveTarget({ orgId, actorUserId, req, targetId }) {
   return updateTarget({ orgId, actorUserId, req, targetId, patch: { isArchived: true } });
 }
 
+
+async function importValuesCsv({ orgId, csvText, actorUserId, req }) {
+  const rows = parseCsvText(csvText);
+  const values = [];
+  for (const r of rows) {
+    const kpiDefinitionId = (r.kpiDefinitionId || r.kpi_definition_id || r.kpi_definitionId || "").trim();
+    const kpiCode = (r.kpiCode || r.kpi_code || r.code || "").trim();
+    const periodId = (r.periodId || r.period_id || "").trim();
+    const valueRaw = (r.value || r.kpi_value || "").trim();
+    const asOfDate = (r.asOfDate || r.as_of_date || r.asOf || "").trim();
+    const metaRaw = (r.metaJson || r.meta_json || r.meta || "").trim();
+    if (!periodId) throw new AppError(400, "periodId is required in CSV");
+    if (!valueRaw) throw new AppError(400, "value is required in CSV");
+    let defId = kpiDefinitionId;
+    if (!defId && kpiCode) {
+      const def = await repo.getDefinitionByCode({ orgId, code: kpiCode });
+      if (!def) throw new AppError(400, `Unknown KPI code: ${kpiCode}`);
+      defId = def.id;
+    }
+    if (!defId) throw new AppError(400, "kpiDefinitionId or kpiCode is required in CSV");
+    assertUuid(defId, "kpiDefinitionId");
+    assertUuid(periodId, "periodId");
+    const num = Number(valueRaw);
+    if (!Number.isFinite(num)) throw new AppError(400, "value must be numeric");
+    let metaJson = null;
+    if (metaRaw) {
+      try { metaJson = JSON.parse(metaRaw); } catch (e) { throw new AppError(400, "metaJson must be valid JSON"); }
+    }
+    const row = await repo.upsertValue({
+      orgId,
+      kpiDefinitionId: defId,
+      periodId,
+      asOfDate: asOfDate || null,
+      value: num,
+      metaJson: metaJson || { source: "csv_import" },
+    });
+    values.push(row);
+  }
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.kpi.values.import_csv",
+    entityType: "kpi_values",
+    entityId: null,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: { count: values.length },
+  });
+  return { count: values.length, values };
+}
 module.exports = {
+  importValuesCsv,
   listDefinitions,
   createDefinition,
   updateDefinition,

@@ -4,6 +4,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const crypto = require("crypto");
 const { withTransaction } = require("../../../db/tx");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const { parseCsvText } = require("../../../shared/utils/csv");
 
 function normalizeText(v) {
   if (v == null) return "";
@@ -49,11 +50,8 @@ async function addLines(orgId, userId, statementId, lines) {
   if (!Array.isArray(lines) || !lines.length) throw new AppError(400, "lines[] required");
   // validate statement belongs to org
   return withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `SELECT id FROM bank_statements WHERE organization_id=$1 AND id=$2`,
-      [orgId, statementId]
-    );
-    if (!rows.length) throw new AppError(404, "Statement not found");
+    const stmt = await repo.getStatement(orgId, statementId, client);
+    if (!stmt) throw new AppError(404, "Statement not found");
 
     const normalized = lines.map((l) => {
       if (!l.txnDate || l.amount == null) throw new AppError(400, "Each line requires txnDate and amount");
@@ -75,7 +73,7 @@ async function addLines(orgId, userId, statementId, lines) {
       };
     });
 
-    const inserted = await repo.addLines(statementId, normalized, client);
+    const inserted = await repo.addLines(orgId, stmt.bank_account_id, statementId, normalized, userId, client);
 
     await writeAudit({
       organizationId: orgId,
@@ -88,6 +86,23 @@ async function addLines(orgId, userId, statementId, lines) {
 
     return inserted;
   });
+}
+
+async function importLinesCsv(orgId, userId, statementId, csvText) {
+  const rows = parseCsvText(csvText);
+  // Expected columns: txnDate, amount, description?, reference?, externalId?
+  const lines = rows.map((r) => ({
+    txnDate: r.txnDate || r.txn_date || r.date,
+    amount: r.amount != null && r.amount !== "" ? Number(r.amount) : null,
+    description: r.description || null,
+    reference: r.reference || null,
+    externalId: r.externalId || r.external_id || null
+  }));
+  return addLines(orgId, userId, statementId, lines);
+}
+
+async function listStatementLines(orgId, statementId, options) {
+  return { data: await repo.listStatementLines(orgId, statementId, options) };
 }
 
 async function matchLine(orgId, userId, lineId, payload) {
@@ -138,4 +153,11 @@ async function matchLine(orgId, userId, lineId, payload) {
 
 async function listStatements(orgId) { return repo.listStatements(orgId); }
 
-module.exports = { createStatement, addLines, matchLine, listStatements };
+module.exports = {
+  createStatement,
+  addLines,
+  importLinesCsv,
+  listStatementLines,
+  matchLine,
+  listStatements
+};

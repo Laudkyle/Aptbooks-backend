@@ -252,6 +252,55 @@ router.post(
   }
 );
 
+// CSV import of forecast lines into the latest draft version (text/csv body)
+router.post(
+  "/:id/lines/import-csv",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.importLinesCsv({
+        orgId,
+        forecastId: req.params.id,
+        versionId: undefined,
+        csvText: req.body,
+        actorUserId,
+        req,
+      });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// CSV import of forecast lines into a specific version (text/csv body)
+router.post(
+  "/:id/versions/:versionId/lines/import-csv",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.importLinesCsv({
+        orgId,
+        forecastId: req.params.id,
+        versionId: req.params.versionId,
+        csvText: req.body,
+        actorUserId,
+        req,
+      });
+      res.status(201).json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+
 // Variance (Forecast vs Actual)
 // GET /reporting/forecasts/:id/variance?periodId=<period>&versionId=<optional>
 router.get("/:id/variance", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
