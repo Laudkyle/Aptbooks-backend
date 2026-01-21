@@ -1,6 +1,7 @@
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
+const logger = require("./config/logger");
 
 const { errorMiddleware } = require("./middleware/error.middleware");
 const { auditMiddleware } = require("./middleware/audit.middleware");
