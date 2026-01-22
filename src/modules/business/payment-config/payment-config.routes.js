@@ -69,14 +69,14 @@ router.get("/payment-methods", requirePermission("partners.read"), async (req, r
 
 // ---- Payment settings
 const paymentSettingsSchema = z.object({
-  arUnappliedAccountId: z.number().int().nullable().optional(),
-  arDiscountAccountId: z.number().int().nullable().optional(),
-  apPrepaymentsAccountId: z.number().int().nullable().optional(),
-  apDiscountIncomeAccountId: z.number().int().nullable().optional(),
+  arUnappliedAccountId: z.string().uuid().nullable().optional(),
+  arDiscountAccountId: z.string().uuid().nullable().optional(),
+  apPrepaymentsAccountId: z.string().uuid().nullable().optional(),
+  apDiscountIncomeAccountId: z.string().uuid().nullable().optional(),
 
   // Stage 6: defaults for posting online payments
-  onlineCashAccountId: z.number().int().nullable().optional(),
-  onlinePaymentMethodId: z.number().int().nullable().optional()
+  onlineCashAccountId: z.string().uuid().nullable().optional(),
+  onlinePaymentMethodId: z.string().uuid().nullable().optional()
 });
 
 router.get("/payment-settings", requirePermission("payment_config.manage"), async (req, res, next) => {
