@@ -154,6 +154,9 @@ app.use("/modules/banking", require("./modules/banking/banking.routes"));
 // Stage 6: Integrations (payments, e-invoicing, tax forms)
 app.use("/modules/integrations", integrationsRoutes);
 
+// Stage 1: HR (Foundation)
+app.use("/modules/hr", require("./modules/hr/hr.routes"));
+
 // Tier 8: Compliance
 app.use("/compliance", complianceRoutes);
 

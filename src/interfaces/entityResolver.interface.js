@@ -60,6 +60,14 @@ const RESOLVERS = {
     );
     if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
     return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Lease" };
+  },
+  employee: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, employee_no AS entity_ref FROM hr_employees WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Employee" };
   }
 };
 
