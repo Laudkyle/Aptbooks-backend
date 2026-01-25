@@ -1,14 +1,14 @@
-const { pool } = require("../../../../db/pool");
+const { pool } = require("../../../../db/pool"); 
 
 function normalize(payload = {}) {
-  const p = { ...payload };
-  if (p.employeeId && p.employee_id === undefined) p.employee_id = p.employeeId;
-  if (p.componentId && p.component_id === undefined) p.component_id = p.componentId;
-  return p;
+  const p = { ...payload }; 
+  if (p.employeeId && p.employee_id === undefined) p.employee_id = p.employeeId; 
+  if (p.componentId && p.component_id === undefined) p.component_id = p.componentId; 
+  return p; 
 }
 
 async function createAssignment(orgId, payload) {
-  const p = normalize(payload);
+  const p = normalize(payload); 
   const { rows } = await pool.query(
     `
       INSERT INTO hr_employee_pay_components(
@@ -24,14 +24,14 @@ async function createAssignment(orgId, payload) {
       p.percent ?? null,
       p.status || "active",
     ]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function listAssignments(orgId, query = {}) {
-  const employeeId = query.employee_id || query.employeeId || null;
-  const componentId = query.component_id || query.componentId || null;
-  const status = query.status || null;
+  const employeeId = query.employee_id || query.employeeId || null; 
+  const componentId = query.component_id || query.componentId || null; 
+  const status = query.status || null; 
   const { rows } = await pool.query(
     `
       SELECT a.*, c.code AS component_code, c.name AS component_name, c.kind AS component_kind
@@ -44,20 +44,20 @@ async function listAssignments(orgId, query = {}) {
       ORDER BY a.created_at DESC
     `,
     [orgId, employeeId, componentId, status]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getAssignment(orgId, assignmentId) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_employee_pay_components WHERE organization_id=$1 AND id=$2`,
     [orgId, assignmentId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function updateAssignment(orgId, assignmentId, payload) {
-  const p = normalize(payload);
+  const p = normalize(payload); 
   const { rows } = await pool.query(
     `
       UPDATE hr_employee_pay_components
@@ -80,16 +80,16 @@ async function updateAssignment(orgId, assignmentId, payload) {
       p.percent ?? null,
       p.status ?? null,
     ]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function setStatus(orgId, assignmentId, status) {
   const { rows } = await pool.query(
     `UPDATE hr_employee_pay_components SET status=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, assignmentId, status]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 module.exports = {
@@ -98,4 +98,4 @@ module.exports = {
   getAssignment,
   updateAssignment,
   setStatus,
-};
+}; 

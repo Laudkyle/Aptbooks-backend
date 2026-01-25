@@ -1,76 +1,76 @@
-const bcrypt = require("bcrypt");
-const { pool } = require("../pool");
-const { env } = require("../../config/env");
+const bcrypt = require("bcrypt"); 
+const { pool } = require("../pool"); 
+const { env } = require("../../config/env"); 
 
 async function run() {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
 
   // Helpers
   const upsertPermission = async (code, description) => {
     await client.query(
       `INSERT INTO permissions(code, description) VALUES($1,$2) ON CONFLICT (code) DO NOTHING`,
       [code, description]
-    );
-  };
+    ); 
+  }; 
 
   const getOrCreateOrg = async (name, baseCurrencyCode = "GHS") => {
     const { rows: existing } = await client.query(
       `SELECT id FROM organizations WHERE name=$1 LIMIT 1`,
       [name]
-    );
-    if (existing.length) return existing[0].id;
+    ); 
+    if (existing.length) return existing[0].id; 
 
     const { rows } = await client.query(
       `INSERT INTO organizations(name, base_currency_code) VALUES ($1,$2) RETURNING id`,
       [name, baseCurrencyCode]
-    );
-    return rows[0].id;
-  };
+    ); 
+    return rows[0].id; 
+  }; 
 
   const getOrCreateRole = async (orgId, name) => {
     const { rows: existing } = await client.query(
       `SELECT id FROM roles WHERE organization_id=$1 AND name=$2 LIMIT 1`,
       [orgId, name]
-    );
-    if (existing.length) return existing[0].id;
+    ); 
+    if (existing.length) return existing[0].id; 
 
     const { rows } = await client.query(
       `INSERT INTO roles(organization_id, name) VALUES ($1,$2) RETURNING id`,
       [orgId, name]
-    );
-    return rows[0].id;
-  };
+    ); 
+    return rows[0].id; 
+  }; 
 
   const getOrCreateUserByEmail = async (orgId, email, passwordPlain) => {
     const { rows: existing } = await client.query(
       `SELECT id FROM users WHERE email=$1 LIMIT 1`,
       [email]
-    );
-    if (existing.length) return { id: existing[0].id, created: false };
+    ); 
+    if (existing.length) return { id: existing[0].id, created: false }; 
 
-    const passwordHash = await bcrypt.hash(passwordPlain, env.BCRYPT_ROUNDS);
+    const passwordHash = await bcrypt.hash(passwordPlain, env.BCRYPT_ROUNDS); 
 
     const { rows } = await client.query(
       `INSERT INTO users(organization_id, email, password_hash, status)
        VALUES ($1,$2,$3,'active')
        RETURNING id`,
       [orgId, email, passwordHash]
-    );
-    return { id: rows[0].id, created: true };
-  };
+    ); 
+    return { id: rows[0].id, created: true }; 
+  }; 
 
   const getAccountTypeMap = async () => {
-    const { rows } = await client.query(`SELECT code, id FROM account_types`);
-    return Object.fromEntries(rows.map((r) => [r.code, r.id]));
-  };
+    const { rows } = await client.query(`SELECT code, id FROM account_types`); 
+    return Object.fromEntries(rows.map((r) => [r.code, r.id])); 
+  }; 
 
   const getCoaIdByCode = async (orgId, code) => {
     const { rows } = await client.query(
       `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND code=$2 LIMIT 1`,
       [orgId, code]
-    );
-    return rows.length ? rows[0].id : null;
-  };
+    ); 
+    return rows.length ? rows[0].id : null; 
+  }; 
 
   async function ensureOpenPeriod(orgId) {
     // 1) If there's already an OPEN period covering today, use it
@@ -84,13 +84,13 @@ async function run() {
     LIMIT 1
     `,
       [orgId]
-    );
-    if (covering.length) return covering[0].id;
+    ); 
+    if (covering.length) return covering[0].id; 
 
     // 2) Otherwise, create a long open period for testing (idempotent by code)
-    const code = "TEST-OPEN";
-    const start = "2025-01-01";
-    const end = "2027-12-31";
+    const code = "TEST-OPEN"; 
+    const start = "2025-01-01"; 
+    const end = "2027-12-31"; 
 
     // Insert (or no-op if already exists)
     await client.query(
@@ -100,7 +100,7 @@ async function run() {
     ON CONFLICT (organization_id, code) DO NOTHING
     `,
       [orgId, code, start, end]
-    );
+    ); 
 
     // Ensure it is open and covers the range (in case it existed but was closed/short)
     const { rows } = await client.query(
@@ -114,9 +114,9 @@ async function run() {
     RETURNING id
     `,
       [orgId, code, start, end]
-    );
+    ); 
 
-    return rows[0].id;
+    return rows[0].id; 
   }
 
   const ensurePaymentConfig = async (orgId) => {
@@ -125,7 +125,7 @@ async function run() {
       { name: "Due on Receipt", netDays: 0, isDefault: true },
       { name: "Net 15", netDays: 15, isDefault: false },
       { name: "Net 30", netDays: 30, isDefault: false },
-    ];
+    ]; 
 
     for (const t of terms) {
       await client.query(
@@ -135,7 +135,7 @@ async function run() {
     ON CONFLICT (organization_id, name) DO NOTHING
     `,
         [orgId, t.name, t.netDays, t.isDefault]
-      );
+      ); 
     }
 
     // Ensure exactly one default term
@@ -146,7 +146,7 @@ async function run() {
   WHERE organization_id=$1
   `,
       [orgId]
-    );
+    ); 
 
     // Payment methods
     const methods = [
@@ -154,7 +154,7 @@ async function run() {
       { code: "BANK", name: "Bank Transfer" },
       { code: "MOMO", name: "Mobile Money" },
       { code: "CHEQUE", name: "Cheque" },
-    ];
+    ]; 
 
     for (const m of methods) {
       await client.query(
@@ -169,13 +169,13 @@ async function run() {
     ON CONFLICT (organization_id, code) DO NOTHING
     `,
         [orgId, m.code, m.name]
-      );
+      ); 
     }
-  };
+  }; 
 
   const ensureDemoCustomer = async ({ orgId, arAccountId }) => {
-    const name = "Demo Customer Ltd";
-    const code = "CUST-DEMO";
+    const name = "Demo Customer Ltd"; 
+    const code = "CUST-DEMO"; 
 
     const { rows: existing } = await client.query(
       `
@@ -184,11 +184,11 @@ async function run() {
       LIMIT 1
       `,
       [orgId, code]
-    );
+    ); 
 
-    let partnerId;
+    let partnerId; 
     if (existing.length) {
-      partnerId = existing[0].id;
+      partnerId = existing[0].id; 
       // Ensure AR is set for invoices
       await client.query(
         `
@@ -199,7 +199,7 @@ async function run() {
         WHERE organization_id=$1 AND id=$2
         `,
         [orgId, partnerId, arAccountId]
-      );
+      ); 
     } else {
       const { rows } = await client.query(
         `
@@ -218,8 +218,8 @@ async function run() {
           "+233200000001",
           arAccountId,
         ]
-      );
-      partnerId = rows[0].id;
+      ); 
+      partnerId = rows[0].id; 
     }
 
     // Optional: primary contact
@@ -232,7 +232,7 @@ async function run() {
       ON CONFLICT DO NOTHING
       `,
       [orgId, partnerId]
-    );
+    ); 
 
     // Optional: primary address
     await client.query(
@@ -244,14 +244,14 @@ async function run() {
       ON CONFLICT DO NOTHING
       `,
       [orgId, partnerId]
-    );
+    ); 
 
-    return partnerId;
-  };
+    return partnerId; 
+  }; 
 
   const ensureDemoVendor = async ({ orgId, apAccountId }) => {
-    const name = "Demo Vendor Ltd";
-    const code = "VEND-DEMO";
+    const name = "Demo Vendor Ltd"; 
+    const code = "VEND-DEMO"; 
 
     const { rows: existing } = await client.query(
       `
@@ -260,11 +260,11 @@ async function run() {
       LIMIT 1
       `,
       [orgId, code]
-    );
+    ); 
 
-    let partnerId;
+    let partnerId; 
     if (existing.length) {
-      partnerId = existing[0].id;
+      partnerId = existing[0].id; 
 
       await client.query(
         `
@@ -275,7 +275,7 @@ async function run() {
         WHERE organization_id=$1 AND id=$2
         `,
         [orgId, partnerId, apAccountId]
-      );
+      ); 
     } else {
       const { rows } = await client.query(
         `
@@ -294,8 +294,8 @@ async function run() {
           "+233200000010",
           apAccountId,
         ]
-      );
-      partnerId = rows[0].id;
+      ); 
+      partnerId = rows[0].id; 
     }
 
     // Optional: primary contact
@@ -308,7 +308,7 @@ async function run() {
       ON CONFLICT DO NOTHING
       `,
       [orgId, partnerId]
-    );
+    ); 
 
     // Optional: primary address
     await client.query(
@@ -320,10 +320,10 @@ async function run() {
       ON CONFLICT DO NOTHING
       `,
       [orgId, partnerId]
-    );
+    ); 
 
-    return partnerId;
-  };
+    return partnerId; 
+  }; 
 
   const upsertSystemSetting = async (orgId, key, valueJson) => {
     await client.query(
@@ -331,13 +331,13 @@ async function run() {
        VALUES($1,$2,$3)
        ON CONFLICT (organization_id, key) DO UPDATE SET value_json=EXCLUDED.value_json`,
       [orgId, key, valueJson]
-    );
-  };
+    ); 
+  }; 
 
   const ensureInventoryCostMethodDefault = async (orgId) => {
     // Default to Weighted Average for Phase 4B. The transactions service will lock this after first posted journal.
-    await upsertSystemSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_AVERAGE", locked: false });
-  };
+    await upsertSystemSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_AVERAGE", locked: false }); 
+  }; 
 
   const ensureInventoryMasterData = async ({
     orgId,
@@ -352,12 +352,12 @@ async function run() {
        VALUES($1,'EA','Each')
        ON CONFLICT (organization_id, code) DO NOTHING`,
       [orgId]
-    );
+    ); 
     const { rows: unitRows } = await client.query(
       `SELECT id FROM item_units WHERE organization_id=$1 AND code='EA' LIMIT 1`,
       [orgId]
-    );
-    const unitId = unitRows[0].id;
+    ); 
+    const unitId = unitRows[0].id; 
 
     // Warehouse
     await client.query(
@@ -365,12 +365,12 @@ async function run() {
        VALUES($1,'MAIN','Main Warehouse',TRUE)
        ON CONFLICT (organization_id, code) DO NOTHING`,
       [orgId]
-    );
+    ); 
     const { rows: whRows } = await client.query(
       `SELECT id FROM warehouses WHERE organization_id=$1 AND code='MAIN' LIMIT 1`,
       [orgId]
-    );
-    const warehouseId = whRows[0].id;
+    ); 
+    const warehouseId = whRows[0].id; 
 
     // Item category (with accounting links)
     await client.query(
@@ -385,12 +385,12 @@ async function run() {
              adjustment_account_id=EXCLUDED.adjustment_account_id,
              clearing_account_id=EXCLUDED.clearing_account_id`,
       [orgId, inventoryAccountId, cogsAccountId, adjustmentAccountId, clearingAccountId]
-    );
+    ); 
     const { rows: catRows } = await client.query(
       `SELECT id FROM item_categories WHERE organization_id=$1 AND code='GEN' LIMIT 1`,
       [orgId]
-    );
-    const itemCategoryId = catRows[0].id;
+    ); 
+    const itemCategoryId = catRows[0].id; 
 
     // Demo item
     await client.query(
@@ -402,15 +402,15 @@ async function run() {
              name=EXCLUDED.name,
              is_active=TRUE`,
       [orgId, itemCategoryId, unitId]
-    );
+    ); 
     const { rows: itemRows } = await client.query(
       `SELECT id FROM inventory_items WHERE organization_id=$1 AND sku='SKU-DEMO' LIMIT 1`,
       [orgId]
-    );
-    const itemId = itemRows[0].id;
+    ); 
+    const itemId = itemRows[0].id; 
 
-    return { unitId, warehouseId, itemCategoryId, itemId };
-  };
+    return { unitId, warehouseId, itemCategoryId, itemId }; 
+  }; 
 
   const ensureBankingSeed = async ({ orgId, bankGlAccountId, currencyCode = "GHS" }) => {
     // Bank account entity (Tier 7)
@@ -422,16 +422,16 @@ async function run() {
              gl_account_id=EXCLUDED.gl_account_id,
              is_active=TRUE`,
       [orgId, currencyCode, bankGlAccountId]
-    );
+    ); 
     const { rows } = await client.query(
       `SELECT id FROM bank_accounts WHERE organization_id=$1 AND code='BANK-001' LIMIT 1`,
       [orgId]
-    );
-    return { bankAccountId: rows[0].id };
-  };
+    ); 
+    return { bankAccountId: rows[0].id }; 
+  }; 
 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
     // 1) Global reference tables
     await client.query(`
@@ -441,16 +441,16 @@ async function run() {
       ('EQUITY','Equity','credit'),
       ('REVENUE','Revenue','credit'),
       ('EXPENSE','Expenses','debit')
-      ON CONFLICT (code) DO NOTHING;
-    `);
+      ON CONFLICT (code) DO NOTHING; 
+    `); 
 
     await client.query(`
       INSERT INTO journal_entry_types(code, name) VALUES
       ('GENERAL','General Journal'),
       ('ADJUSTMENT','Adjustment Journal'),
       ('CLOSING','Closing Journal')
-      ON CONFLICT (code) DO NOTHING;
-    `);
+      ON CONFLICT (code) DO NOTHING; 
+    `); 
 
     // 2) Permissions (Phase 1 + Phase 2)
     const perms = [
@@ -596,15 +596,15 @@ async function run() {
 // Optional override
       ["notifications.manage", "Managing of notifications"],
       
-    ];
+    ]; 
 
     for (const [code, description] of perms) {
-      await upsertPermission(code, description);
+      await upsertPermission(code, description); 
     }
 
     // 3) Org + Admin role/user
-    const orgId = await getOrCreateOrg("AptBooks Demo Org", "GHS");
-    const roleId = await getOrCreateRole(orgId, "Admin");
+    const orgId = await getOrCreateOrg("AptBooks Demo Org", "GHS"); 
+    const roleId = await getOrCreateRole(orgId, "Admin"); 
 
     // Attach ALL permissions to Admin (idempotent)
     await client.query(
@@ -614,19 +614,19 @@ async function run() {
       ON CONFLICT DO NOTHING
       `,
       [roleId]
-    );
+    ); 
 
-    const adminEmail = "admin@aptbooks.local";
-    const adminPassword = "ChangeMe123!";
-    const user = await getOrCreateUserByEmail(orgId, adminEmail, adminPassword);
+    const adminEmail = "admin@aptbooks.local"; 
+    const adminPassword = "ChangeMe123!"; 
+    const user = await getOrCreateUserByEmail(orgId, adminEmail, adminPassword); 
 
     await client.query(
       `INSERT INTO user_roles(user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
       [user.id, roleId]
-    );
+    ); 
 
     // 4) Minimal COA skeleton
-    const typeMap = await getAccountTypeMap();
+    const typeMap = await getAccountTypeMap(); 
 
     const coa = [
       ["1000", "Cash", typeMap.ASSET],
@@ -640,7 +640,7 @@ async function run() {
       ["5000", "Operating Expenses", typeMap.EXPENSE],
       ["5200", "Cost of Goods Sold", typeMap.EXPENSE],
       ["5300", "Inventory Adjustments", typeMap.EXPENSE],
-    ];
+    ]; 
 
     for (const [code, name, accountTypeId] of coa) {
       await client.query(
@@ -650,7 +650,7 @@ async function run() {
         ON CONFLICT (organization_id, code) DO NOTHING
         `,
         [orgId, code, name, accountTypeId]
-      );
+      ); 
     }
     await client
       .query(
@@ -669,41 +669,41 @@ async function run() {
     ON CONFLICT DO NOTHING
     `,
           [orgId]
-        );
-      });
+        ); 
+      }); 
 
     // 5) Ensure open period for invoice issue tests
-    const periodId = await ensureOpenPeriod(orgId);
+    const periodId = await ensureOpenPeriod(orgId); 
 
     // 6) Payment config (Phase 2)
-    await ensurePaymentConfig(orgId);
+    await ensurePaymentConfig(orgId); 
 
     // 7) Demo customer with A/R set
-    const arAccountId = await getCoaIdByCode(orgId, "1100");
-    if (!arAccountId) throw new Error("Missing A/R account 1100 in COA");
+    const arAccountId = await getCoaIdByCode(orgId, "1100"); 
+    if (!arAccountId) throw new Error("Missing A/R account 1100 in COA"); 
 
-    const demoCustomerId = await ensureDemoCustomer({ orgId, arAccountId });
+    const demoCustomerId = await ensureDemoCustomer({ orgId, arAccountId }); 
 
     // 8) Demo vendor with A/P set (Phase 2b)
-    const apAccountId = await getCoaIdByCode(orgId, "2000");
-    if (!apAccountId) throw new Error("Missing A/P account 2000 in COA");
+    const apAccountId = await getCoaIdByCode(orgId, "2000"); 
+    if (!apAccountId) throw new Error("Missing A/P account 2000 in COA"); 
 
-    const demoVendorId = await ensureDemoVendor({ orgId, apAccountId });
+    const demoVendorId = await ensureDemoVendor({ orgId, apAccountId }); 
 
     // 9) Phase 4 defaults & master data for Postman testing
-    await ensureInventoryCostMethodDefault(orgId);
+    await ensureInventoryCostMethodDefault(orgId); 
 
-    const inventoryAccountId = await getCoaIdByCode(orgId, "1200");
-    const inventoryClearingAccountId = await getCoaIdByCode(orgId, "2100");
-    const cogsAccountId = await getCoaIdByCode(orgId, "5200");
-    const inventoryAdjustmentAccountId = await getCoaIdByCode(orgId, "5300");
-    const bankGlAccountId = await getCoaIdByCode(orgId, "1010");
+    const inventoryAccountId = await getCoaIdByCode(orgId, "1200"); 
+    const inventoryClearingAccountId = await getCoaIdByCode(orgId, "2100"); 
+    const cogsAccountId = await getCoaIdByCode(orgId, "5200"); 
+    const inventoryAdjustmentAccountId = await getCoaIdByCode(orgId, "5300"); 
+    const bankGlAccountId = await getCoaIdByCode(orgId, "1010"); 
 
-    if (!inventoryAccountId) throw new Error("Missing Inventory account 1200 in COA");
-    if (!inventoryClearingAccountId) throw new Error("Missing Inventory Clearing account 2100 in COA");
-    if (!cogsAccountId) throw new Error("Missing COGS account 5200 in COA");
-    if (!inventoryAdjustmentAccountId) throw new Error("Missing Inventory Adjustments account 5300 in COA");
-    if (!bankGlAccountId) throw new Error("Missing Bank account 1010 in COA");
+    if (!inventoryAccountId) throw new Error("Missing Inventory account 1200 in COA"); 
+    if (!inventoryClearingAccountId) throw new Error("Missing Inventory Clearing account 2100 in COA"); 
+    if (!cogsAccountId) throw new Error("Missing COGS account 5200 in COA"); 
+    if (!inventoryAdjustmentAccountId) throw new Error("Missing Inventory Adjustments account 5300 in COA"); 
+    if (!bankGlAccountId) throw new Error("Missing Bank account 1010 in COA"); 
 
     const inventory = await ensureInventoryMasterData({
       orgId,
@@ -711,12 +711,12 @@ async function run() {
       cogsAccountId,
       adjustmentAccountId: inventoryAdjustmentAccountId,
       clearingAccountId: inventoryClearingAccountId,
-    });
+    }); 
 
-    const banking = await ensureBankingSeed({ orgId, bankGlAccountId, currencyCode: "GHS" });
+    const banking = await ensureBankingSeed({ orgId, bankGlAccountId, currencyCode: "GHS" }); 
 
 
-    await client.query("COMMIT");
+    await client.query("COMMIT"); 
 
     console.log("Seed complete:", {
       orgId,
@@ -749,15 +749,15 @@ async function run() {
       banking: {
         bankAccountId: banking.bankAccountId,
       },
-    });
+    }); 
   } catch (e) {
-    await client.query("ROLLBACK");
-    console.error(e);
-    process.exit(1);
+    await client.query("ROLLBACK"); 
+    console.error(e); 
+    process.exit(1); 
   } finally {
-    client.release();
-    process.exit(0);
+    client.release(); 
+    process.exit(0); 
   }
 }
 
-run();
+run(); 

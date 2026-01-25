@@ -1,17 +1,17 @@
-const { pool } = require("../../db/pool");
+const { pool } = require("../../db/pool"); 
 
 async function listReports({ organizationId, includeArchived = false, search = null, limit = 50, offset = 0 }) {
-  const params = [organizationId];
-  let where = `organization_id=$1`;
+  const params = [organizationId]; 
+  let where = `organization_id=$1`; 
   if (!includeArchived) {
-    where += ` AND is_archived=FALSE`;
+    where += ` AND is_archived=FALSE`; 
   }
   if (search) {
-    params.push(`%${search}%`);
-    where += ` AND (name ILIKE $${params.length} OR COALESCE(description,'') ILIKE $${params.length})`;
+    params.push(`%${search}%`); 
+    where += ` AND (name ILIKE $${params.length} OR COALESCE(description,'') ILIKE $${params.length})`; 
   }
-  params.push(Math.min(Math.max(Number(limit) || 50, 1), 200));
-  params.push(Math.max(Number(offset) || 0, 0));
+  params.push(Math.min(Math.max(Number(limit) || 50, 1), 200)); 
+  params.push(Math.max(Number(offset) || 0, 0)); 
 
   const { rows } = await pool.query(
     `
@@ -22,16 +22,16 @@ async function listReports({ organizationId, includeArchived = false, search = n
     LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getReport({ organizationId, reportId }) {
   const { rows } = await pool.query(
     `SELECT * FROM saved_reports WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [organizationId, reportId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function createReport({ organizationId, actorUserId, name, description, folder }) {
@@ -42,8 +42,8 @@ async function createReport({ organizationId, actorUserId, name, description, fo
     RETURNING *
     `,
     [organizationId, name, description || null, folder || null, actorUserId || null]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function archiveReport({ organizationId, reportId, isArchived }) {
@@ -55,8 +55,8 @@ async function archiveReport({ organizationId, reportId, isArchived }) {
     RETURNING *
     `,
     [organizationId, reportId, !!isArchived]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function updateReportMeta({ organizationId, reportId, name, description, folder }) {
@@ -71,8 +71,8 @@ async function updateReportMeta({ organizationId, reportId, name, description, f
     RETURNING *
     `,
     [organizationId, reportId, name || null, description ?? null, folder ?? null]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function getLatestVersion({ organizationId, reportId }) {
@@ -85,8 +85,8 @@ async function getLatestVersion({ organizationId, reportId }) {
     LIMIT 1
     `,
     [organizationId, reportId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function listVersions({ organizationId, reportId }) {
@@ -98,13 +98,13 @@ async function listVersions({ organizationId, reportId }) {
     ORDER BY version_number DESC
     `,
     [organizationId, reportId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function createVersion({ organizationId, actorUserId, reportId, kind, querySql, templateKey, parametersJson }) {
-  const latest = await getLatestVersion({ organizationId, reportId });
-  const nextNum = (latest?.version_number || 0) + 1;
+  const latest = await getLatestVersion({ organizationId, reportId }); 
+  const nextNum = (latest?.version_number || 0) + 1; 
 
   const { rows } = await pool.query(
     `
@@ -125,14 +125,14 @@ async function createVersion({ organizationId, actorUserId, reportId, kind, quer
       parametersJson ? JSON.stringify(parametersJson) : JSON.stringify({}),
       actorUserId || null,
     ]
-  );
+  ); 
 
   await pool.query(
     `UPDATE saved_reports SET updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
     [organizationId, reportId]
-  );
+  ); 
 
-  return rows[0];
+  return rows[0]; 
 }
 
 async function startRun({ organizationId, reportId, versionId, scheduleId }) {
@@ -143,8 +143,8 @@ async function startRun({ organizationId, reportId, versionId, scheduleId }) {
     RETURNING *
     `,
     [organizationId, reportId, versionId || null, scheduleId || null]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function finishRun({ organizationId, runId, status, error, rowCount, outputJson }) {
@@ -167,8 +167,8 @@ async function finishRun({ organizationId, runId, status, error, rowCount, outpu
       Number.isFinite(rowCount) ? rowCount : null,
       outputJson ? JSON.stringify(outputJson) : null,
     ]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function listRuns({ organizationId, reportId, limit = 20 }) {
@@ -181,8 +181,8 @@ async function listRuns({ organizationId, reportId, limit = 20 }) {
     LIMIT $3
     `,
     [organizationId, reportId, Math.min(Math.max(Number(limit) || 20, 1), 200)]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 // Shares
@@ -190,8 +190,8 @@ async function listShares({ organizationId, reportId }) {
   const { rows } = await pool.query(
     `SELECT * FROM saved_report_shares WHERE organization_id=$1 AND saved_report_id=$2 ORDER BY created_at DESC`,
     [organizationId, reportId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function upsertShare({ organizationId, reportId, shareType, userId, roleId, canEdit }) {
@@ -203,8 +203,8 @@ async function upsertShare({ organizationId, reportId, shareType, userId, roleId
     RETURNING *
     `,
     [organizationId, reportId, shareType, userId || null, roleId || null, !!canEdit]
-  );
-  if (rows.length) return rows[0];
+  ); 
+  if (rows.length) return rows[0]; 
 
   // if already exists, update can_edit
   const { rows: upd } = await pool.query(
@@ -217,16 +217,16 @@ async function upsertShare({ organizationId, reportId, shareType, userId, roleId
     RETURNING *
     `,
     [organizationId, reportId, shareType, userId || null, roleId || null, !!canEdit]
-  );
-  return upd[0] || null;
+  ); 
+  return upd[0] || null; 
 }
 
 async function deleteShare({ organizationId, shareId }) {
   const { rows } = await pool.query(
     `DELETE FROM saved_report_shares WHERE organization_id=$1 AND id=$2 RETURNING id`,
     [organizationId, shareId]
-  );
-  return !!rows.length;
+  ); 
+  return !!rows.length; 
 }
 
 // Schedules
@@ -234,12 +234,12 @@ async function listSchedules({ organizationId, reportId }) {
   const { rows } = await pool.query(
     `SELECT * FROM saved_report_schedules WHERE organization_id=$1 AND saved_report_id=$2 ORDER BY created_at DESC`,
     [organizationId, reportId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function createSchedule({ organizationId, actorUserId, reportId, versionId, name, schedule }) {
-  const { type, intervalSeconds, dailyHourUtc, dailyMinuteUtc } = schedule;
+  const { type, intervalSeconds, dailyHourUtc, dailyMinuteUtc } = schedule; 
   const { rows } = await pool.query(
     `
     INSERT INTO saved_report_schedules(
@@ -262,12 +262,12 @@ async function createSchedule({ organizationId, actorUserId, reportId, versionId
       null,
       actorUserId || null,
     ]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function updateSchedule({ organizationId, scheduleId, patch }) {
-  const { name, isEnabled, versionId, scheduleType, intervalSeconds, dailyHourUtc, dailyMinuteUtc, nextRunAt } = patch;
+  const { name, isEnabled, versionId, scheduleType, intervalSeconds, dailyHourUtc, dailyMinuteUtc, nextRunAt } = patch; 
   const { rows } = await pool.query(
     `
     UPDATE saved_report_schedules
@@ -295,8 +295,8 @@ async function updateSchedule({ organizationId, scheduleId, patch }) {
       dailyMinuteUtc ?? null,
       nextRunAt ?? null,
     ]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function dueSchedules({ limit = 25 }) {
@@ -309,8 +309,8 @@ async function dueSchedules({ limit = 25 }) {
     LIMIT $1
     `,
     [Math.min(Math.max(Number(limit) || 25, 1), 100)]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function markScheduleRun({ scheduleId, nextRunAt }) {
@@ -321,7 +321,7 @@ async function markScheduleRun({ scheduleId, nextRunAt }) {
     WHERE id=$1
     `,
     [scheduleId, nextRunAt]
-  );
+  ); 
 }
 
 // Comments
@@ -335,8 +335,8 @@ async function listComments({ organizationId, reportId, limit = 50 }) {
     LIMIT $3
     `,
     [organizationId, reportId, Math.min(Math.max(Number(limit) || 50, 1), 200)]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function addComment({ organizationId, reportId, userId, body }) {
@@ -347,8 +347,8 @@ async function addComment({ organizationId, reportId, userId, body }) {
     RETURNING *
     `,
     [organizationId, reportId, userId || null, body]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 // Stage 4: report cache
@@ -360,8 +360,8 @@ async function getCache({ organizationId, cacheKey }) {
     LIMIT 1
     `,
     [organizationId, cacheKey]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function setCache({ organizationId, cacheKey, reportId, reportVersionId, outputJson, rowCount, expiresAt }) {
@@ -374,17 +374,17 @@ async function setCache({ organizationId, cacheKey, reportId, reportVersionId, o
     RETURNING *
     `,
     [organizationId, cacheKey, reportId || null, reportVersionId || null, JSON.stringify(outputJson), rowCount ?? null, expiresAt]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function purgeExpiredCache({ organizationId = null }) {
   if (organizationId) {
-    const r = await pool.query(`DELETE FROM report_cache WHERE organization_id=$1 AND expires_at <= NOW()`, [organizationId]);
-    return r.rowCount;
+    const r = await pool.query(`DELETE FROM report_cache WHERE organization_id=$1 AND expires_at <= NOW()`, [organizationId]); 
+    return r.rowCount; 
   }
-  const r = await pool.query(`DELETE FROM report_cache WHERE expires_at <= NOW()`);
-  return r.rowCount;
+  const r = await pool.query(`DELETE FROM report_cache WHERE expires_at <= NOW()`); 
+  return r.rowCount; 
 }
 
 module.exports = {
@@ -412,4 +412,4 @@ module.exports = {
   getCache,
   setCache,
   purgeExpiredCache,
-};
+}; 

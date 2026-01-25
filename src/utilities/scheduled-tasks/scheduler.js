@@ -1,6 +1,6 @@
-const os = require("os");
-const { pool } = require("../../db/pool");
-const { AppError } = require("../../shared/errors/AppError");
+const os = require("os"); 
+const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError"); 
 
 let _state = {
   started: false,
@@ -8,42 +8,42 @@ let _state = {
   lastTickAt: null,
   lastTickError: null,
   tasksLoaded: 0
-};
+}; 
 
 function getSchedulerState() {
-  return { ..._state };
+  return { ..._state }; 
 }
 
-function utcNow() { return new Date(); }
+function utcNow() { return new Date();  }
 
 
 function computeNextRunAt(task) {
   // schedule fields may come from in-memory registry or DB row
   // Extract schedule properties from the task object
-  const scheduleType = task.schedule_type || task.type;
-  const intervalSeconds = task.interval_seconds || task.intervalSeconds;
-  const dailyHourUtc = task.daily_hour_utc || task.dailyHourUtc;
-  const dailyMinuteUtc = task.daily_minute_utc || task.dailyMinuteUtc;
+  const scheduleType = task.schedule_type || task.type; 
+  const intervalSeconds = task.interval_seconds || task.intervalSeconds; 
+  const dailyHourUtc = task.daily_hour_utc || task.dailyHourUtc; 
+  const dailyMinuteUtc = task.daily_minute_utc || task.dailyMinuteUtc; 
   
-  const now = new Date();
+  const now = new Date(); 
 
   if (scheduleType === "interval" || scheduleType === "interval_seconds") {
-    const secs = Number(intervalSeconds);
+    const secs = Number(intervalSeconds); 
     if (!Number.isFinite(secs) || secs <= 0) {
-      throw new Error(`Invalid intervalSeconds for interval schedule: ${intervalSeconds}`);
+      throw new Error(`Invalid intervalSeconds for interval schedule: ${intervalSeconds}`); 
     }
-    return new Date(now.getTime() + secs * 1000);
+    return new Date(now.getTime() + secs * 1000); 
   }
 
   if (scheduleType === "daily_at_utc") {
-    const hh = Number(dailyHourUtc);
-    const mm = Number(dailyMinuteUtc);
+    const hh = Number(dailyHourUtc); 
+    const mm = Number(dailyMinuteUtc); 
     
     if (!Number.isInteger(hh) || hh < 0 || hh > 23) {
-      throw new Error(`Invalid daily_hour_utc for daily schedule: ${dailyHourUtc}`);
+      throw new Error(`Invalid daily_hour_utc for daily schedule: ${dailyHourUtc}`); 
     }
     if (!Number.isInteger(mm) || mm < 0 || mm > 59) {
-      throw new Error(`Invalid daily_minute_utc for daily schedule: ${dailyMinuteUtc}`);
+      throw new Error(`Invalid daily_minute_utc for daily schedule: ${dailyMinuteUtc}`); 
     }
 
     // Next run at HH:MM UTC (today if still in future, else tomorrow)
@@ -55,39 +55,39 @@ function computeNextRunAt(task) {
       mm,
       0,
       0
-    ));
+    )); 
 
     if (next.getTime() <= now.getTime()) {
-      next.setUTCDate(next.getUTCDate() + 1);
+      next.setUTCDate(next.getUTCDate() + 1); 
     }
     
-    return next;
+    return next; 
   }
 
-  throw new Error(`Unsupported schedule_type: ${scheduleType}`);
+  throw new Error(`Unsupported schedule_type: ${scheduleType}`); 
 }
 
 // Deterministic 32-bit advisory lock key from task_code
 function lockKeyFromCode(code) {
-  let h = 2166136261;
-  for (let i = 0; i < code.length; i++) {
-    h ^= code.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+  let h = 2166136261; 
+  for (let i = 0;  i < code.length;  i++) {
+    h ^= code.charCodeAt(i); 
+    h = Math.imul(h, 16777619); 
   }
   // Signed 32-bit
-  return h | 0;
+  return h | 0; 
 }
 
 async function ensureTask({ code, name, schedule }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
-    const { rows } = await client.query(`SELECT * FROM scheduled_tasks WHERE code=$1 LIMIT 1`, [code]);
+    const { rows } = await client.query(`SELECT * FROM scheduled_tasks WHERE code=$1 LIMIT 1`, [code]); 
 
     if (!rows.length) {
-      const now = utcNow();
-      const nextRunAt = computeNextRunAt({ schedule_type: schedule.type, ...schedule });
+      const now = utcNow(); 
+      const nextRunAt = computeNextRunAt({ schedule_type: schedule.type, ...schedule }); 
 
       await client.query(
         `
@@ -106,15 +106,15 @@ async function ensureTask({ code, name, schedule }) {
           schedule.dailyMinuteUtc ?? null,
           nextRunAt
         ]
-      );
+      ); 
     }
 
-    await client.query("COMMIT");
+    await client.query("COMMIT"); 
   } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
+    await client.query("ROLLBACK"); 
+    throw e; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
@@ -125,27 +125,27 @@ async function markRun({ taskCode, status, message, error }) {
     VALUES ($1,$2,$3,$4,NOW())
     `,
     [taskCode, status, message || null, error || null]
-  );
+  ); 
 }
 
 async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
-  if (!Array.isArray(tasks)) tasks = [];
+  if (!Array.isArray(tasks)) tasks = []; 
 
-  _state.started = true;
-  _state.startedAt = new Date().toISOString();
-  _state.tasksLoaded = tasks.length;
+  _state.started = true; 
+  _state.startedAt = new Date().toISOString(); 
+  _state.tasksLoaded = tasks.length; 
 
   // Ensure tasks exist in DB (persisted schedules)
   for (const t of tasks) {
-    await ensureTask({ code: t.code, name: t.name, schedule: t.schedule });
+    await ensureTask({ code: t.code, name: t.name, schedule: t.schedule }); 
   }
 
-  const instanceId = `${os.hostname()}:${process.pid}`;
+  const instanceId = `${os.hostname()}:${process.pid}`; 
 
   async function tick() {
-    _state.lastTickAt = new Date().toISOString();
-    _state.lastTickError = null;
-    const client = await pool.connect();
+    _state.lastTickAt = new Date().toISOString(); 
+    _state.lastTickError = null; 
+    const client = await pool.connect(); 
     try {
       // pick due tasks
       const { rows: due } = await client.query(
@@ -155,24 +155,24 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
         ORDER BY next_run_at ASC
         LIMIT 5
         `
-      );
+      ); 
 
       for (const task of due) {
-        const handler = tasks.find(x => x.code === task.code)?.handler;
+        const handler = tasks.find(x => x.code === task.code)?.handler; 
         if (!handler) {
           // disable unknown task
           await client.query(
             `UPDATE scheduled_tasks SET is_enabled=FALSE, updated_at=NOW() WHERE code=$1`,
             [task.code]
-          );
-          await markRun({ taskCode: task.code, status: "failed", message: "No handler registered", error: null });
-          continue;
+          ); 
+          await markRun({ taskCode: task.code, status: "failed", message: "No handler registered", error: null }); 
+          continue; 
         }
 
         // Advisory lock ensures single runner across restarts / multi-instances
-        const lockKey = lockKeyFromCode(task.code);
-        const { rows: lockRows } = await client.query(`SELECT pg_try_advisory_lock($1) AS ok`, [lockKey]);
-        if (!lockRows[0]?.ok) continue;
+        const lockKey = lockKeyFromCode(task.code); 
+        const { rows: lockRows } = await client.query(`SELECT pg_try_advisory_lock($1) AS ok`, [lockKey]); 
+        if (!lockRows[0]?.ok) continue; 
 
         // mark DB lock
         await client.query(
@@ -182,39 +182,39 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
           WHERE code=$1
           `,
           [task.code, instanceId]
-        );
+        ); 
 
         // log run start
         await client.query(
           `INSERT INTO scheduled_task_runs(task_code, status, message) VALUES($1,'running',$2)`,
           [task.code, `Started by ${instanceId}`]
-        );
+        ); 
 
-        let status = "success";
-        let message = "OK";
-        let errText = null;
+        let status = "success"; 
+        let message = "OK"; 
+        let errText = null; 
 
         try {
-          const result = await handler({ task });
+          const result = await handler({ task }); 
           if (result?.skipped) {
-            status = "skipped";
-            message = result.message || "Skipped";
+            status = "skipped"; 
+            message = result.message || "Skipped"; 
           } else {
-            message = result?.message || "OK";
+            message = result?.message || "OK"; 
           }
         } catch (e) {
-          status = "failed";
-          message = "Task failed";
-          errText = String(e?.stack || e?.message || e);
+          status = "failed"; 
+          message = "Task failed"; 
+          errText = String(e?.stack || e?.message || e); 
         }
 
         // update schedule regardless of outcome (with retry behaviour)
-        const now = utcNow();
-        let attemptCount = Number(task.attempt_count || 0);
-        let nextRunAt;
+        const now = utcNow(); 
+        let attemptCount = Number(task.attempt_count || 0); 
+        let nextRunAt; 
 
         if (status === "failed") {
-          attemptCount += 1;
+          attemptCount += 1; 
 
           if (attemptCount >= Number(task.max_attempts || 5)) {
             // disable after max attempts
@@ -228,11 +228,11 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
               WHERE code=$1
               `,
               [task.code, attemptCount]
-            );
+            ); 
           } else {
             // backoff: 1m, 5m, 15m, 60m...
-            const backoffMinutes = [1, 5, 15, 60][Math.min(attemptCount - 1, 3)];
-            nextRunAt = new Date(now.getTime() + backoffMinutes * 60 * 1000);
+            const backoffMinutes = [1, 5, 15, 60][Math.min(attemptCount - 1, 3)]; 
+            nextRunAt = new Date(now.getTime() + backoffMinutes * 60 * 1000); 
 
             await client.query(
               `
@@ -244,11 +244,11 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
               WHERE code=$1
               `,
               [task.code, attemptCount, nextRunAt]
-            );
+            ); 
           }
         } else {
           // reset attempts and compute next schedule time
-          nextRunAt = computeNextRunAt(task);
+          nextRunAt = computeNextRunAt(task); 
           await client.query(
             `
             UPDATE scheduled_tasks
@@ -260,36 +260,36 @@ async function startScheduler({ tasks, pollIntervalMs = 5000 }) {
             WHERE code=$1
             `,
             [task.code, nextRunAt]
-          );
+          ); 
         }
 
-        await markRun({ taskCode: task.code, status, message, error: errText });
+        await markRun({ taskCode: task.code, status, message, error: errText }); 
 
         // release advisory lock
-        await client.query(`SELECT pg_advisory_unlock($1)`, [lockKey]);
+        await client.query(`SELECT pg_advisory_unlock($1)`, [lockKey]); 
       }
     } finally {
-      client.release();
+      client.release(); 
     }
   }
 
   // Run immediately then poll
-  await tick();
+  await tick(); 
   const intervalId = setInterval(() => {
     tick().catch((e) => {
-      _state.lastTickError = String(e?.message || e);
-    });
-  }, pollIntervalMs);
+      _state.lastTickError = String(e?.message || e); 
+    }); 
+  }, pollIntervalMs); 
 
   return {
     started: true,
     tasks: tasks.map((t) => ({ code: t.code, name: t.name })),
     stop: async () => {
-      clearInterval(intervalId);
-      _state.started = false;
-      return { stopped: true };
+      clearInterval(intervalId); 
+      _state.started = false; 
+      return { stopped: true }; 
     }
-  };
+  }; 
 }
 
-module.exports = { startScheduler, getSchedulerState };
+module.exports = { startScheduler, getSchedulerState }; 

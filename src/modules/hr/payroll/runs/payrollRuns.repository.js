@@ -1,4 +1,4 @@
-const { pool } = require("../../../../db/pool");
+const { pool } = require("../../../../db/pool"); 
 
 async function createRun(orgId, actorUserId, payload) {
   const { rows } = await pool.query(
@@ -8,13 +8,13 @@ async function createRun(orgId, actorUserId, payload) {
       RETURNING *
     `,
     [orgId, payload.period_id, new Date(payload.pay_date), (payload.currency || 'GHS').toUpperCase(), actorUserId]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function listRuns(orgId, query = {}) {
-  const periodId = query.period_id || query.periodId || null;
-  const status = query.status || null;
+  const periodId = query.period_id || query.periodId || null; 
+  const status = query.status || null; 
   const { rows } = await pool.query(
     `
       SELECT r.*, p.code AS period_code, p.start_date, p.end_date
@@ -26,45 +26,45 @@ async function listRuns(orgId, query = {}) {
       ORDER BY r.created_at DESC
     `,
     [orgId, periodId, status]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getRun(orgId, runId) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_payroll_runs WHERE organization_id=$1 AND id=$2`,
     [orgId, runId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function setRunStatus(orgId, runId, status, actorUserId) {
   const { rows } = await pool.query(
     `UPDATE hr_payroll_runs SET status=$3, updated_at=NOW(), updated_by=$4 WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, runId, status, actorUserId]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function getPeriod(orgId, periodId) {
   const { rows } = await pool.query(
     `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
     [orgId, periodId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function replaceRunLines(orgId, runId, lines) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query('BEGIN');
+    await client.query('BEGIN'); 
     await client.query(
       `DELETE FROM hr_payroll_run_lines WHERE organization_id=$1 AND payroll_run_id=$2`,
       [orgId, runId]
-    );
-    let i = 0;
+    ); 
+    let i = 0; 
     for (const l of lines) {
-      i += 1;
+      i += 1; 
       await client.query(
         `
           INSERT INTO hr_payroll_run_lines(
@@ -86,14 +86,14 @@ async function replaceRunLines(orgId, runId, lines) {
           (l.currency || 'GHS').toUpperCase(),
           l.breakdown || {},
         ]
-      );
+      ); 
     }
-    await client.query('COMMIT');
+    await client.query('COMMIT'); 
   } catch (e) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
-    throw e;
+    try { await client.query('ROLLBACK');  } catch (_) {}
+    throw e; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
@@ -107,8 +107,8 @@ async function listRunLines(orgId, runId) {
       ORDER BY l.line_no ASC
     `,
     [orgId, runId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function listRunLinesForPayout(orgId, runId) {
@@ -122,8 +122,8 @@ async function listRunLinesForPayout(orgId, runId) {
       ORDER BY l.line_no ASC
     `,
     [orgId, runId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getEmployeesForIds(orgId, employeeIds) {
@@ -134,8 +134,8 @@ async function getEmployeesForIds(orgId, employeeIds) {
       WHERE organization_id=$1 AND id = ANY($2::uuid[])
     `,
     [orgId, employeeIds]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getRunJournal(orgId, runId) {
@@ -147,8 +147,8 @@ async function getRunJournal(orgId, runId) {
       WHERE pj.organization_id=$1 AND pj.payroll_run_id=$2
     `,
     [orgId, runId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function linkRunJournal(orgId, runId, journalId, actorUserId) {
@@ -161,8 +161,8 @@ async function linkRunJournal(orgId, runId, journalId, actorUserId) {
       RETURNING *
     `,
     [orgId, runId, journalId, actorUserId]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function markJournalPosted(orgId, runId, journalId, actorUserId) {
@@ -174,8 +174,8 @@ async function markJournalPosted(orgId, runId, journalId, actorUserId) {
       RETURNING *
     `,
     [orgId, runId, journalId, actorUserId]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 module.exports = {
@@ -191,4 +191,4 @@ module.exports = {
   getRunJournal,
   linkRunJournal,
   markJournalPosted,
-};
+}; 

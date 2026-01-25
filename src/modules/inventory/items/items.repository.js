@@ -1,14 +1,14 @@
-const { pool } = require("../../../db/pool");
+const { pool } = require("../../../db/pool"); 
 
 async function createItem(orgId, payload) {
-  const { categoryId, unitId, sku, name, isActive, barcode, reorderPoint, reorderQty } = payload;
+  const { categoryId, unitId, sku, name, isActive, barcode, reorderPoint, reorderQty } = payload; 
   const { rows } = await pool.query(
     `INSERT INTO inventory_items(organization_id, category_id, unit_id, sku, name, is_active, status, barcode, reorder_point, reorder_qty)
      VALUES($1,$2,$3,$4,$5,$6, CASE WHEN $6 THEN 'active' ELSE 'inactive' END, $7,$8,$9)
      RETURNING *`,
     [orgId, categoryId, unitId, sku, name, isActive !== false, barcode || null, reorderPoint ?? null, reorderQty ?? null]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function listItems(orgId) {
@@ -20,21 +20,21 @@ async function listItems(orgId) {
      WHERE i.organization_id=$1
      ORDER BY i.sku`,
     [orgId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getItem(orgId, itemId) {
   const { rows } = await pool.query(
     `SELECT * FROM inventory_items WHERE organization_id=$1 AND id=$2`,
     [orgId, itemId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function updateItem(orgId, itemId, payload) {
-  const isActive = payload.isActive;
-  const status = isActive === undefined ? null : (isActive ? 'active' : 'inactive');
+  const isActive = payload.isActive; 
+  const status = isActive === undefined ? null : (isActive ? 'active' : 'inactive'); 
   const { rows } = await pool.query(
     `UPDATE inventory_items
      SET category_id=COALESCE($3, category_id),
@@ -60,16 +60,16 @@ async function updateItem(orgId, itemId, payload) {
       payload.reorderPoint ?? null,
       payload.reorderQty ?? null,
     ]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function deleteItem(orgId, itemId) {
   const { rows } = await pool.query(
     `UPDATE inventory_items SET is_active=false, status='inactive', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING id`,
     [orgId, itemId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
-module.exports = { createItem, listItems, getItem, updateItem, deleteItem };
+module.exports = { createItem, listItems, getItem, updateItem, deleteItem }; 

@@ -1,6 +1,6 @@
-const { z } = require("zod");
+const { z } = require("zod"); 
 
-const uuid = z.string().uuid();
+const uuid = z.string().uuid(); 
 
 // -----------------------------------------------------------------------------
 // Departments
@@ -8,13 +8,13 @@ const uuid = z.string().uuid();
 const createDepartmentSchema = z.object({
   code: z.string().min(1).max(50),
   name: z.string().min(1).max(200),
-});
+}); 
 
 const updateDepartmentSchema = z.object({
   code: z.string().min(1).max(50).optional(),
   name: z.string().min(1).max(200).optional(),
   status: z.enum(["active", "inactive"]).optional(),
-});
+}); 
 
 // -----------------------------------------------------------------------------
 // Grades
@@ -26,9 +26,9 @@ const createGradeSchema = z.object({
   min_amount: z.number().nonnegative().optional(),
   max_amount: z.number().nonnegative().optional(),
 }).refine((v) => {
-  if (v.min_amount == null || v.max_amount == null) return true;
-  return v.max_amount >= v.min_amount;
-}, { message: "max_amount must be >= min_amount" });
+  if (v.min_amount == null || v.max_amount == null) return true; 
+  return v.max_amount >= v.min_amount; 
+}, { message: "max_amount must be >= min_amount" }); 
 
 const updateGradeSchema = z.object({
   code: z.string().min(1).max(50).optional(),
@@ -38,9 +38,9 @@ const updateGradeSchema = z.object({
   max_amount: z.number().nonnegative().optional(),
   status: z.enum(["active", "inactive"]).optional(),
 }).refine((v) => {
-  if (v.min_amount == null || v.max_amount == null) return true;
-  return v.max_amount >= v.min_amount;
-}, { message: "max_amount must be >= min_amount" });
+  if (v.min_amount == null || v.max_amount == null) return true; 
+  return v.max_amount >= v.min_amount; 
+}, { message: "max_amount must be >= min_amount" }); 
 
 // -----------------------------------------------------------------------------
 // Positions
@@ -50,7 +50,7 @@ const createPositionSchema = z.object({
   name: z.string().min(1).max(200),
   department_id: uuid.optional().nullable(),
   grade_id: uuid.optional().nullable(),
-});
+}); 
 
 const updatePositionSchema = z.object({
   code: z.string().min(1).max(50).optional(),
@@ -58,7 +58,7 @@ const updatePositionSchema = z.object({
   department_id: uuid.optional().nullable(),
   grade_id: uuid.optional().nullable(),
   status: z.enum(["active", "inactive"]).optional(),
-});
+}); 
 
 // -----------------------------------------------------------------------------
 // Compensation Bands (no payroll computation in Stage 1)
@@ -70,7 +70,7 @@ const createCompBandSchema = z.object({
   min_amount: z.number().nonnegative(),
   max_amount: z.number().nonnegative(),
   pay_frequency: z.enum(["monthly", "weekly", "daily"]).default("monthly"),
-}).refine((v) => v.max_amount >= v.min_amount, { message: "max_amount must be >= min_amount" });
+}).refine((v) => v.max_amount >= v.min_amount, { message: "max_amount must be >= min_amount" }); 
 
 const updateCompBandSchema = z.object({
   code: z.string().min(1).max(50).optional(),
@@ -81,9 +81,9 @@ const updateCompBandSchema = z.object({
   pay_frequency: z.enum(["monthly", "weekly", "daily"]).optional(),
   status: z.enum(["active", "inactive"]).optional(),
 }).refine((v) => {
-  if (v.min_amount == null || v.max_amount == null) return true;
-  return v.max_amount >= v.min_amount;
-}, { message: "max_amount must be >= min_amount" });
+  if (v.min_amount == null || v.max_amount == null) return true; 
+  return v.max_amount >= v.min_amount; 
+}, { message: "max_amount must be >= min_amount" }); 
 
 // -----------------------------------------------------------------------------
 // Employees
@@ -117,11 +117,11 @@ const createEmployeeSchema = z.object({
 
   tax_id: z.string().max(80).optional().nullable(),
   national_id: z.string().max(80).optional().nullable(),
-});
+}); 
 
 const updateEmployeeSchema = createEmployeeSchema.partial().extend({
   employee_no: z.string().min(1).max(50).optional(),
-});
+}); 
 
 
 
@@ -133,7 +133,7 @@ const createLeaveTypeSchema = z.object({
   name: z.string().min(1).max(200),
   unit: z.enum(["days"]).optional(),
   is_paid: z.boolean().optional(),
-});
+}); 
 
 const updateLeaveTypeSchema = z.object({
   code: z.string().min(1).max(50).optional(),
@@ -141,14 +141,14 @@ const updateLeaveTypeSchema = z.object({
   unit: z.enum(["days"]).optional(),
   is_paid: z.boolean().optional(),
   status: z.enum(["active","inactive"]).optional(),
-});
+}); 
 
 const upsertLeaveBalanceSchema = z.object({
   employee_id: uuid,
   leave_type_id: uuid,
   balance_days: z.number().finite(),
   reason: z.string().max(500).optional(),
-});
+}); 
 
 const createLeaveRequestSchema = z.object({
   employee_id: uuid,
@@ -157,11 +157,11 @@ const createLeaveRequestSchema = z.object({
   end_date: z.string().min(8),
   days: z.number().positive(),
   reason: z.string().max(2000).optional(),
-});
+}); 
 
 const rejectLeaveRequestSchema = z.object({
   reason: z.string().max(2000).optional(),
-});
+}); 
 
 // -----------------------------------------------------------------------------
 // Benefits
@@ -177,7 +177,7 @@ const createBenefitPlanSchema = z.object({
   cap_amount: z.number().positive().optional().nullable(),
   expense_account_id: uuid,
   liability_account_id: uuid,
-});
+}); 
 
 const updateBenefitPlanSchema = z.object({
   code: z.string().min(1).max(50).optional(),
@@ -190,30 +190,30 @@ const updateBenefitPlanSchema = z.object({
   expense_account_id: uuid.optional(),
   liability_account_id: uuid.optional(),
   status: z.enum(["active","inactive"]).optional(),
-});
+}); 
 
 const assignEmployeeBenefitSchema = z.object({
   employee_id: uuid,
   benefit_plan_id: uuid,
   effective_from: z.string().min(8),
   effective_to: z.string().min(8).optional(),
-});
+}); 
 
 const updateEmployeeBenefitSchema = z.object({
   effective_from: z.string().min(8).optional(),
   effective_to: z.string().min(8).nullable().optional(),
   status: z.enum(["active","inactive"]).optional(),
-});
+}); 
 
 // -----------------------------------------------------------------------------
 // Statutory Rules
 // -----------------------------------------------------------------------------
 
 const payeBracketSchema = z.object({
-  // up_to is inclusive upper bound for this bracket; null means "no upper limit"
+  // up_to is inclusive upper bound for this bracket;  null means "no upper limit"
   up_to: z.number().positive().optional().nullable(),
   rate: z.number().min(0).max(100),
-});
+}); 
 
 createStatutoryRuleSchema = z.object({
   code: z.string().min(1).max(50),
@@ -232,7 +232,7 @@ createStatutoryRuleSchema = z.object({
   liability_account_id: uuid,
   effective_from: z.string().min(4).optional().nullable(),
   effective_to: z.string().min(4).optional().nullable(),
-});
+}); 
 
 const updateStatutoryRuleSchema = z.object({
   code: z.string().min(1).max(50).optional(),
@@ -251,7 +251,7 @@ const updateStatutoryRuleSchema = z.object({
   effective_from: z.string().min(4).optional().nullable(),
   effective_to: z.string().min(4).optional().nullable(),
   status: z.enum(["active","inactive"]).optional(),
-});
+}); 
 
 // -----------------------------------------------------------------------------
 // Employee Import/Export
@@ -259,7 +259,7 @@ const updateStatutoryRuleSchema = z.object({
 const importEmployeesSchema = z.object({
   mode: z.enum(["upsert", "create_only", "update_only"]).default("upsert").optional(),
   employees: z.array(createEmployeeSchema).min(1),
-});
+}); 
 module.exports = {
 createDepartmentSchema,
   updateDepartmentSchema,
@@ -282,4 +282,4 @@ createDepartmentSchema,
   updateEmployeeBenefitSchema,
   createStatutoryRuleSchema,
   updateStatutoryRuleSchema,
-};
+}; 

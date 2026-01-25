@@ -3,5 +3,5 @@
 // Use `node src/db/migrate.js --reset --force-reset` only in non-production
 // with ALLOW_DESTRUCTIVE_MIGRATIONS=true.
 
-const { migrate } = require("./migrate");
-migrate();
+const { migrate } = require("./migrate"); 
+migrate(); 

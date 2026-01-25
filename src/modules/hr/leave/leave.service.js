@@ -1,13 +1,13 @@
-const repo = require("./leave.repository");
-const { AppError } = require("../../../shared/errors/AppError");
-const { withTransaction } = require("../../../db/tx");
+const repo = require("./leave.repository"); 
+const { AppError } = require("../../../shared/errors/AppError"); 
+const { withTransaction } = require("../../../db/tx"); 
 
 function assertDateOrder(start, end) {
-  if (new Date(start) > new Date(end)) throw new AppError(400, "INVALID_DATES", "start_date must be <= end_date");
+  if (new Date(start) > new Date(end)) throw new AppError(400, "INVALID_DATES", "start_date must be <= end_date"); 
 }
 
 async function createLeaveType({ orgId, actorUserId, payload, audit, writeAudit }) {
-  const created = await repo.createLeaveType(orgId, payload);
+  const created = await repo.createLeaveType(orgId, payload); 
   if (writeAudit) {
     await writeAudit({
       organizationId: orgId,
@@ -18,18 +18,18 @@ async function createLeaveType({ orgId, actorUserId, payload, audit, writeAudit 
       ip: audit?.ip,
       userAgent: audit?.userAgent,
       meta: payload,
-    });
+    }); 
   }
-  return created;
+  return created; 
 }
 
 async function listLeaveTypes({ orgId, query }) {
-  return repo.listLeaveTypes(orgId, query);
+  return repo.listLeaveTypes(orgId, query); 
 }
 
 async function updateLeaveType({ orgId, actorUserId, leaveTypeId, payload, audit, writeAudit }) {
-  const updated = await repo.updateLeaveType(orgId, leaveTypeId, payload);
-  if (!updated) throw new AppError(404, "NOT_FOUND", "Leave type not found");
+  const updated = await repo.updateLeaveType(orgId, leaveTypeId, payload); 
+  if (!updated) throw new AppError(404, "NOT_FOUND", "Leave type not found"); 
   if (writeAudit) {
     await writeAudit({
       organizationId: orgId,
@@ -40,14 +40,14 @@ async function updateLeaveType({ orgId, actorUserId, leaveTypeId, payload, audit
       ip: audit?.ip,
       userAgent: audit?.userAgent,
       meta: payload,
-    });
+    }); 
   }
-  return updated;
+  return updated; 
 }
 
 async function deactivateLeaveType({ orgId, actorUserId, leaveTypeId, audit, writeAudit }) {
-  const updated = await repo.deactivateLeaveType(orgId, leaveTypeId);
-  if (!updated) throw new AppError(404, "NOT_FOUND", "Leave type not found");
+  const updated = await repo.deactivateLeaveType(orgId, leaveTypeId); 
+  if (!updated) throw new AppError(404, "NOT_FOUND", "Leave type not found"); 
   if (writeAudit) {
     await writeAudit({
       organizationId: orgId,
@@ -57,9 +57,9 @@ async function deactivateLeaveType({ orgId, actorUserId, leaveTypeId, audit, wri
       entityId: updated.id,
       ip: audit?.ip,
       userAgent: audit?.userAgent,
-    });
+    }); 
   }
-  return updated;
+  return updated; 
 }
 
 async function upsertLeaveBalance({ orgId, actorUserId, payload, audit, writeAudit }) {
@@ -67,7 +67,7 @@ async function upsertLeaveBalance({ orgId, actorUserId, payload, audit, writeAud
     employeeId: payload.employee_id,
     leaveTypeId: payload.leave_type_id,
     balanceDays: payload.balance_days,
-  });
+  }); 
 
   await repo.insertLeaveLedger(orgId, {
     employeeId: payload.employee_id,
@@ -76,7 +76,7 @@ async function upsertLeaveBalance({ orgId, actorUserId, payload, audit, writeAud
     reason: payload.reason || "Balance set",
     refType: "manual",
     refId: bal.id,
-  });
+  }); 
 
   if (writeAudit) {
     await writeAudit({
@@ -88,18 +88,18 @@ async function upsertLeaveBalance({ orgId, actorUserId, payload, audit, writeAud
       ip: audit?.ip,
       userAgent: audit?.userAgent,
       meta: payload,
-    });
+    }); 
   }
-  return bal;
+  return bal; 
 }
 
 async function listLeaveBalances({ orgId, query }) {
-  return repo.listLeaveBalances(orgId, query);
+  return repo.listLeaveBalances(orgId, query); 
 }
 
 async function createLeaveRequest({ orgId, actorUserId, payload, audit, writeAudit }) {
-  assertDateOrder(payload.start_date, payload.end_date);
-  const created = await repo.createLeaveRequest(orgId, actorUserId, payload);
+  assertDateOrder(payload.start_date, payload.end_date); 
+  const created = await repo.createLeaveRequest(orgId, actorUserId, payload); 
   if (writeAudit) {
     await writeAudit({
       organizationId: orgId,
@@ -110,28 +110,28 @@ async function createLeaveRequest({ orgId, actorUserId, payload, audit, writeAud
       ip: audit?.ip,
       userAgent: audit?.userAgent,
       meta: payload,
-    });
+    }); 
   }
-  return created;
+  return created; 
 }
 
 async function listLeaveRequests({ orgId, query }) {
-  return repo.listLeaveRequests(orgId, query);
+  return repo.listLeaveRequests(orgId, query); 
 }
 
 async function getLeaveRequest({ orgId, requestId }) {
-  const r = await repo.getLeaveRequest(orgId, requestId);
-  if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
-  return r;
+  const r = await repo.getLeaveRequest(orgId, requestId); 
+  if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found"); 
+  return r; 
 }
 
 async function submitLeaveRequest({ orgId, actorUserId, requestId, audit, writeAudit }) {
   const updated = await withTransaction(async (client) => {
-    const r = await repo.getLeaveRequest(orgId, requestId, client, true);
-    if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
-    if (r.status !== "draft") throw new AppError(409, "BAD_STATE", "Only draft leave requests can be submitted");
-    return repo.setLeaveRequestStatus(orgId, requestId, "submitted", client);
-  });
+    const r = await repo.getLeaveRequest(orgId, requestId, client, true); 
+    if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found"); 
+    if (r.status !== "draft") throw new AppError(409, "BAD_STATE", "Only draft leave requests can be submitted"); 
+    return repo.setLeaveRequestStatus(orgId, requestId, "submitted", client); 
+  }); 
 
   if (writeAudit) {
     await writeAudit({
@@ -142,25 +142,25 @@ async function submitLeaveRequest({ orgId, actorUserId, requestId, audit, writeA
       entityId: requestId,
       ip: audit?.ip,
       userAgent: audit?.userAgent,
-    });
+    }); 
   }
-  return updated;
+  return updated; 
 }
 
 async function approveLeaveRequest({ orgId, actorUserId, requestId, audit, writeAudit }) {
   const result = await withTransaction(async (client) => {
-    const req = await repo.getLeaveRequest(orgId, requestId, client, true);
-    if (!req) throw new AppError(404, "NOT_FOUND", "Leave request not found");
-    if (req.status !== "submitted") throw new AppError(409, "BAD_STATE", "Only submitted requests can be approved");
+    const req = await repo.getLeaveRequest(orgId, requestId, client, true); 
+    if (!req) throw new AppError(404, "NOT_FOUND", "Leave request not found"); 
+    if (req.status !== "submitted") throw new AppError(409, "BAD_STATE", "Only submitted requests can be approved"); 
 
-    const lt = await repo.getLeaveType(orgId, req.leave_type_id);
-    if (!lt) throw new AppError(409, "CONFIG", "Leave type missing");
+    const lt = await repo.getLeaveType(orgId, req.leave_type_id); 
+    if (!lt) throw new AppError(409, "CONFIG", "Leave type missing"); 
     if (lt.is_paid) {
-      const bal = await repo.getLeaveBalance(orgId, { employeeId: req.employee_id, leaveTypeId: req.leave_type_id }, client, true);
-      const cur = bal ? Number(bal.balance_days) : 0;
-      const days = Number(req.days);
-      if (cur < days) throw new AppError(409, "INSUFFICIENT_BALANCE", "Insufficient leave balance");
-      await repo.setLeaveBalance(orgId, { employeeId: req.employee_id, leaveTypeId: req.leave_type_id, newBalance: cur - days }, client);
+      const bal = await repo.getLeaveBalance(orgId, { employeeId: req.employee_id, leaveTypeId: req.leave_type_id }, client, true); 
+      const cur = bal ? Number(bal.balance_days) : 0; 
+      const days = Number(req.days); 
+      if (cur < days) throw new AppError(409, "INSUFFICIENT_BALANCE", "Insufficient leave balance"); 
+      await repo.setLeaveBalance(orgId, { employeeId: req.employee_id, leaveTypeId: req.leave_type_id, newBalance: cur - days }, client); 
       await repo.insertLeaveLedger(orgId, {
         employeeId: req.employee_id,
         leaveTypeId: req.leave_type_id,
@@ -168,10 +168,10 @@ async function approveLeaveRequest({ orgId, actorUserId, requestId, audit, write
         reason: "Leave approved",
         refType: "leave_request",
         refId: req.id,
-      }, client);
+      }, client); 
     }
-    return repo.setLeaveRequestStatus(orgId, requestId, "approved", client);
-  });
+    return repo.setLeaveRequestStatus(orgId, requestId, "approved", client); 
+  }); 
 
   if (writeAudit) {
     await writeAudit({
@@ -182,16 +182,16 @@ async function approveLeaveRequest({ orgId, actorUserId, requestId, audit, write
       entityId: requestId,
       ip: audit?.ip,
       userAgent: audit?.userAgent,
-    });
+    }); 
   }
-  return result;
+  return result; 
 }
 
 async function rejectLeaveRequest({ orgId, actorUserId, requestId, payload, audit, writeAudit }) {
   const updated = await withTransaction(async (client) => {
-    const r = await repo.getLeaveRequest(orgId, requestId, client, true);
-    if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
-    if (r.status !== "submitted") throw new AppError(409, "BAD_STATE", "Only submitted requests can be rejected");
+    const r = await repo.getLeaveRequest(orgId, requestId, client, true); 
+    if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found"); 
+    if (r.status !== "submitted") throw new AppError(409, "BAD_STATE", "Only submitted requests can be rejected"); 
     await repo.insertLeaveLedger(orgId, {
       employeeId: r.employee_id,
       leaveTypeId: r.leave_type_id,
@@ -199,9 +199,9 @@ async function rejectLeaveRequest({ orgId, actorUserId, requestId, payload, audi
       reason: payload?.reason || "Leave rejected",
       refType: "leave_request",
       refId: r.id,
-    }, client);
-    return repo.setLeaveRequestStatus(orgId, requestId, "rejected", client);
-  });
+    }, client); 
+    return repo.setLeaveRequestStatus(orgId, requestId, "rejected", client); 
+  }); 
 
   if (writeAudit) {
     await writeAudit({
@@ -213,18 +213,18 @@ async function rejectLeaveRequest({ orgId, actorUserId, requestId, payload, audi
       ip: audit?.ip,
       userAgent: audit?.userAgent,
       meta: payload,
-    });
+    }); 
   }
-  return updated;
+  return updated; 
 }
 
 async function cancelLeaveRequest({ orgId, actorUserId, requestId, audit, writeAudit }) {
   const updated = await withTransaction(async (client) => {
-    const r = await repo.getLeaveRequest(orgId, requestId, client, true);
-    if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
-    if (!["draft","submitted"].includes(r.status)) throw new AppError(409, "BAD_STATE", "Only draft/submitted requests can be cancelled");
-    return repo.setLeaveRequestStatus(orgId, requestId, "cancelled", client);
-  });
+    const r = await repo.getLeaveRequest(orgId, requestId, client, true); 
+    if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found"); 
+    if (!["draft","submitted"].includes(r.status)) throw new AppError(409, "BAD_STATE", "Only draft/submitted requests can be cancelled"); 
+    return repo.setLeaveRequestStatus(orgId, requestId, "cancelled", client); 
+  }); 
 
   if (writeAudit) {
     await writeAudit({
@@ -235,9 +235,9 @@ async function cancelLeaveRequest({ orgId, actorUserId, requestId, audit, writeA
       entityId: requestId,
       ip: audit?.ip,
       userAgent: audit?.userAgent,
-    });
+    }); 
   }
-  return updated;
+  return updated; 
 }
 
 module.exports = {
@@ -257,4 +257,4 @@ module.exports = {
   approveLeaveRequest,
   rejectLeaveRequest,
   cancelLeaveRequest,
-};
+}; 

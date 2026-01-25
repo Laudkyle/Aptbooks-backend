@@ -1,4 +1,4 @@
-const { z } = require("zod");
+const { z } = require("zod"); 
 
 const createPaystackIntentSchema = z.object({
   amount: z.number().positive(),
@@ -7,7 +7,7 @@ const createPaystackIntentSchema = z.object({
   callbackUrl: z.string().url().optional(),
   metadata: z.record(z.any()).optional(),
   links: z.array(z.object({ entityType: z.string(), entityId: z.number() })).optional()
-});
+}); 
 
 const createMtnRequestToPaySchema = z.object({
   amount: z.number().positive(),
@@ -18,9 +18,9 @@ const createMtnRequestToPaySchema = z.object({
   externalId: z.string().max(64).optional(),
   metadata: z.record(z.any()).optional(),
   links: z.array(z.object({ entityType: z.string(), entityId: z.number() })).optional()
-});
+}); 
 
 module.exports = {
   createPaystackIntentSchema,
   createMtnRequestToPaySchema
-};
+}; 

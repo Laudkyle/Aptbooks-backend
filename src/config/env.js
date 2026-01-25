@@ -1,9 +1,9 @@
-require("dotenv").config();
+require("dotenv").config(); 
 
 function must(name) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
+  const v = process.env[name]; 
+  if (!v) throw new Error(`Missing env var: ${name}`); 
+  return v; 
 }
 
 const env = {
@@ -67,7 +67,7 @@ RETURN_RESET_TOKEN_IN_RESPONSE:
   // Rate limit store: "memory" (single instance) or "postgres" (shared, multi-instance)
   RATE_LIMIT_STORE: (process.env.RATE_LIMIT_STORE || "memory").toLowerCase(),
 
-  // Auth rate limiting (additional layer; login endpoint also has its own limiter)
+  // Auth rate limiting (additional layer;  login endpoint also has its own limiter)
   AUTH_RATE_LIMIT_WINDOW_MS: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || "900000", 10), // 15m
   AUTH_RATE_LIMIT_MAX: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "50", 10), // 50 req / 15m / IP
 
@@ -103,28 +103,28 @@ RETURN_RESET_TOKEN_IN_RESPONSE:
   MTN_MOMO_API_KEY: process.env.MTN_MOMO_API_KEY || "",
   MTN_MOMO_TARGET_ENV: process.env.MTN_MOMO_TARGET_ENV || "sandbox",
   MTN_MOMO_CALLBACK_URL: process.env.MTN_MOMO_CALLBACK_URL || ""
-};
+}; 
 
 function validateRuntimeEnv() {
   // Harden production defaults and fail fast on dangerous configuration.
   if (env.NODE_ENV === "production") {
     if (!env.CORS_ALLOWED_ORIGINS || env.CORS_ALLOWED_ORIGINS.length === 0) {
-      throw new Error("CORS_ALLOWED_ORIGINS must be set in production");
+      throw new Error("CORS_ALLOWED_ORIGINS must be set in production"); 
     }
     if (env.REFRESH_TOKEN_USE_COOKIE && !env.COOKIE_SECURE) {
-      throw new Error("COOKIE_SECURE must be true when REFRESH_TOKEN_USE_COOKIE is enabled in production");
+      throw new Error("COOKIE_SECURE must be true when REFRESH_TOKEN_USE_COOKIE is enabled in production"); 
     }
-    const s = String(env.COOKIE_SAMESITE || "").toLowerCase();
+    const s = String(env.COOKIE_SAMESITE || "").toLowerCase(); 
     if (!(["lax", "strict", "none"].includes(s))) {
-      throw new Error("COOKIE_SAMESITE must be one of: lax, strict, none");
+      throw new Error("COOKIE_SAMESITE must be one of: lax, strict, none"); 
     }
     if (env.JWT_REFRESH_SECRET === env.JWT_SECRET) {
-      throw new Error("JWT_REFRESH_SECRET must be different from JWT_SECRET in production");
+      throw new Error("JWT_REFRESH_SECRET must be different from JWT_SECRET in production"); 
     }
     if (env.RATE_LIMIT_STORE !== "memory" && env.RATE_LIMIT_STORE !== "postgres") {
-      throw new Error("RATE_LIMIT_STORE must be either 'memory' or 'postgres'");
+      throw new Error("RATE_LIMIT_STORE must be either 'memory' or 'postgres'"); 
     }
   }
 }
 
-module.exports = { env, validateRuntimeEnv };
+module.exports = { env, validateRuntimeEnv }; 

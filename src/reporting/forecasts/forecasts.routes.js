@@ -1,25 +1,25 @@
-const express = require("express");
-const { requirePermission } = require("../../middleware/permission.middleware");
-const { idempotency } = require("../../middleware/idempotency.middleware");
-const svc = require("./forecasts.service");
+const express = require("express"); 
+const { requirePermission } = require("../../middleware/permission.middleware"); 
+const { idempotency } = require("../../middleware/idempotency.middleware"); 
+const svc = require("./forecasts.service"); 
 
-const router = express.Router();
+const router = express.Router(); 
 
 router.get("/", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
-    const { limit, offset, status } = req.query;
+    const { organization_id: orgId } = req.user; 
+    const { limit, offset, status } = req.query; 
     const data = await svc.listForecasts({
       orgId,
       limit: limit ? Number(limit) : 100,
       offset: offset ? Number(offset) : 0,
       status: status || undefined,
-    });
-    res.json({ data });
+    }); 
+    res.json({ data }); 
   } catch (err) {
-    next(err);
+    next(err); 
   }
-});
+}); 
 
 router.post(
   "/",
@@ -27,14 +27,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.createForecast({ orgId, actorUserId, req, ...req.body });
-      res.status(201).json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.createForecast({ orgId, actorUserId, req, ...req.body }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.post(
   "/:id/activate",
@@ -42,14 +42,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.activateForecast({ orgId, forecastId: req.params.id, actorUserId, req });
-      res.json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.activateForecast({ orgId, forecastId: req.params.id, actorUserId, req }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.post(
   "/:id/archive",
@@ -57,14 +57,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.archiveForecast({ orgId, forecastId: req.params.id, actorUserId, req });
-      res.json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.archiveForecast({ orgId, forecastId: req.params.id, actorUserId, req }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // Versions (standard accounting practice)
 router.post(
@@ -73,14 +73,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.createVersion({ orgId, forecastId: req.params.id, actorUserId, req, ...req.body });
-      res.status(201).json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.createVersion({ orgId, forecastId: req.params.id, actorUserId, req, ...req.body }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.post(
   "/:id/versions/:versionId/finalize",
@@ -88,20 +88,20 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { organization_id: orgId, id: actorUserId } = req.user; 
       const data = await svc.finalizeVersion({
         orgId,
         forecastId: req.params.id,
         versionId: req.params.versionId,
         actorUserId,
         req,
-      });
-      res.json({ data });
+      }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // Stage 2 workflow endpoints
 router.post(
@@ -110,14 +110,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.submitVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
-      res.json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.submitVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.post(
   "/:id/versions/:versionId/approve",
@@ -125,14 +125,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.approveVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
-      res.json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.approveVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.post(
   "/:id/versions/:versionId/reject",
@@ -140,14 +140,14 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const data = await svc.rejectVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, reason: req.body?.reason, actorUserId, req });
-      res.json({ data });
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const data = await svc.rejectVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, reason: req.body?.reason, actorUserId, req }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.post(
   "/:id/versions/:versionId/copy",
@@ -155,8 +155,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
-      const { newVersionNo, name, scenarioKey, probabilityWeight } = req.body || {};
+      const { organization_id: orgId, id: actorUserId } = req.user; 
+      const { newVersionNo, name, scenarioKey, probabilityWeight } = req.body || {}; 
       const data = await svc.copyVersion({
         orgId,
         forecastId: req.params.id,
@@ -167,13 +167,13 @@ router.post(
         probabilityWeight,
         actorUserId,
         req,
-      });
-      res.status(201).json({ data });
+      }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // Comparisons
 router.get(
@@ -181,30 +181,30 @@ router.get(
   requirePermission("reporting.forecasts.read"),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId } = req.user;
-      const { baseVersionId, compareVersionId, periodId } = req.query;
-      const data = await svc.compareVersions({ orgId, forecastId: req.params.id, baseVersionId, compareVersionId, periodId });
-      res.json({ data });
+      const { organization_id: orgId } = req.user; 
+      const { baseVersionId, compareVersionId, periodId } = req.query; 
+      const data = await svc.compareVersions({ orgId, forecastId: req.params.id, baseVersionId, compareVersionId, periodId }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 router.get(
   "/vs-budget",
   requirePermission("reporting.forecasts.read"),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId } = req.user;
-      const { forecastVersionId, budgetVersionId, periodId } = req.query;
-      const data = await svc.forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId });
-      res.json({ data });
+      const { organization_id: orgId } = req.user; 
+      const { forecastVersionId, budgetVersionId, periodId } = req.query; 
+      const data = await svc.forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId }); 
+      res.json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // Upsert lines into the latest draft version
 router.post(
@@ -213,7 +213,7 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { organization_id: orgId, id: actorUserId } = req.user; 
       const data = await svc.upsertLines({
         orgId,
         forecastId: req.params.id,
@@ -221,13 +221,13 @@ router.post(
         lines: req.body.lines || [],
         actorUserId,
         req,
-      });
-      res.status(201).json({ data });
+      }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // Upsert lines into a specific version
 router.post(
@@ -236,7 +236,7 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { organization_id: orgId, id: actorUserId } = req.user; 
       const data = await svc.upsertLines({
         orgId,
         forecastId: req.params.id,
@@ -244,13 +244,13 @@ router.post(
         lines: req.body.lines || [],
         actorUserId,
         req,
-      });
-      res.status(201).json({ data });
+      }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // CSV import of forecast lines into the latest draft version (text/csv body)
 router.post(
@@ -260,7 +260,7 @@ router.post(
   express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { organization_id: orgId, id: actorUserId } = req.user; 
       const data = await svc.importLinesCsv({
         orgId,
         forecastId: req.params.id,
@@ -268,13 +268,13 @@ router.post(
         csvText: req.body,
         actorUserId,
         req,
-      });
-      res.status(201).json({ data });
+      }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 // CSV import of forecast lines into a specific version (text/csv body)
 router.post(
@@ -284,7 +284,7 @@ router.post(
   express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const { organization_id: orgId, id: actorUserId } = req.user; 
       const data = await svc.importLinesCsv({
         orgId,
         forecastId: req.params.id,
@@ -292,26 +292,26 @@ router.post(
         csvText: req.body,
         actorUserId,
         req,
-      });
-      res.status(201).json({ data });
+      }); 
+      res.status(201).json({ data }); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
   }
-);
+); 
 
 
 // Variance (Forecast vs Actual)
 // GET /reporting/forecasts/:id/variance?periodId=<period>&versionId=<optional>
 router.get("/:id/variance", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
-    const { periodId, versionId } = req.query;
-    const data = await svc.getVariance({ orgId, forecastId: req.params.id, versionId, periodId });
-    res.json({ data });
+    const { organization_id: orgId } = req.user; 
+    const { periodId, versionId } = req.query; 
+    const data = await svc.getVariance({ orgId, forecastId: req.params.id, versionId, periodId }); 
+    res.json({ data }); 
   } catch (err) {
-    next(err);
+    next(err); 
   }
-});
+}); 
 
-module.exports = router;
+module.exports = router; 

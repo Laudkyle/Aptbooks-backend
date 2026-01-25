@@ -5,19 +5,19 @@ const {
   runDueAccrualsDaily,
   runPeriodEndAccruals,
   runReversalsDaily,
-} = require("./accruals.jobs");
-const { runPeriodEndDepreciationDaily } = require("./assets.jobs");
-const { computeDeferredTaxDraftDaily, checkIas12ConfigDaily } = require("./ias12.jobs");
-const { ifrs16AutoPostDaily } = require("./ifrs16.jobs");
-const { ifrs15AutoPostRevenueDaily } = require("./ifrs15.jobs");
-const { ifrs9AutoComputeAndFinalizeEclDaily } = require("./ifrs9.jobs");
-const { runDueSavedReportSchedulesHourly } = require("./reports.jobs");
+} = require("./accruals.jobs"); 
+const { runPeriodEndDepreciationDaily } = require("./assets.jobs"); 
+const { computeDeferredTaxDraftDaily, checkIas12ConfigDaily } = require("./ias12.jobs"); 
+const { ifrs16AutoPostDaily } = require("./ifrs16.jobs"); 
+const { ifrs15AutoPostRevenueDaily } = require("./ifrs15.jobs"); 
+const { ifrs9AutoComputeAndFinalizeEclDaily } = require("./ifrs9.jobs"); 
+const { runDueSavedReportSchedulesHourly } = require("./reports.jobs"); 
 const {
   maintenanceRetentionDaily,
   maintenanceRateLimitCleanupDaily,
   purgeReportCacheHourly,
   purgeSavedReportRunsDaily,
-} = require("./maintenance.jobs");
+} = require("./maintenance.jobs"); 
 
 function listTasks() {
   return [
@@ -105,11 +105,11 @@ function listTasks() {
       schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 20 },
       handler: async () => purgeSavedReportRunsDaily(),
     }
-  ];
+  ]; 
 }
 
 function getTask(code) {
-  return listTasks().find((t) => t.code === code) || null;
+  return listTasks().find((t) => t.code === code) || null; 
 }
 
-module.exports = { listTasks, getTask };
+module.exports = { listTasks, getTask }; 

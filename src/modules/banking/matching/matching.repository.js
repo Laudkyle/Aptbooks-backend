@@ -1,13 +1,13 @@
-const { pool } = require("../../../db/pool");
+const { pool } = require("../../../db/pool"); 
 
-function db(client) { return client || pool; }
+function db(client) { return client || pool;  }
 
 async function listRules(orgId) {
   const { rows } = await pool.query(
     `SELECT * FROM bank_matching_rules WHERE organization_id=$1 ORDER BY is_active DESC, priority ASC, created_at DESC`,
     [orgId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 
@@ -27,8 +27,8 @@ async function createRule(orgId, userId, payload, client = null) {
       payload.priority ?? 100,
       userId || null
     ]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function updateRule(orgId, ruleId, payload, client = null) {
@@ -53,8 +53,8 @@ async function updateRule(orgId, ruleId, payload, client = null) {
       payload.description_similarity_min ?? null,
       payload.priority ?? null
     ]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function getStatementLine(orgId, lineId, client = null) {
@@ -67,20 +67,20 @@ async function getStatementLine(orgId, lineId, client = null) {
     WHERE s.organization_id=$1 AND l.id=$2
     `,
     [orgId, lineId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function getBankAccount(orgId, bankAccountId, client = null) {
   const { rows } = await db(client).query(
     `SELECT * FROM bank_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, bankAccountId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function findCandidateJournalLines({ orgId, bankGlAccountId, txnDate, amount, dateWindowDays, amountTolerance, limit = 20 }, client = null) {
-  const params = [orgId, bankGlAccountId, txnDate, dateWindowDays, amount, amountTolerance, limit];
+  const params = [orgId, bankGlAccountId, txnDate, dateWindowDays, amount, amountTolerance, limit]; 
   const { rows } = await db(client).query(
     `
     WITH candidates AS (
@@ -104,8 +104,8 @@ async function findCandidateJournalLines({ orgId, bankGlAccountId, txnDate, amou
     LIMIT $7
     `,
     params
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 module.exports = {
@@ -115,4 +115,4 @@ module.exports = {
   getStatementLine,
   getBankAccount,
   findCandidateJournalLines
-};
+}; 

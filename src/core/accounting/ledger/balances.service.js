@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool");
+const { pool } = require("../../../db/pool"); 
 
 async function trialBalance({ orgId, periodId }) {
   // Includes accounts with or without balances for the period
@@ -23,8 +23,8 @@ async function trialBalance({ orgId, periodId }) {
     ORDER BY coa.code
     `,
     [orgId, periodId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function glBalances({ orgId, periodId }) {
@@ -38,8 +38,8 @@ async function glBalances({ orgId, periodId }) {
     ORDER BY coa.code
     `,
     [orgId, periodId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function accountActivity({ orgId, accountId, fromDate, toDate }) {
@@ -66,8 +66,8 @@ async function accountActivity({ orgId, accountId, fromDate, toDate }) {
     ORDER BY je.entry_date, je.entry_no, jel.line_no
     `,
     [orgId, accountId, fromDate, toDate]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
-module.exports = { trialBalance, glBalances, accountActivity };
+module.exports = { trialBalance, glBalances, accountActivity }; 

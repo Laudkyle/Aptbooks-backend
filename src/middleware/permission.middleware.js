@@ -1,10 +1,10 @@
-const { pool } = require("../db/pool");
-const { AppError } = require("../shared/errors/AppError");
+const { pool } = require("../db/pool"); 
+const { AppError } = require("../shared/errors/AppError"); 
 
 function requirePermission(permissionCode) {
   return async (req, _res, next) => {
-    if (!req.user) return next(new AppError(401, "Unauthenticated"));
-    const { id: userId, organization_id: orgId } = req.user;
+    if (!req.user) return next(new AppError(401, "Unauthenticated")); 
+    const { id: userId, organization_id: orgId } = req.user; 
 
     try {
       const { rows } = await pool.query(
@@ -18,14 +18,14 @@ function requirePermission(permissionCode) {
         LIMIT 1
         `,
         [userId, orgId, permissionCode]
-      );
+      ); 
 
-      if (!rows.length) return next(new AppError(403, "Forbidden"));
-      next();
+      if (!rows.length) return next(new AppError(403, "Forbidden")); 
+      next(); 
     } catch (err) {
-      next(err);
+      next(err); 
     }
-  };
+  }; 
 }
 
-module.exports = { requirePermission };
+module.exports = { requirePermission }; 

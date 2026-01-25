@@ -1,11 +1,11 @@
-const router = require("express").Router();
-const { authRequired } = require("../../middleware/auth.middleware");
-const { requirePermission } = require("../../middleware/permission.middleware");
+const router = require("express").Router(); 
+const { authRequired } = require("../../middleware/auth.middleware"); 
+const { requirePermission } = require("../../middleware/permission.middleware"); 
 
-router.use(authRequired);
+router.use(authRequired); 
 
 router.get("/status", requirePermission("utilities.a11y.read"), (req, res) => {
-  // Backend cannot guarantee frontend WCAG compliance; this endpoint exposes a checklist scaffold.
+  // Backend cannot guarantee frontend WCAG compliance;  this endpoint exposes a checklist scaffold.
   res.json({
     data: {
       standard: "WCAG 2.1 AA",
@@ -18,7 +18,7 @@ router.get("/status", requirePermission("utilities.a11y.read"), (req, res) => {
         { key: "frontend.keyboard", description: "Frontend keyboard navigation", status: "unknown" }
       ]
     }
-  });
-});
+  }); 
+}); 
 
-module.exports = router;
+module.exports = router; 

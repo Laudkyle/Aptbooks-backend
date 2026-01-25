@@ -1,11 +1,11 @@
-const { AppError } = require('../../../shared/errors/AppError');
+const { AppError } = require('../../../shared/errors/AppError'); 
 
 async function listQueue({ orgId, asOfDate, minDaysPastDue = 1, includeDisputed = false, client }) {
-  const params = [orgId, asOfDate, minDaysPastDue];
+  const params = [orgId, asOfDate, minDaysPastDue]; 
   const disputedClause = includeDisputed ? '' : `AND NOT EXISTS (
       SELECT 1 FROM disputes d
       WHERE d.organization_id=$1 AND d.entity_type='invoice' AND d.entity_id=oi.invoice_id AND d.status='open'
-    )`;
+    )`; 
 
   const { rows } = await client.query(
     `SELECT
@@ -27,7 +27,7 @@ async function listQueue({ orgId, asOfDate, minDaysPastDue = 1, includeDisputed 
      GROUP BY oi.customer_id, p.name
      ORDER BY max_days_past_due DESC, amount_due DESC`,
     params
-  );
+  ); 
   return rows.map(r => ({
     partnerId: Number(r.partner_id),
     partnerName: r.partner_name,
@@ -35,7 +35,7 @@ async function listQueue({ orgId, asOfDate, minDaysPastDue = 1, includeDisputed 
     amountDue: Number(r.amount_due || 0),
     earliestDueDate: r.earliest_due_date,
     maxDaysPastDue: Number(r.max_days_past_due || 0)
-  }));
+  })); 
 }
 
 async function listPartnerOpenInvoices({ orgId, partnerId, asOfDate, client }) {
@@ -60,7 +60,7 @@ async function listPartnerOpenInvoices({ orgId, partnerId, asOfDate, client }) {
      WHERE oi.organization_id=$1 AND oi.customer_id=$2 AND oi.outstanding > 0
      ORDER BY oi.due_date ASC, oi.invoice_id ASC`,
     [orgId, partnerId, asOfDate]
-  );
+  ); 
   return rows.map(r => ({
     invoiceId: Number(r.invoice_id),
     invoiceNo: r.invoice_no,
@@ -74,7 +74,7 @@ async function listPartnerOpenInvoices({ orgId, partnerId, asOfDate, client }) {
     outstanding: Number(r.outstanding || 0),
     daysPastDue: Number(r.days_past_due || 0),
     isDisputed: !!r.is_disputed
-  }));
+  })); 
 }
 
 // Templates
@@ -82,8 +82,8 @@ async function listTemplates({ orgId, client }) {
   const { rows } = await client.query(
     `SELECT * FROM dunning_templates WHERE organization_id=$1 ORDER BY id DESC`,
     [orgId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function createTemplate({ orgId, payload, client }) {
@@ -92,8 +92,8 @@ async function createTemplate({ orgId, payload, client }) {
      VALUES ($1,$2,$3,$4,$5,$6)
      RETURNING *`,
     [orgId, payload.name, payload.channel || 'email', payload.subject || null, payload.body, payload.is_active !== false]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function updateTemplate({ orgId, id, payload, client }) {
@@ -108,14 +108,14 @@ async function updateTemplate({ orgId, id, payload, client }) {
       WHERE organization_id=$1 AND id=$2
       RETURNING *`,
     [orgId, id, payload.name || null, payload.channel || null, payload.subject || null, payload.body || null, payload.is_active]
-  );
-  if (!rows.length) throw new AppError(404, 'Template not found');
-  return rows[0];
+  ); 
+  if (!rows.length) throw new AppError(404, 'Template not found'); 
+  return rows[0]; 
 }
 
 async function deleteTemplate({ orgId, id, client }) {
-  await client.query(`DELETE FROM dunning_templates WHERE organization_id=$1 AND id=$2`, [orgId, id]);
-  return { ok: true };
+  await client.query(`DELETE FROM dunning_templates WHERE organization_id=$1 AND id=$2`, [orgId, id]); 
+  return { ok: true }; 
 }
 
 // Rules
@@ -127,8 +127,8 @@ async function listRules({ orgId, client }) {
       WHERE r.organization_id=$1
       ORDER BY r.id DESC`,
     [orgId]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function createRule({ orgId, payload, client }) {
@@ -137,8 +137,8 @@ async function createRule({ orgId, payload, client }) {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
     [orgId, payload.name, payload.is_active !== false, payload.start_days_past_due ?? 1, payload.cadence_days ?? 7, payload.max_reminders ?? 6, payload.severity || 'soft', payload.template_id || null]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function updateRule({ orgId, id, payload, client }) {
@@ -155,14 +155,14 @@ async function updateRule({ orgId, id, payload, client }) {
       WHERE organization_id=$1 AND id=$2
       RETURNING *`,
     [orgId, id, payload.name || null, payload.is_active, payload.start_days_past_due, payload.cadence_days, payload.max_reminders, payload.severity, payload.template_id]
-  );
-  if (!rows.length) throw new AppError(404, 'Rule not found');
-  return rows[0];
+  ); 
+  if (!rows.length) throw new AppError(404, 'Rule not found'); 
+  return rows[0]; 
 }
 
 async function deleteRule({ orgId, id, client }) {
-  await client.query(`DELETE FROM dunning_rules WHERE organization_id=$1 AND id=$2`, [orgId, id]);
-  return { ok: true };
+  await client.query(`DELETE FROM dunning_rules WHERE organization_id=$1 AND id=$2`, [orgId, id]); 
+  return { ok: true }; 
 }
 
 // Cases
@@ -174,8 +174,8 @@ async function listCases({ orgId, status, client }) {
       WHERE c.organization_id=$1 AND ($2::text IS NULL OR c.status=$2)
       ORDER BY c.opened_at DESC, c.id DESC`,
     [orgId, status || null]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function createCase({ orgId, actorUserId, payload, client }) {
@@ -184,8 +184,8 @@ async function createCase({ orgId, actorUserId, payload, client }) {
      VALUES ($1,$2,'open',$3,$4,$5)
      RETURNING *`,
     [orgId, payload.partner_id, payload.assigned_to_user_id || null, payload.notes || null, actorUserId]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function addCaseAction({ orgId, caseId, actorUserId, action_type, payload, client }) {
@@ -194,8 +194,8 @@ async function addCaseAction({ orgId, caseId, actorUserId, action_type, payload,
      VALUES ($1,$2,$3,$4,$5)
      RETURNING *`,
     [orgId, caseId, action_type, payload || null, actorUserId]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function updateCase({ orgId, caseId, payload, client }) {
@@ -209,9 +209,9 @@ async function updateCase({ orgId, caseId, payload, client }) {
       WHERE organization_id=$1 AND id=$2
       RETURNING *`,
     [orgId, caseId, payload.status || null, payload.assigned_to_user_id, payload.notes]
-  );
-  if (!rows.length) throw new AppError(404, 'Case not found');
-  return rows[0];
+  ); 
+  if (!rows.length) throw new AppError(404, 'Case not found'); 
+  return rows[0]; 
 }
 
 async function getCaseDetails({ orgId, caseId, client }) {
@@ -221,34 +221,34 @@ async function getCaseDetails({ orgId, caseId, client }) {
        JOIN business_partners p ON p.id=c.partner_id AND p.organization_id=c.organization_id
       WHERE c.organization_id=$1 AND c.id=$2`,
     [orgId, caseId]
-  );
-  if (!rows.length) throw new AppError(404, 'Case not found');
-  const c = rows[0];
+  ); 
+  if (!rows.length) throw new AppError(404, 'Case not found'); 
+  const c = rows[0]; 
   const actions = await client.query(
     `SELECT * FROM collections_actions WHERE organization_id=$1 AND case_id=$2 ORDER BY created_at DESC, id DESC`,
     [orgId, caseId]
-  );
-  return { ...c, actions: actions.rows };
+  ); 
+  return { ...c, actions: actions.rows }; 
 }
 
 // Dunning runs
 async function generateDunningRun({ orgId, actorUserId, ruleId, asOfDate, client }) {
-  const ruleRes = await client.query(`SELECT * FROM dunning_rules WHERE organization_id=$1 AND id=$2`, [orgId, ruleId]);
-  if (!ruleRes.rows.length) throw new AppError(404, 'Rule not found');
-  const rule = ruleRes.rows[0];
-  if (!rule.is_active) throw new AppError(400, 'Rule is inactive');
+  const ruleRes = await client.query(`SELECT * FROM dunning_rules WHERE organization_id=$1 AND id=$2`, [orgId, ruleId]); 
+  if (!ruleRes.rows.length) throw new AppError(404, 'Rule not found'); 
+  const rule = ruleRes.rows[0]; 
+  if (!rule.is_active) throw new AppError(400, 'Rule is inactive'); 
 
   const tpl = rule.template_id
     ? (await client.query(`SELECT * FROM dunning_templates WHERE organization_id=$1 AND id=$2`, [orgId, rule.template_id])).rows[0]
-    : null;
+    : null; 
 
   const { rows: runRows } = await client.query(
     `INSERT INTO dunning_runs (organization_id, rule_id, status, run_at, created_by)
      VALUES ($1,$2,'generated',$3,$4)
      RETURNING *`,
     [orgId, ruleId, asOfDate, actorUserId]
-  );
-  const run = runRows[0];
+  ); 
+  const run = runRows[0]; 
 
   // Select eligible invoices
   const { rows: invoices } = await client.query(
@@ -270,7 +270,7 @@ async function generateDunningRun({ orgId, actorUserId, ruleId, asOfDate, client
          WHERE d.organization_id=$1 AND d.entity_type='invoice' AND d.entity_id=oi.invoice_id AND d.status='open'
        )`,
     [orgId, asOfDate, rule.start_days_past_due]
-  );
+  ); 
 
   for (const inv of invoices) {
     const preview = tpl
@@ -283,20 +283,20 @@ async function generateDunningRun({ orgId, actorUserId, ruleId, asOfDate, client
             .replace(/{{amount_due}}/g, String(inv.amount_due || '0'))
             .replace(/{{days_past_due}}/g, String(inv.days_past_due || '0'))
         }
-      : null;
+      : null; 
     await client.query(
       `INSERT INTO dunning_run_items (organization_id, run_id, partner_id, invoice_id, days_past_due, amount_due, message_preview, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')`,
       [orgId, run.id, inv.partner_id, inv.invoice_id, Math.floor(inv.days_past_due || 0), inv.amount_due, preview]
-    );
+    ); 
   }
 
-  return run;
+  return run; 
 }
 
 async function getDunningRun({ orgId, runId, client }) {
-  const run = await client.query(`SELECT * FROM dunning_runs WHERE organization_id=$1 AND id=$2`, [orgId, runId]);
-  if (!run.rows.length) throw new AppError(404, 'Run not found');
+  const run = await client.query(`SELECT * FROM dunning_runs WHERE organization_id=$1 AND id=$2`, [orgId, runId]); 
+  if (!run.rows.length) throw new AppError(404, 'Run not found'); 
   const items = await client.query(
     `SELECT i.*, p.name AS partner_name
        FROM dunning_run_items i
@@ -304,8 +304,8 @@ async function getDunningRun({ orgId, runId, client }) {
       WHERE i.organization_id=$1 AND i.run_id=$2
       ORDER BY i.days_past_due DESC, i.amount_due DESC`,
     [orgId, runId]
-  );
-  return { ...run.rows[0], items: items.rows };
+  ); 
+  return { ...run.rows[0], items: items.rows }; 
 }
 
 module.exports = {
@@ -326,4 +326,4 @@ module.exports = {
   getCaseDetails,
   generateDunningRun,
   getDunningRun
-};
+}; 

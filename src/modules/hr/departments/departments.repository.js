@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool");
+const { pool } = require("../../../db/pool"); 
 
 async function createDepartment(orgId, payload) {
   const { rows } = await pool.query(
@@ -8,12 +8,12 @@ async function createDepartment(orgId, payload) {
       RETURNING *
     `,
     [orgId, payload.code, payload.name]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function listDepartments(orgId, query = {}) {
-  const status = query.status || null;
+  const status = query.status || null; 
   const { rows } = await pool.query(
     `
       SELECT *
@@ -23,37 +23,37 @@ async function listDepartments(orgId, query = {}) {
       ORDER BY code
     `,
     [orgId, status]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getDepartment(orgId, id) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_departments WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function getDepartmentByCode(orgId, code) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_departments WHERE organization_id=$1 AND code=$2`,
     [orgId, code]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function updateDepartment(orgId, id, payload) {
-  const fields = [];
-  const vals = [orgId, id];
-  let i = 3;
+  const fields = []; 
+  const vals = [orgId, id]; 
+  let i = 3; 
   for (const k of ["code", "name", "status"]) {
     if (payload[k] !== undefined) {
-      fields.push(`${k}=$${i++}`);
-      vals.push(payload[k]);
+      fields.push(`${k}=$${i++}`); 
+      vals.push(payload[k]); 
     }
   }
-  if (!fields.length) return getDepartment(orgId, id);
+  if (!fields.length) return getDepartment(orgId, id); 
   const { rows } = await pool.query(
     `
       UPDATE hr_departments
@@ -62,8 +62,8 @@ async function updateDepartment(orgId, id, payload) {
       RETURNING *
     `,
     vals
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function deactivateDepartment(orgId, id) {
@@ -75,8 +75,8 @@ async function deactivateDepartment(orgId, id) {
       RETURNING *
     `,
     [orgId, id]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 module.exports = {
@@ -86,4 +86,4 @@ module.exports = {
   getDepartmentByCode,
   updateDepartment,
   deactivateDepartment,
-};
+}; 

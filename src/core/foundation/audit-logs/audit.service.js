@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool");
+const { pool } = require("../../../db/pool"); 
 
 async function writeAudit({
   organizationId,
@@ -28,7 +28,7 @@ async function writeAudit({
       before ? JSON.stringify(before) : null,
       after ? JSON.stringify(after) : null
     ]
-  );
+  ); 
 }
 
-module.exports = { writeAudit };
+module.exports = { writeAudit }; 

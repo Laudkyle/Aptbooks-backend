@@ -1,15 +1,15 @@
-const { pool } = require("../../../../db/pool");
+const { pool } = require("../../../../db/pool"); 
 
 function normalize(payload = {}) {
-  const p = { ...payload };
-  if (p.expenseAccountId && p.expense_account_id === undefined) p.expense_account_id = p.expenseAccountId;
-  if (p.liabilityAccountId && p.liability_account_id === undefined) p.liability_account_id = p.liabilityAccountId;
-  if (p.calculationMethod && p.calculation_method === undefined) p.calculation_method = p.calculationMethod;
-  return p;
+  const p = { ...payload }; 
+  if (p.expenseAccountId && p.expense_account_id === undefined) p.expense_account_id = p.expenseAccountId; 
+  if (p.liabilityAccountId && p.liability_account_id === undefined) p.liability_account_id = p.liabilityAccountId; 
+  if (p.calculationMethod && p.calculation_method === undefined) p.calculation_method = p.calculationMethod; 
+  return p; 
 }
 
 async function createComponent(orgId, payload) {
-  const p = normalize(payload);
+  const p = normalize(payload); 
   const { rows } = await pool.query(
     `
       INSERT INTO hr_payroll_components(
@@ -31,13 +31,13 @@ async function createComponent(orgId, payload) {
       Boolean(p.is_statutory),
       p.status || "active",
     ]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function listComponents(orgId, query = {}) {
-  const status = query.status || null;
-  const kind = query.kind || null;
+  const status = query.status || null; 
+  const kind = query.kind || null; 
   const { rows } = await pool.query(
     `
       SELECT *
@@ -48,20 +48,20 @@ async function listComponents(orgId, query = {}) {
       ORDER BY created_at DESC
     `,
     [orgId, status, kind]
-  );
-  return rows;
+  ); 
+  return rows; 
 }
 
 async function getComponent(orgId, componentId) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_payroll_components WHERE organization_id=$1 AND id=$2`,
     [orgId, componentId]
-  );
-  return rows[0] || null;
+  ); 
+  return rows[0] || null; 
 }
 
 async function updateComponent(orgId, componentId, payload) {
-  const p = normalize(payload);
+  const p = normalize(payload); 
   const { rows } = await pool.query(
     `
       UPDATE hr_payroll_components
@@ -92,16 +92,16 @@ async function updateComponent(orgId, componentId, payload) {
       p.is_statutory ?? null,
       p.status ?? null,
     ]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function setStatus(orgId, componentId, status) {
   const { rows } = await pool.query(
     `UPDATE hr_payroll_components SET status=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, componentId, status]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 module.exports = {
@@ -110,4 +110,4 @@ module.exports = {
   getComponent,
   updateComponent,
   setStatus,
-};
+}; 

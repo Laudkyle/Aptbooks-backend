@@ -2,7 +2,7 @@
 -- Tier 1: Accrual rules + runs + journal linkage (kernel-owned)
 -- Corrected + idempotent
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; 
 
 -- =========================
 -- Accrual rules (templates)
@@ -30,17 +30,17 @@ CREATE TABLE IF NOT EXISTS accrual_rules (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (organization_id, code)
-);
+); 
 
 -- Required flag for period-close gating
 ALTER TABLE accrual_rules
-  ADD COLUMN IF NOT EXISTS is_required BOOLEAN NOT NULL DEFAULT FALSE;
+  ADD COLUMN IF NOT EXISTS is_required BOOLEAN NOT NULL DEFAULT FALSE; 
 
 CREATE INDEX IF NOT EXISTS idx_accrual_rules_required
-  ON accrual_rules(organization_id, status, frequency, is_required);
+  ON accrual_rules(organization_id, status, frequency, is_required); 
 
 CREATE INDEX IF NOT EXISTS idx_accrual_rules_org_status
-  ON accrual_rules(organization_id, status);
+  ON accrual_rules(organization_id, status); 
 
 -- =====================================
 -- Rule lines (templated journal lines)
@@ -62,10 +62,10 @@ CREATE TABLE IF NOT EXISTS accrual_rule_lines (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (accrual_rule_id, line_no)
-);
+); 
 
 CREATE INDEX IF NOT EXISTS idx_accrual_rule_lines_rule
-  ON accrual_rule_lines(accrual_rule_id);
+  ON accrual_rule_lines(accrual_rule_id); 
 
 -- ====================
 -- Execution tracking
@@ -92,17 +92,17 @@ CREATE TABLE IF NOT EXISTS accrual_runs (
   failure_count INT NOT NULL DEFAULT 0,
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+); 
 
 -- Idempotency / concurrency safety: run once per (org, rule, period, date)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_accrual_runs_once
-  ON accrual_runs(organization_id, accrual_rule_id, period_id, as_of_date);
+  ON accrual_runs(organization_id, accrual_rule_id, period_id, as_of_date); 
 
 CREATE INDEX IF NOT EXISTS idx_accrual_runs_org_rule_date
-  ON accrual_runs(organization_id, accrual_rule_id, as_of_date);
+  ON accrual_runs(organization_id, accrual_rule_id, as_of_date); 
 
 CREATE INDEX IF NOT EXISTS idx_accrual_runs_period
-  ON accrual_runs(organization_id, period_id, as_of_date);
+  ON accrual_runs(organization_id, period_id, as_of_date); 
 
 -- ==================================
 -- Link runs to journals (traceability)
@@ -122,13 +122,13 @@ CREATE TABLE IF NOT EXISTS accrual_run_postings (
   reversal_failure_count INT NOT NULL DEFAULT 0,
 
   UNIQUE (accrual_run_id)
-);
+); 
 
 -- Backwards-safe: if table existed before these columns, ensure they exist
 ALTER TABLE accrual_run_postings
   ADD COLUMN IF NOT EXISTS reversal_failed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reversal_failure_reason TEXT,
-  ADD COLUMN IF NOT EXISTS reversal_failure_count INT NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS reversal_failure_count INT NOT NULL DEFAULT 0; 
 
 
 -- ==========================
@@ -152,12 +152,12 @@ CREATE TABLE IF NOT EXISTS accrual_schedules (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (accrual_rule_id)
-);
+); 
 
 ALTER TABLE accrual_runs
-  ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES accrual_schedules(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES accrual_schedules(id) ON DELETE SET NULL; 
 
 -- One deferral recognition run per schedule per period
 CREATE UNIQUE INDEX IF NOT EXISTS uq_accrual_runs_deferral_schedule_period
 ON accrual_runs (organization_id, schedule_id, period_id)
-WHERE schedule_id IS NOT NULL;
+WHERE schedule_id IS NOT NULL; 

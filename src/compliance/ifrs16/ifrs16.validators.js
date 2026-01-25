@@ -1,11 +1,11 @@
-const { z } = require("zod");
+const { z } = require("zod"); 
 
-const uuid = z.string().uuid();
+const uuid = z.string().uuid(); 
 
 // Params
 const leaseIdParam = z.object({
   leaseId: uuid,
-});
+}); 
 
 // Create lease (minimum viable for schedule + posting)
 const createLease = z.object({
@@ -30,13 +30,13 @@ const createLease = z.object({
   depreciation_expense_account_id: uuid,
   accumulated_depreciation_account_id: uuid,
   cash_account_id: uuid,
-});
+}); 
 
 const generateSchedule = z.object({
   leaseId: uuid,
   // If true, replaces any existing schedule lines.
   replace: z.boolean().optional().default(true),
-});
+}); 
 
 const postLease = z.object({
   leaseId: uuid,
@@ -47,21 +47,21 @@ const postLease = z.object({
   // Posting options
   post_depreciation: z.boolean().optional().default(true),
   post_interest_and_payment: z.boolean().optional().default(true),
-});
+}); 
 
 const postInitialRecognition = z.object({
   leaseId: uuid,
-  // Optional override; defaults to lease commencement_date.
+  // Optional override;  defaults to lease commencement_date.
   entry_date: z.coerce.date().optional(),
   memo: z.string().max(500).optional(),
-});
+}); 
 
 const updateStatus = z.object({
   leaseId: uuid,
   status: z.enum(["draft", "active", "terminated", "closed"]),
   reason: z.string().max(500).optional(),
   effective_date: z.coerce.date().optional(),
-});
+}); 
 
 module.exports = {
   leaseIdParam,
@@ -70,4 +70,4 @@ module.exports = {
   postLease,
   postInitialRecognition,
   updateStatus,
-};
+}; 

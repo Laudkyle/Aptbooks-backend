@@ -1,16 +1,16 @@
-const { pool } = require("../../db/pool");
-const { AppError } = require("../../shared/errors/AppError");
+const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError"); 
 
 function assertIsoDate(d, field) {
   if (!d || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d)) {
-    throw new AppError(400, `${field} must be YYYY-MM-DD`);
+    throw new AppError(400, `${field} must be YYYY-MM-DD`); 
   }
 }
 
 async function vatSummary({ orgId, fromDate, toDate }) {
-  assertIsoDate(fromDate, "from");
-  assertIsoDate(toDate, "to");
-  if (toDate < fromDate) throw new AppError(400, "to must be on or after from");
+  assertIsoDate(fromDate, "from"); 
+  assertIsoDate(toDate, "to"); 
+  if (toDate < fromDate) throw new AppError(400, "to must be on or after from"); 
 
   // Output VAT: issued/paid invoices
   const { rows: outRows } = await pool.query(
@@ -24,7 +24,7 @@ async function vatSummary({ orgId, fromDate, toDate }) {
       AND i.invoice_date BETWEEN $2 AND $3
     `,
     [orgId, fromDate, toDate]
-  );
+  ); 
 
   // Input VAT: issued/paid bills
   const { rows: inRows } = await pool.query(
@@ -38,10 +38,10 @@ async function vatSummary({ orgId, fromDate, toDate }) {
       AND b.bill_date BETWEEN $2 AND $3
     `,
     [orgId, fromDate, toDate]
-  );
+  ); 
 
-  const outputTax = Number(outRows[0]?.output_tax || 0);
-  const inputTax = Number(inRows[0]?.input_tax || 0);
+  const outputTax = Number(outRows[0]?.output_tax || 0); 
+  const inputTax = Number(inRows[0]?.input_tax || 0); 
 
   return {
     from: fromDate,
@@ -49,22 +49,22 @@ async function vatSummary({ orgId, fromDate, toDate }) {
     outputTax: Number(outputTax.toFixed(2)),
     inputTax: Number(inputTax.toFixed(2)),
     netTaxPayable: Number((outputTax - inputTax).toFixed(2))
-  };
+  }; 
 }
 
-module.exports = { vatSummary, vatReturn, listReturns };
+module.exports = { vatSummary, vatReturn, listReturns }; 
 
 // ============================================================
 // Stage 6: VAT/GST returns (box-based) + persistence
 // ============================================================
 
 async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
-  assertIsoDate(fromDate, "from");
-  assertIsoDate(toDate, "to");
-  if (toDate < fromDate) throw new AppError(400, "to must be on or after from");
+  assertIsoDate(fromDate, "from"); 
+  assertIsoDate(toDate, "to"); 
+  if (toDate < fromDate) throw new AppError(400, "to must be on or after from"); 
 
-  // Choose a template if provided; otherwise use first VAT template.
-  let template = null;
+  // Choose a template if provided;  otherwise use first VAT template.
+  let template = null; 
   if (templateCode) {
     const { rows } = await pool.query(
       `
@@ -73,9 +73,9 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
       WHERE organization_id=$1 AND tax_type='VAT' AND code=$2
       `,
       [orgId, templateCode]
-    );
-    template = rows[0] || null;
-    if (!template) throw new AppError(404, "Tax return template not found");
+    ); 
+    template = rows[0] || null; 
+    if (!template) throw new AppError(404, "Tax return template not found"); 
   } else {
     const { rows } = await pool.query(
       `
@@ -86,12 +86,12 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
       LIMIT 1
       `,
       [orgId]
-    );
-    template = rows[0] || null;
+    ); 
+    template = rows[0] || null; 
   }
 
-  // Load template boxes; if no template, fall back to grouping by tax_codes.box_code.
-  let templateBoxes = [];
+  // Load template boxes;  if no template, fall back to grouping by tax_codes.box_code.
+  let templateBoxes = []; 
   if (template) {
     const { rows } = await pool.query(
       `
@@ -101,8 +101,8 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
       ORDER BY sort_order, box_code
       `,
       [template.id]
-    );
-    templateBoxes = rows;
+    ); 
+    templateBoxes = rows; 
   }
 
   // Compute box totals using invoice/bill line tax_amount and tax_codes.box_code.
@@ -144,32 +144,32 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
     ORDER BY box_code, direction
     `,
     [orgId, fromDate, toDate]
-  );
+  ); 
 
-  const byBox = new Map();
+  const byBox = new Map(); 
   for (const r of boxRows) {
-    const k = `${r.box_code}::${r.direction}`;
-    byBox.set(k, Number(r.tax_amount || 0));
+    const k = `${r.box_code}::${r.direction}`; 
+    byBox.set(k, Number(r.tax_amount || 0)); 
   }
 
   const boxes = (templateBoxes.length ? templateBoxes : Array.from(new Set(boxRows.map((r) => `${r.box_code}::${r.direction}`))).map((k) => {
-    const [box_code, direction] = k.split("::");
-    return { box_code, label: box_code, sort_order: 0, direction };
+    const [box_code, direction] = k.split("::"); 
+    return { box_code, label: box_code, sort_order: 0, direction }; 
   }))
     .map((b) => ({
       box_code: b.box_code,
       label: b.label,
       direction: b.direction || null,
       amount: Number((byBox.get(`${b.box_code}::${b.direction || 'output'}`) || byBox.get(`${b.box_code}::${b.direction || 'input'}`) || 0).toFixed(2))
-    }));
+    })); 
 
   const outputTotal = boxes
     .filter((b) => (b.direction || "output") === "output")
-    .reduce((s, b) => s + Number(b.amount || 0), 0);
+    .reduce((s, b) => s + Number(b.amount || 0), 0); 
   const inputTotal = boxes
     .filter((b) => (b.direction || "input") === "input")
-    .reduce((s, b) => s + Number(b.amount || 0), 0);
-  const netPayable = outputTotal - inputTotal;
+    .reduce((s, b) => s + Number(b.amount || 0), 0); 
+  const netPayable = outputTotal - inputTotal; 
 
   const payload = {
     tax_type: "VAT",
@@ -182,7 +182,7 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
       input_tax: Number(inputTotal.toFixed(2)),
       net_tax_payable: Number(netPayable.toFixed(2))
     }
-  };
+  }; 
 
   // Persist a draft snapshot (idempotent for the same period)
   const { rows: saved } = await pool.query(
@@ -194,26 +194,26 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
     RETURNING id
     `,
     [orgId, fromDate, toDate, template ? template.id : null, JSON.stringify(payload), userId || null]
-  );
+  ); 
 
-  return { return_id: saved[0]?.id, ...payload };
+  return { return_id: saved[0]?.id, ...payload }; 
 }
 
 async function listReturns({ orgId, taxType, fromDate, toDate }) {
-  const t = taxType || "VAT";
-  if (!['VAT','GST','SALES'].includes(t)) throw new AppError(400, "taxType must be VAT, GST, or SALES");
+  const t = taxType || "VAT"; 
+  if (!['VAT','GST','SALES'].includes(t)) throw new AppError(400, "taxType must be VAT, GST, or SALES"); 
 
-  const params = [orgId, t];
-  let where = "";
+  const params = [orgId, t]; 
+  let where = ""; 
   if (fromDate) {
-    assertIsoDate(fromDate, "from");
-    params.push(fromDate);
-    where += ` AND tr.from_date >= $${params.length}::date`;
+    assertIsoDate(fromDate, "from"); 
+    params.push(fromDate); 
+    where += ` AND tr.from_date >= $${params.length}::date`; 
   }
   if (toDate) {
-    assertIsoDate(toDate, "to");
-    params.push(toDate);
-    where += ` AND tr.to_date <= $${params.length}::date`;
+    assertIsoDate(toDate, "to"); 
+    params.push(toDate); 
+    where += ` AND tr.to_date <= $${params.length}::date`; 
   }
 
   const { rows } = await pool.query(
@@ -234,7 +234,7 @@ async function listReturns({ orgId, taxType, fromDate, toDate }) {
     ORDER BY tr.from_date DESC, tr.created_at DESC
     `,
     params
-  );
+  ); 
 
   return rows.map((r) => ({
     id: r.id,
@@ -245,5 +245,5 @@ async function listReturns({ orgId, taxType, fromDate, toDate }) {
     created_at: r.created_at,
     finalized_at: r.finalized_at,
     template_id: r.template_id
-  }));
+  })); 
 }

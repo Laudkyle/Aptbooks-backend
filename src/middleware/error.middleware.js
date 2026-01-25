@@ -1,17 +1,17 @@
-const logger = require("../config/logger");
-const { AppError } = require("../shared/errors/AppError");
-const { pool } = require("../db/pool");
+const logger = require("../config/logger"); 
+const { AppError } = require("../shared/errors/AppError"); 
+const { pool } = require("../db/pool"); 
 
 function errorMiddleware(err, req, res, _next) {
-  let status = err instanceof AppError ? err.status : 500;
+  let status = err instanceof AppError ? err.status : 500; 
 
   // Normalise common framework errors
   if (status === 500 && typeof err?.message === "string" && err.message.toLowerCase().includes("cors")) {
-    status = 403;
+    status = 403; 
   }
 
   if (status >= 500) {
-    logger.error({ err, path: req.path }, "Unhandled error");
+    logger.error({ err, path: req.path }, "Unhandled error"); 
   }
 
   // Best-effort persistence for admin error viewer. Never block response.
@@ -37,20 +37,20 @@ function errorMiddleware(err, req, res, _next) {
           req.audit?.userAgent || req.headers["user-agent"] || null,
           req.user?.id || null
         ]
-      );
+      ); 
     } catch (_) {
       // ignore
     }
-  })();
+  })(); 
 
   // Do not leak internal error details on 5xx.
-  const safeMessage = status >= 500 ? "Internal Server Error" : (err.message || "Error");
-  const details = status >= 500 ? undefined : (err.details || undefined);
+  const safeMessage = status >= 500 ? "Internal Server Error" : (err.message || "Error"); 
+  const details = status >= 500 ? undefined : (err.details || undefined); 
 
   res.status(status).json({
     error: safeMessage,
     details
-  });
+  }); 
 }
 
-module.exports = { errorMiddleware };
+module.exports = { errorMiddleware }; 

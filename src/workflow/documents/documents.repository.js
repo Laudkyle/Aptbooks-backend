@@ -1,7 +1,7 @@
-const { pool } = require("../../db/pool");
+const { pool } = require("../../db/pool"); 
 
 function q(client) {
-  return client || pool;
+  return client || pool; 
 }
 
 async function createDocument({ orgId, userId, payload }) {
@@ -22,39 +22,39 @@ async function createDocument({ orgId, userId, payload }) {
       payload.entity_ref || null,
       userId || null
     ]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 async function getDocumentById({ orgId, documentId, client = null, forUpdate = false }) {
-  const lock = forUpdate ? " FOR UPDATE" : "";
+  const lock = forUpdate ? " FOR UPDATE" : ""; 
   const r = await q(client).query(
     `SELECT * FROM documents WHERE organization_id=$1 AND id=$2${lock}`,
     [orgId, documentId]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function listDocuments({ orgId, query }) {
-  const limit = query.limit || 50;
-  const offset = query.offset || 0;
+  const limit = query.limit || 50; 
+  const offset = query.offset || 0; 
 
-  const params = [orgId];
-  let where = "WHERE organization_id=$1";
+  const params = [orgId]; 
+  let where = "WHERE organization_id=$1"; 
   if (query.entity_type) {
-    params.push(query.entity_type);
-    where += ` AND entity_type=$${params.length}`;
+    params.push(query.entity_type); 
+    where += ` AND entity_type=$${params.length}`; 
   }
   if (query.entity_id) {
-    params.push(query.entity_id);
-    where += ` AND entity_id=$${params.length}`;
+    params.push(query.entity_id); 
+    where += ` AND entity_id=$${params.length}`; 
   }
   if (query.status) {
-    params.push(query.status);
-    where += ` AND workflow_state_code=$${params.length}`;
+    params.push(query.status); 
+    where += ` AND workflow_state_code=$${params.length}`; 
   }
-  params.push(limit);
-  params.push(offset);
+  params.push(limit); 
+  params.push(offset); 
 
   const r = await pool.query(
     `
@@ -65,17 +65,17 @@ async function listDocuments({ orgId, query }) {
     LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params
-  );
-  return r.rows;
+  ); 
+  return r.rows; 
 }
 
 async function getDocumentDetails({ orgId, documentId }) {
-  const doc = await getDocumentById({ orgId, documentId });
-  if (!doc) return null;
+  const doc = await getDocumentById({ orgId, documentId }); 
+  if (!doc) return null; 
   const versions = await pool.query(
     `SELECT * FROM document_versions WHERE document_id=$1 ORDER BY version_no DESC`,
     [documentId]
-  );
+  ); 
   const approvals = await pool.query(
     `
     SELECT da.*, al.code as approval_level_code, al.name as approval_level_name
@@ -85,16 +85,16 @@ async function getDocumentDetails({ orgId, documentId }) {
     ORDER BY da.sequence ASC
     `,
     [documentId]
-  );
-  return { document: doc, versions: versions.rows, approvals: approvals.rows };
+  ); 
+  return { document: doc, versions: versions.rows, approvals: approvals.rows }; 
 }
 
 async function getNextVersionNo({ documentId }) {
   const r = await pool.query(
     `SELECT COALESCE(MAX(version_no), 0) AS max_no FROM document_versions WHERE document_id=$1`,
     [documentId]
-  );
-  return (r.rows[0]?.max_no || 0) + 1;
+  ); 
+  return (r.rows[0]?.max_no || 0) + 1; 
 }
 
 async function insertVersion({ documentId, versionNo, originalFilename, mimeType, sizeBytes, checksum, relpath, userId }) {
@@ -106,12 +106,12 @@ async function insertVersion({ documentId, versionNo, originalFilename, mimeType
     RETURNING *
     `,
     [documentId, versionNo, originalFilename, mimeType || null, sizeBytes, checksum, relpath, userId || null]
-  );
+  ); 
   await pool.query(
     `UPDATE documents SET current_version_no=$2 WHERE id=$1`,
     [documentId, versionNo]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 async function getVersion({ orgId, documentId, versionId }) {
@@ -124,8 +124,8 @@ async function getVersion({ orgId, documentId, versionId }) {
     WHERE d.organization_id=$1 AND dv.document_id=$2 AND dv.id=$3
     `,
     [orgId, documentId, versionId]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function setDocumentState({ orgId, documentId, stateCode, client = null }) {
@@ -136,8 +136,8 @@ async function setDocumentState({ orgId, documentId, stateCode, client = null })
     RETURNING *
     `,
     [orgId, documentId, stateCode]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client = null }) {
@@ -151,14 +151,14 @@ async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client
     ORDER BY al.sequence ASC
     `,
     [orgId, documentTypeId]
-  );
-  return r.rows;
+  ); 
+  return r.rows; 
 }
 
 async function createApprovals({ documentId, ladder, client = null }) {
-  for (let i = 0; i < ladder.length; i += 1) {
-    const level = ladder[i];
-    const status = i === 0 ? "PENDING" : "QUEUED";
+  for (let i = 0;  i < ladder.length;  i += 1) {
+    const level = ladder[i]; 
+    const status = i === 0 ? "PENDING" : "QUEUED"; 
     await q(client).query(
       `
       INSERT INTO document_approvals (document_id, approval_level_id, sequence, status)
@@ -166,7 +166,7 @@ async function createApprovals({ documentId, ladder, client = null }) {
       ON CONFLICT (document_id, approval_level_id) DO NOTHING
       `,
       [documentId, level.id, level.sequence, status]
-    );
+    ); 
   }
 }
 
@@ -181,18 +181,18 @@ async function getCurrentPendingApproval({ documentId, client = null }) {
     LIMIT 1
     `,
     [documentId]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function approveCurrentLevel({ documentId, approverUserId, comment, client = null }) {
   const cur = await q(client).query(
       `SELECT * FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
       [documentId]
-    );
-    const current = cur.rows[0];
+    ); 
+    const current = cur.rows[0]; 
     if (!current) {
-      return { updated: null, next: null };
+      return { updated: null, next: null }; 
     }
     const updated = await q(client).query(
       `
@@ -202,7 +202,7 @@ async function approveCurrentLevel({ documentId, approverUserId, comment, client
       RETURNING *
       `,
       [current.id, approverUserId || null, comment || null]
-    );
+    ); 
 
     const nxt = await q(client).query(
       `
@@ -213,15 +213,15 @@ async function approveCurrentLevel({ documentId, approverUserId, comment, client
       FOR UPDATE
       `,
       [documentId]
-    );
-    const next = nxt.rows[0] || null;
+    ); 
+    const next = nxt.rows[0] || null; 
     if (next) {
       await q(client).query(
         `UPDATE document_approvals SET status='PENDING' WHERE id=$1`,
         [next.id]
-      );
+      ); 
     }
-    return { updated: updated.rows[0], next };
+    return { updated: updated.rows[0], next }; 
 }
 
 async function rejectCurrentLevel({ documentId, approverUserId, comment, client = null }) {
@@ -229,8 +229,8 @@ async function rejectCurrentLevel({ documentId, approverUserId, comment, client 
   const cur = await q(client).query(
     `SELECT id FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
     [documentId]
-  );
-  if (!cur.rows.length) return null;
+  ); 
+  if (!cur.rows.length) return null; 
   const r = await q(client).query(
     `
     UPDATE document_approvals
@@ -239,8 +239,8 @@ async function rejectCurrentLevel({ documentId, approverUserId, comment, client 
     RETURNING *
     `,
     [cur.rows[0].id, approverUserId || null, comment || null]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 module.exports = {
@@ -263,7 +263,7 @@ module.exports = {
   getCurrentPendingApproval,
   approveCurrentLevel,
   rejectCurrentLevel
-};
+}; 
 
 async function createDocumentType({ orgId, payload }) {
   const r = await pool.query(
@@ -273,16 +273,16 @@ async function createDocumentType({ orgId, payload }) {
     RETURNING *
     `,
     [orgId, payload.code, payload.name, payload.description || null, payload.is_active]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 async function listDocumentTypes({ orgId }) {
   const r = await pool.query(
     `SELECT * FROM document_types WHERE organization_id=$1 OR organization_id IS NULL ORDER BY code ASC`,
     [orgId]
-  );
-  return r.rows;
+  ); 
+  return r.rows; 
 }
 
 async function createApprovalLevel({ orgId, payload }) {
@@ -293,36 +293,36 @@ async function createApprovalLevel({ orgId, payload }) {
     RETURNING *
     `,
     [orgId, payload.code, payload.name, payload.sequence, payload.is_active]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 async function listApprovalLevels({ orgId }) {
   const r = await pool.query(
     `SELECT * FROM approval_levels WHERE organization_id=$1 ORDER BY sequence ASC`,
     [orgId]
-  );
-  return r.rows;
+  ); 
+  return r.rows; 
 }
 
 async function replaceDocumentTypeApprovalLevels({ orgId, documentTypeId, approvalLevelIds }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
     // ensure document type belongs to org
     const dt = await client.query(
       `SELECT id FROM document_types WHERE id=$1 AND (organization_id=$2 OR organization_id IS NULL)`,
       [documentTypeId, orgId]
-    );
+    ); 
     if (!dt.rows[0]) {
-      await client.query("ROLLBACK");
-      return null;
+      await client.query("ROLLBACK"); 
+      return null; 
     }
 
     await client.query(
       `DELETE FROM document_type_approval_levels WHERE document_type_id=$1`,
       [documentTypeId]
-    );
+    ); 
     for (const levelId of approvalLevelIds) {
       // ensure level belongs to org
       await client.query(
@@ -331,14 +331,14 @@ async function replaceDocumentTypeApprovalLevels({ orgId, documentTypeId, approv
         SELECT $1, id FROM approval_levels WHERE id=$2 AND organization_id=$3
         `,
         [documentTypeId, levelId, orgId]
-      );
+      ); 
     }
-    await client.query("COMMIT");
-    return true;
+    await client.query("COMMIT"); 
+    return true; 
   } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
+    await client.query("ROLLBACK"); 
+    throw e; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }

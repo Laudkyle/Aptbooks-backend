@@ -1,8 +1,8 @@
-const { pool } = require("../../db/pool");
-const { AppError } = require("../../shared/errors/AppError");
-const { findOpenPeriodForDate } = require("../../interfaces/periodManagement.interface");
-const { postJournal } = require("../../interfaces/journalPosting.interface");
-const Decimal = require('decimal.js');
+const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError"); 
+const { findOpenPeriodForDate } = require("../../interfaces/periodManagement.interface"); 
+const { postJournal } = require("../../interfaces/journalPosting.interface"); 
+const Decimal = require('decimal.js'); 
 
 // Configure Decimal.js for financial calculations
 Decimal.set({
@@ -10,31 +10,31 @@ Decimal.set({
   rounding: Decimal.ROUND_HALF_EVEN,  // Banker's rounding (standard for accounting)
   toExpNeg: -10,      // Prevent scientific notation for small numbers
   toExpPos: 20,       // Prevent scientific notation for large numbers
-});
+}); 
 
 // ------------------------------
 // Decimal Utilities
 // ------------------------------
 
 function toDecimal(value, defaultValue = new Decimal(0)) {
-  if (value instanceof Decimal) return value;
-  if (value === null || value === undefined || value === '') return defaultValue;
+  if (value instanceof Decimal) return value; 
+  if (value === null || value === undefined || value === '') return defaultValue; 
   
   try {
-    return new Decimal(value);
+    return new Decimal(value); 
   } catch (error) {
-    console.warn(`Failed to convert value to Decimal: ${value}`, error);
-    return defaultValue;
+    console.warn(`Failed to convert value to Decimal: ${value}`, error); 
+    return defaultValue; 
   }
 }
 
 function roundCurrency(value, decimals = 2) {
-  const decimal = toDecimal(value);
-  return decimal.toDecimalPlaces(decimals, Decimal.ROUND_HALF_EVEN);
+  const decimal = toDecimal(value); 
+  return decimal.toDecimalPlaces(decimals, Decimal.ROUND_HALF_EVEN); 
 }
 
 function toCurrencyNumber(value, decimals = 2) {
-  return roundCurrency(value, decimals).toNumber();
+  return roundCurrency(value, decimals).toNumber(); 
 }
 
 function calculatePresentValue({
@@ -44,30 +44,30 @@ function calculatePresentValue({
   paymentsPerYear = 12,
   paymentTiming = 'arrears',
 }) {
-  const PMT = toDecimal(payment);
-  const ppy = toDecimal(paymentsPerYear);
-  const r = toDecimal(annualDiscountRate).div(ppy); // periodic rate
-  const n = toDecimal(periods);
+  const PMT = toDecimal(payment); 
+  const ppy = toDecimal(paymentsPerYear); 
+  const r = toDecimal(annualDiscountRate).div(ppy);  // periodic rate
+  const n = toDecimal(periods); 
   
   // Handle zero interest rate
   if (r.equals(0)) {
-    const pv = PMT.times(n);
-    return paymentTiming === 'advance' ? pv : pv;
+    const pv = PMT.times(n); 
+    return paymentTiming === 'advance' ? pv : pv; 
   }
   
   // Calculate (1 + r)^-n
-  const onePlusR = new Decimal(1).plus(r);
-  const power = onePlusR.pow(n.negated());
+  const onePlusR = new Decimal(1).plus(r); 
+  const power = onePlusR.pow(n.negated()); 
   
   // PV of ordinary annuity: PMT × [1 - (1 + r)^-n] / r
-  const pvOrdinary = PMT.times(new Decimal(1).minus(power)).div(r);
+  const pvOrdinary = PMT.times(new Decimal(1).minus(power)).div(r); 
   
   // If payments are in advance, multiply by (1 + r)
   if (paymentTiming === 'advance') {
-    return pvOrdinary.times(onePlusR);
+    return pvOrdinary.times(onePlusR); 
   }
   
-  return pvOrdinary;
+  return pvOrdinary; 
 }
 
 // ------------------------------
@@ -75,24 +75,24 @@ function calculatePresentValue({
 // ------------------------------
 
 function addMonths(date, months) {
-  const d = new Date(date);
-  const day = d.getUTCDate();
-  d.setUTCMonth(d.getUTCMonth() + months);
+  const d = new Date(date); 
+  const day = d.getUTCDate(); 
+  d.setUTCMonth(d.getUTCMonth() + months); 
   // Handle month-end rollover
   if (d.getUTCDate() < day) {
-    d.setUTCDate(0);
+    d.setUTCDate(0); 
   }
-  return d;
+  return d; 
 }
 
 function toISODate(d) {
-  return new Date(d).toISOString().slice(0, 10);
+  return new Date(d).toISOString().slice(0, 10); 
 }
 
 function buildIfrs16IdempotencyKey(parts) {
   // Keep keys stable, short, and deterministic.
   // Example: IFRS16:LEASE:<leaseId>:LINE:12:PAY
-  return ['IFRS16', ...parts].join(':');
+  return ['IFRS16', ...parts].join(':'); 
 }
 
 async function recordLeasePostingLedger({ client, orgId, actorUserId, leaseId, scheduleLineId, modificationId, action, idempotencyKey, journalEntryId }) {
@@ -113,7 +113,7 @@ async function recordLeasePostingLedger({ client, orgId, actorUserId, leaseId, s
     ON CONFLICT (organization_id, idempotency_key) DO NOTHING
     `,
     [orgId, leaseId, scheduleLineId || null, modificationId || null, action, idempotencyKey, journalEntryId, actorUserId]
-  );
+  ); 
 }
 
 async function recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType, payload = {} }) {
@@ -123,7 +123,7 @@ async function recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType
     VALUES ($1,$2,$3,$4,$5)
     `,
     [orgId, leaseId, eventType, payload, actorUserId]
-  );
+  ); 
 }
 
 async function assertLeaseInOrg({ orgId, leaseId }) {
@@ -135,9 +135,9 @@ async function assertLeaseInOrg({ orgId, leaseId }) {
     LIMIT 1
     `,
     [leaseId, orgId]
-  );
-  if (!rows.length) throw new AppError(404, "Lease not found");
-  return rows[0];
+  ); 
+  if (!rows.length) throw new AppError(404, "Lease not found"); 
+  return rows[0]; 
 }
 
 async function assertPostableAccount({ orgId, accountId, label }) {
@@ -149,15 +149,15 @@ async function assertPostableAccount({ orgId, accountId, label }) {
     LIMIT 1
     `,
     [orgId, accountId]
-  );
-  if (!rows.length) throw new AppError(400, `Invalid ${label}`);
-  if (rows[0].status !== "active") throw new AppError(400, `${label} must be an active account`);
-  if (!rows[0].is_postable) throw new AppError(400, `${label} must be postable`);
+  ); 
+  if (!rows.length) throw new AppError(400, `Invalid ${label}`); 
+  if (rows[0].status !== "active") throw new AppError(400, `${label} must be an active account`); 
+  if (!rows[0].is_postable) throw new AppError(400, `${label} must be postable`); 
 }
 
 function assertLeaseStatusAllowed(lease, allowed, action) {
   if (!allowed.includes(lease.status)) {
-    throw new AppError(409, `${action} is not allowed when lease status is '${lease.status}'`);
+    throw new AppError(409, `${action} is not allowed when lease status is '${lease.status}'`); 
   }
 }
 
@@ -166,15 +166,15 @@ function assertLeaseStatusAllowed(lease, allowed, action) {
 // ------------------------------
 
 async function listLeases({ orgId, query }) {
-  const limit = Math.min(Number(query?.limit || 50), 200);
-  const offset = Math.max(Number(query?.offset || 0), 0);
-  const status = query?.status;
+  const limit = Math.min(Number(query?.limit || 50), 200); 
+  const offset = Math.max(Number(query?.offset || 0), 0); 
+  const status = query?.status; 
 
-  const where = ["organization_id=$1"];
-  const params = [orgId];
+  const where = ["organization_id=$1"]; 
+  const params = [orgId]; 
   if (status) {
-    params.push(status);
-    where.push(`status=$${params.length}`);
+    params.push(status); 
+    where.push(`status=$${params.length}`); 
   }
 
   const { rows } = await pool.query(
@@ -191,48 +191,48 @@ async function listLeases({ orgId, query }) {
     LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `,
     [...params, limit, offset]
-  );
+  ); 
 
-  return { items: rows, limit, offset };
+  return { items: rows, limit, offset }; 
 }
 
 async function createLease({ orgId, actorUserId, payload }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
     // Validate GL mappings up-front (org ownership + postable)
-    await assertPostableAccount({ orgId, accountId: payload.rou_asset_account_id, label: "rou_asset_account_id" });
-    await assertPostableAccount({ orgId, accountId: payload.lease_liability_account_id, label: "lease_liability_account_id" });
-    await assertPostableAccount({ orgId, accountId: payload.interest_expense_account_id, label: "interest_expense_account_id" });
-    await assertPostableAccount({ orgId, accountId: payload.depreciation_expense_account_id, label: "depreciation_expense_account_id" });
-    await assertPostableAccount({ orgId, accountId: payload.accumulated_depreciation_account_id, label: "accumulated_depreciation_account_id" });
-    await assertPostableAccount({ orgId, accountId: payload.cash_account_id, label: "cash_account_id" });
+    await assertPostableAccount({ orgId, accountId: payload.rou_asset_account_id, label: "rou_asset_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: payload.lease_liability_account_id, label: "lease_liability_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: payload.interest_expense_account_id, label: "interest_expense_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: payload.depreciation_expense_account_id, label: "depreciation_expense_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: payload.accumulated_depreciation_account_id, label: "accumulated_depreciation_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: payload.cash_account_id, label: "cash_account_id" }); 
 
     // Enforce uniqueness by (org, code)
     const { rows: existing } = await client.query(
       `SELECT 1 FROM leases WHERE organization_id=$1 AND code=$2 LIMIT 1`,
       [orgId, payload.code]
-    );
-    if (existing.length) throw new AppError(409, "Lease code already exists");
+    ); 
+    if (existing.length) throw new AppError(409, "Lease code already exists"); 
 
     // Validate numeric fields using Decimal
-    const paymentAmount = toDecimal(payload.payment_amount);
-    const annualDiscountRate = toDecimal(payload.annual_discount_rate);
-    const termMonths = toDecimal(payload.term_months);
+    const paymentAmount = toDecimal(payload.payment_amount); 
+    const annualDiscountRate = toDecimal(payload.annual_discount_rate); 
+    const termMonths = toDecimal(payload.term_months); 
 
     if (!paymentAmount.greaterThan(0)) {
-      throw new AppError(400, "Payment amount must be greater than 0");
+      throw new AppError(400, "Payment amount must be greater than 0"); 
     }
     if (!annualDiscountRate.greaterThanOrEqualTo(0)) {
-      throw new AppError(400, "Annual discount rate must be non-negative");
+      throw new AppError(400, "Annual discount rate must be non-negative"); 
     }
     if (!termMonths.greaterThan(0)) {
-      throw new AppError(400, "Term months must be greater than 0");
+      throw new AppError(400, "Term months must be greater than 0"); 
     }
 
-    // Force status to draft; activation must occur via initial recognition.
-    const enforcedStatus = 'draft';
+    // Force status to draft;  activation must occur via initial recognition.
+    const enforcedStatus = 'draft'; 
 
     const { rows } = await client.query(
       `
@@ -277,7 +277,7 @@ async function createLease({ orgId, actorUserId, payload }) {
         payload.cash_account_id,
         actorUserId,
       ]
-    );
+    ); 
 
     await recordLeaseEvent({
       client,
@@ -286,71 +286,71 @@ async function createLease({ orgId, actorUserId, payload }) {
       leaseId: rows[0].id,
       eventType: "LEASE_CREATED",
       payload: { code: rows[0].code, commencement_date: rows[0].commencement_date, payments_per_year: rows[0].payments_per_year },
-    });
+    }); 
 
-    await client.query("COMMIT");
-    return rows[0];
+    await client.query("COMMIT"); 
+    return rows[0]; 
   } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
+    await client.query("ROLLBACK"); 
+    throw err; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
 async function getLease({ orgId, leaseId }) {
-  const lease = await assertLeaseInOrg({ orgId, leaseId });
-  return lease;
+  const lease = await assertLeaseInOrg({ orgId, leaseId }); 
+  return lease; 
 }
 
 /**
  * Generate IFRS16 schedule using Decimal.js for precise calculations
  */
 async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
-    const lease = await assertLeaseInOrg({ orgId, leaseId });
+    const lease = await assertLeaseInOrg({ orgId, leaseId }); 
 
     // Allow schedule generation only for draft/active leases
-    assertLeaseStatusAllowed(lease, ["draft", "active"], "Schedule generation");
+    assertLeaseStatusAllowed(lease, ["draft", "active"], "Schedule generation"); 
 
     if (payload.replace) {
-      await client.query(`DELETE FROM lease_schedule_lines WHERE lease_id=$1`, [leaseId]);
+      await client.query(`DELETE FROM lease_schedule_lines WHERE lease_id=$1`, [leaseId]); 
     } else {
       const { rows: anyExisting } = await client.query(
         `SELECT 1 FROM lease_schedule_lines WHERE lease_id=$1 LIMIT 1`,
         [leaseId]
-      );
+      ); 
       if (anyExisting.length) {
-        throw new AppError(409, "Schedule already exists. Use replace=true to regenerate.");
+        throw new AppError(409, "Schedule already exists. Use replace=true to regenerate."); 
       }
     }
 
     // Convert to Decimal for precise calculations
-    const termMonths = toDecimal(lease.term_months);
-    const paymentsPerYear = toDecimal(lease.payments_per_year || 12);
+    const termMonths = toDecimal(lease.term_months); 
+    const paymentsPerYear = toDecimal(lease.payments_per_year || 12); 
     if (!paymentsPerYear.greaterThan(0) || paymentsPerYear.greaterThan(12)) {
-      throw new AppError(400, "payments_per_year must be between 1 and 12");
+      throw new AppError(400, "payments_per_year must be between 1 and 12"); 
     }
 
     // Number of payment periods across the term.
-    // term_months is the contract length; payment frequency is derived from payments_per_year.
+    // term_months is the contract length;  payment frequency is derived from payments_per_year.
     // Example: term_months=12, payments_per_year=4 -> 4 periods (quarterly).
-    const nPeriods = termMonths.times(paymentsPerYear).div(12);
+    const nPeriods = termMonths.times(paymentsPerYear).div(12); 
     if (!nPeriods.isInteger() || !nPeriods.greaterThan(0)) {
-      throw new AppError(400, "Term months and payments_per_year must produce a whole number of periods");
+      throw new AppError(400, "Term months and payments_per_year must produce a whole number of periods"); 
     }
 
-    const periodicRate = toDecimal(lease.annual_discount_rate).div(paymentsPerYear);
-    const payment = toDecimal(lease.payment_amount);
-    const timing = lease.payment_timing || "arrears";
+    const periodicRate = toDecimal(lease.annual_discount_rate).div(paymentsPerYear); 
+    const payment = toDecimal(lease.payment_amount); 
+    const timing = lease.payment_timing || "arrears"; 
 
     // Months between payments (e.g., quarterly = 3 months)
-    const monthsPerPeriod = new Decimal(12).div(paymentsPerYear);
+    const monthsPerPeriod = new Decimal(12).div(paymentsPerYear); 
     if (!monthsPerPeriod.isInteger()) {
-      throw new AppError(400, "payments_per_year must divide 12 evenly (e.g., 1,2,3,4,6,12)");
+      throw new AppError(400, "payments_per_year must divide 12 evenly (e.g., 1,2,3,4,6,12)"); 
     }
 
     // Calculate present value using Decimal.js
@@ -360,79 +360,79 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
       periods: nPeriods,
       paymentsPerYear: paymentsPerYear,
       paymentTiming: timing,
-    });
+    }); 
 
     // Store with 6 decimal places for calculation precision
-    const preciseLiability = initialLiability.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+    const preciseLiability = initialLiability.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
     // Depreciate over the number of payment periods (kept consistent with schedule granularity).
     // If you later add an explicit depreciation frequency, this should be revisited.
-    const periodicDepreciation = preciseLiability.div(nPeriods).toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+    const periodicDepreciation = preciseLiability.div(nPeriods).toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
 
     // Validate calculations
     if (!preciseLiability.greaterThan(0)) {
-      throw new AppError(400, "Calculated initial liability is not positive");
+      throw new AppError(400, "Calculated initial liability is not positive"); 
     }
 
-    let opening = preciseLiability;
-    const startDate = new Date(lease.commencement_date);
+    let opening = preciseLiability; 
+    const startDate = new Date(lease.commencement_date); 
 
-    const totalPeriods = nPeriods.toNumber();
-    for (let i = 1; i <= totalPeriods; i += 1) {
-      const offsetPeriods = timing === "advance" ? (i - 1) : i;
-      const dueDate = addMonths(startDate, monthsPerPeriod.times(offsetPeriods).toNumber());
+    const totalPeriods = nPeriods.toNumber(); 
+    for (let i = 1;  i <= totalPeriods;  i += 1) {
+      const offsetPeriods = timing === "advance" ? (i - 1) : i; 
+      const dueDate = addMonths(startDate, monthsPerPeriod.times(offsetPeriods).toNumber()); 
 
-      let interest;
-      let principal;
-      let closing;
-      let currentPayment = payment;
+      let interest; 
+      let principal; 
+      let closing; 
+      let currentPayment = payment; 
 
       if (timing === "advance") {
         // Payment at the beginning of the period.
         // Final-period rounding fix: clear the remaining balance.
-        principal = (i === totalPeriods) ? opening : payment;
-        const afterPayment = opening.minus(principal);
+        principal = (i === totalPeriods) ? opening : payment; 
+        const afterPayment = opening.minus(principal); 
         // If we clear balance on final advance payment, there should be no interest.
-        interest = (i === totalPeriods) ? new Decimal(0) : afterPayment.times(periodicRate);
-        closing = afterPayment.plus(interest);
+        interest = (i === totalPeriods) ? new Decimal(0) : afterPayment.times(periodicRate); 
+        closing = afterPayment.plus(interest); 
       } else {
         // Payment at the end of the period.
-        interest = opening.times(periodicRate);
-        principal = payment.minus(interest);
+        interest = opening.times(periodicRate); 
+        principal = payment.minus(interest); 
         
         if (principal.lessThan(0)) {
-          throw new AppError(400, "Payment amount is too low for the discount rate; schedule would go negative");
+          throw new AppError(400, "Payment amount is too low for the discount rate;  schedule would go negative"); 
         }
 
         // Final-period rounding fix: clear the remaining balance by adjusting principal (and payment if needed).
         if (i === totalPeriods) {
-          principal = opening;
+          principal = opening; 
           // Adjust the payment for the last period so that closing balance is exactly zero.
           // This mirrors real-world amortisation tables where the final payment clears rounding.
           // If you model actual payments separately (recommended), this is only the theoretical amortisation amount.
           // paymentRounded is computed later.
-          const adjustedPayment = principal.plus(interest);
-          closing = new Decimal(0);
+          const adjustedPayment = principal.plus(interest); 
+          closing = new Decimal(0); 
           // Override the schedule-line payment so that payment = interest + principal and closing = 0.
           // This clears any residual rounding difference in the final period.
-          currentPayment = adjustedPayment;
+          currentPayment = adjustedPayment; 
         } else {
-          closing = opening.minus(principal);
+          closing = opening.minus(principal); 
         }
       }
 
       // Round all amounts to 6 decimal places for storage
-      const openingRounded = opening.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-      const paymentRounded = currentPayment.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-      const interestRounded = interest.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-      const principalRounded = principal.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
-      const closingRounded = closing.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+      const openingRounded = opening.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
+      const paymentRounded = currentPayment.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
+      const interestRounded = interest.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
+      const principalRounded = principal.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
+      const closingRounded = closing.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
       // Depreciation rounding fix: allocate any residual to the final period.
-      let depreciationForPeriod = periodicDepreciation;
+      let depreciationForPeriod = periodicDepreciation; 
       if (i === totalPeriods) {
-        const prior = periodicDepreciation.times(new Decimal(totalPeriods - 1));
-        depreciationForPeriod = preciseLiability.minus(prior);
+        const prior = periodicDepreciation.times(new Decimal(totalPeriods - 1)); 
+        depreciationForPeriod = preciseLiability.minus(prior); 
       }
-      const depreciationRounded = depreciationForPeriod.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+      const depreciationRounded = depreciationForPeriod.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
 
       await client.query(
         `
@@ -462,9 +462,9 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
           depreciationRounded.toNumber(),
           actorUserId,
         ]
-      );
+      ); 
 
-      opening = closing;
+      opening = closing; 
 
     }
 
@@ -483,7 +483,7 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
         periodicDepreciation.toNumber(),
         orgId
       ]
-    );
+    ); 
 
     await recordLeaseEvent({
       client,
@@ -492,9 +492,9 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
       leaseId,
       eventType: "SCHEDULE_GENERATED",
       payload: { periods: nPeriods.toNumber(), payments_per_year: paymentsPerYear.toNumber(), replaced: !!payload.replace },
-    });
+    }); 
 
-    await client.query("COMMIT");
+    await client.query("COMMIT"); 
     return {
       lease_id: leaseId,
       initial_lease_liability: toCurrencyNumber(preciseLiability),
@@ -504,17 +504,17 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
       lines_created: nPeriods.toNumber(),
       calculation_decimals: 6,
       currency_decimals: 2,
-    };
+    }; 
   } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
+    await client.query("ROLLBACK"); 
+    throw err; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
 async function getSchedule({ orgId, leaseId }) {
-  await assertLeaseInOrg({ orgId, leaseId });
+  await assertLeaseInOrg({ orgId, leaseId }); 
   const { rows } = await pool.query(
     `
     SELECT line_no, due_date, opening_balance, payment_amount, interest_amount,
@@ -526,28 +526,28 @@ async function getSchedule({ orgId, leaseId }) {
     ORDER BY line_no ASC
     `,
     [leaseId]
-  );
-  return { lease_id: leaseId, lines: rows };
+  ); 
+  return { lease_id: leaseId, lines: rows }; 
 }
 
 async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
-    const lease = await assertLeaseInOrg({ orgId, leaseId });
+    await client.query("BEGIN"); 
+    const lease = await assertLeaseInOrg({ orgId, leaseId }); 
 
     // Only active leases can post periodic entries
-    assertLeaseStatusAllowed(lease, ["active"], "Periodic posting");
+    assertLeaseStatusAllowed(lease, ["active"], "Periodic posting"); 
 
     // Validate GL accounts (in case COA changed since lease creation)
-    await assertPostableAccount({ orgId, accountId: lease.interest_expense_account_id, label: "interest_expense_account_id" });
-    await assertPostableAccount({ orgId, accountId: lease.lease_liability_account_id, label: "lease_liability_account_id" });
-    await assertPostableAccount({ orgId, accountId: lease.cash_account_id, label: "cash_account_id" });
-    await assertPostableAccount({ orgId, accountId: lease.depreciation_expense_account_id, label: "depreciation_expense_account_id" });
-    await assertPostableAccount({ orgId, accountId: lease.accumulated_depreciation_account_id, label: "accumulated_depreciation_account_id" });
+    await assertPostableAccount({ orgId, accountId: lease.interest_expense_account_id, label: "interest_expense_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: lease.lease_liability_account_id, label: "lease_liability_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: lease.cash_account_id, label: "cash_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: lease.depreciation_expense_account_id, label: "depreciation_expense_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: lease.accumulated_depreciation_account_id, label: "accumulated_depreciation_account_id" }); 
 
-    const from = toISODate(payload.from_date);
-    const to = toISODate(payload.to_date);
+    const from = toISODate(payload.from_date); 
+    const to = toISODate(payload.to_date); 
 
     // Pull schedule lines due within range
     const { rows: lines } = await client.query(
@@ -559,35 +559,35 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
       FOR UPDATE
       `,
       [leaseId, from, to]
-    );
+    ); 
 
     if (!lines.length) {
-      await client.query("ROLLBACK");
-      return { posted: 0, message: "No schedule lines in range" };
+      await client.query("ROLLBACK"); 
+      return { posted: 0, message: "No schedule lines in range" }; 
     }
 
-    let posted = 0;
-    const journalIds = [];
+    let posted = 0; 
+    const journalIds = []; 
 
     for (const line of lines) {
-      const entryDate = line.due_date;
-      const period = await findOpenPeriodForDate({ orgId, date: entryDate });
+      const entryDate = line.due_date; 
+      const period = await findOpenPeriodForDate({ orgId, date: entryDate }); 
 
       // 1) Interest + payment (single combined journal)
       if (payload.post_interest_and_payment && !line.posted_interest_payment_journal_id) {
         // Use Decimal to verify balance
-        const total = toDecimal(line.payment_amount);
-        const interest = toDecimal(line.interest_amount);
-        const principal = toDecimal(line.principal_amount);
+        const total = toDecimal(line.payment_amount); 
+        const interest = toDecimal(line.interest_amount); 
+        const principal = toDecimal(line.principal_amount); 
 
         // Verify that interest + principal equals payment (within tolerance)
-        const sum = interest.plus(principal);
-        const tolerance = new Decimal(0.000001); // 0.000001 tolerance for rounding
+        const sum = interest.plus(principal); 
+        const tolerance = new Decimal(0.000001);  // 0.000001 tolerance for rounding
         if (sum.minus(total).abs().greaterThan(tolerance)) {
-          throw new AppError(400, `Schedule line does not balance (interest + principal != payment). Expected ${total}, got ${sum}`);
+          throw new AppError(400, `Schedule line does not balance (interest + principal != payment). Expected ${total}, got ${sum}`); 
         }
 
-        const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'LINE', String(line.line_no), 'PAY']);
+        const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'LINE', String(line.line_no), 'PAY']); 
 
         const postedJournal = await postJournal({
           orgId,
@@ -621,7 +621,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
               },
             ],
           },
-        });
+        }); 
 
         await client.query(
           `
@@ -630,7 +630,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           WHERE id=$1
           `,
           [line.id, postedJournal.journalId]
-        );
+        ); 
 
         await recordLeasePostingLedger({
           client,
@@ -642,17 +642,17 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           action: 'interest_payment',
           idempotencyKey,
           journalEntryId: postedJournal.journalId,
-        });
+        }); 
 
-        journalIds.push(postedJournal.journalId);
-        posted += 1;
+        journalIds.push(postedJournal.journalId); 
+        posted += 1; 
       }
 
       // 2) Depreciation
       if (payload.post_depreciation && !line.posted_depreciation_journal_id) {
-        const dep = toDecimal(line.depreciation_amount);
+        const dep = toDecimal(line.depreciation_amount); 
 
-        const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'LINE', String(line.line_no), 'DEP']);
+        const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'LINE', String(line.line_no), 'DEP']); 
 
         const postedJournal = await postJournal({
           orgId,
@@ -677,7 +677,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
               },
             ],
           },
-        });
+        }); 
 
         await client.query(
           `
@@ -686,7 +686,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           WHERE id=$1
           `,
           [line.id, postedJournal.journalId]
-        );
+        ); 
 
         await recordLeasePostingLedger({
           client,
@@ -698,10 +698,10 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
           action: 'depreciation',
           idempotencyKey,
           journalEntryId: postedJournal.journalId,
-        });
+        }); 
 
-        journalIds.push(postedJournal.journalId);
-        posted += 1;
+        journalIds.push(postedJournal.journalId); 
+        posted += 1; 
       }
     }
 
@@ -712,15 +712,15 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
       leaseId,
       eventType: "PERIOD_POSTED",
       payload: { from_date: from, to_date: to, posted_entries: posted, journal_ids: journalIds },
-    });
+    }); 
 
-    await client.query("COMMIT");
-    return { posted, journal_ids: journalIds };
+    await client.query("COMMIT"); 
+    return { posted, journal_ids: journalIds }; 
   } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
+    await client.query("ROLLBACK"); 
+    throw err; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
@@ -733,9 +733,9 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
  * Idempotent: if already posted, returns the existing journal id.
  */
 async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
     // Lock lease row for idempotency and concurrent posting safety.
     const { rows: leaseRows } = await client.query(
@@ -746,46 +746,46 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       FOR UPDATE
       `,
       [leaseId, orgId]
-    );
-    if (!leaseRows.length) throw new AppError(404, "Lease not found");
-    const lease = leaseRows[0];
+    ); 
+    if (!leaseRows.length) throw new AppError(404, "Lease not found"); 
+    const lease = leaseRows[0]; 
 
     // Initial recognition is only permitted while draft.
-    assertLeaseStatusAllowed(lease, ["draft"], "Initial recognition posting");
+    assertLeaseStatusAllowed(lease, ["draft"], "Initial recognition posting"); 
 
     // Validate GL accounts (in case COA changed)
-    await assertPostableAccount({ orgId, accountId: lease.rou_asset_account_id, label: "rou_asset_account_id" });
-    await assertPostableAccount({ orgId, accountId: lease.lease_liability_account_id, label: "lease_liability_account_id" });
+    await assertPostableAccount({ orgId, accountId: lease.rou_asset_account_id, label: "rou_asset_account_id" }); 
+    await assertPostableAccount({ orgId, accountId: lease.lease_liability_account_id, label: "lease_liability_account_id" }); 
 
     if (lease.initial_recognition_journal_id) {
-      await client.query("COMMIT");
+      await client.query("COMMIT"); 
       return {
         already_posted: true,
         journal_id: lease.initial_recognition_journal_id,
         recognition_date: lease.initial_recognition_date,
-      };
+      }; 
     }
 
     // Accept both entryDate (camelCase) and entry_date (snake_case) to be compatible with validator/API payloads.
-    const providedEntryDate = payload?.entryDate || payload?.entry_date;
-    const entryDate = providedEntryDate ? toISODate(providedEntryDate) : toISODate(lease.commencement_date);
+    const providedEntryDate = payload?.entryDate || payload?.entry_date; 
+    const entryDate = providedEntryDate ? toISODate(providedEntryDate) : toISODate(lease.commencement_date); 
 
     // Ensure a period is open for the recognition date.
-    const period = await findOpenPeriodForDate({ orgId, date: entryDate });
+    const period = await findOpenPeriodForDate({ orgId, date: entryDate }); 
 
     // Determine initial liability amount using Decimal.js
-    let initialLiability;
+    let initialLiability; 
     
     if (lease.initial_lease_liability != null) {
       // Use persisted derived value if available
-      initialLiability = toDecimal(lease.initial_lease_liability);
+      initialLiability = toDecimal(lease.initial_lease_liability); 
     } else {
       // Calculate present value using Decimal.js
-      const paymentsPerYear = toDecimal(lease.payments_per_year || 12);
-      const termMonths = toDecimal(lease.term_months);
-      const nPeriods = termMonths.times(paymentsPerYear).div(12);
+      const paymentsPerYear = toDecimal(lease.payments_per_year || 12); 
+      const termMonths = toDecimal(lease.term_months); 
+      const nPeriods = termMonths.times(paymentsPerYear).div(12); 
       if (!nPeriods.isInteger() || !nPeriods.greaterThan(0)) {
-        throw new AppError(400, "Term months and payments_per_year must produce a whole number of periods");
+        throw new AppError(400, "Term months and payments_per_year must produce a whole number of periods"); 
       }
 
       initialLiability = calculatePresentValue({
@@ -794,27 +794,27 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
         periods: nPeriods,
         paymentsPerYear: paymentsPerYear,
         paymentTiming: lease.payment_timing || "arrears",
-      });
+      }); 
     }
 
     // Validate the amount is positive
     if (!initialLiability.greaterThan(0)) {
-      throw new AppError(400, "Initial recognition amount must be greater than 0");
+      throw new AppError(400, "Initial recognition amount must be greater than 0"); 
     }
 
     // Round to 6 decimal places for calculation consistency
-    const preciseAmount = initialLiability.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN);
+    const preciseAmount = initialLiability.toDecimalPlaces(6, Decimal.ROUND_HALF_EVEN); 
     
     // Convert to currency amount (2 decimal places) for journal posting
-    const journalAmount = toCurrencyNumber(preciseAmount);
+    const journalAmount = toCurrencyNumber(preciseAmount); 
 
     // Validate the amount is still positive after rounding
     if (journalAmount <= 0) {
-      throw new AppError(400, "Amount after rounding is not positive");
+      throw new AppError(400, "Amount after rounding is not positive"); 
     }
 
     // Post the journal entry
-    const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'INIT']);
+    const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'INIT']); 
 
     const postedJournal = await postJournal({
       orgId,
@@ -839,7 +839,7 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
           },
         ],
       },
-    });
+    }); 
 
     // Update lease with recognition details
     await client.query(
@@ -861,7 +861,7 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
         preciseAmount.toNumber(),  // Store with 6 decimal precision
         orgId
       ]
-    );
+    ); 
 
     await recordLeasePostingLedger({
       client,
@@ -873,7 +873,7 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       action: 'initial_recognition',
       idempotencyKey,
       journalEntryId: postedJournal.journalId,
-    });
+    }); 
 
     await recordLeaseEvent({
       client,
@@ -882,9 +882,9 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       leaseId,
       eventType: "INITIAL_RECOGNITION_POSTED",
       payload: { entry_date: entryDate, journal_id: postedJournal.journalId, amount: journalAmount },
-    });
+    }); 
 
-    await client.query("COMMIT");
+    await client.query("COMMIT"); 
     
     return {
       already_posted: false,
@@ -894,19 +894,19 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       precise_amount: preciseAmount.toNumber(), // Include precise amount for reference
       currency_decimals: 2,
       calculation_decimals: 6,
-    };
+    }; 
   } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
+    await client.query("ROLLBACK"); 
+    throw err; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
 async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
     const { rows } = await client.query(
       `
@@ -916,34 +916,34 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
       FOR UPDATE
       `,
       [leaseId, orgId]
-    );
-    if (!rows.length) throw new AppError(404, "Lease not found");
-    const lease = rows[0];
+    ); 
+    if (!rows.length) throw new AppError(404, "Lease not found"); 
+    const lease = rows[0]; 
 
-    const nextStatus = payload.status;
-    const current = lease.status;
+    const nextStatus = payload.status; 
+    const current = lease.status; 
 
     if (current === nextStatus) {
-      await client.query("COMMIT");
-      return { changed: false, before: lease, after: lease };
+      await client.query("COMMIT"); 
+      return { changed: false, before: lease, after: lease }; 
     }
 
     // Transition rules (production-grade minimum):
     // - draft -> active is ONLY through initial recognition posting
     // - active -> closed (requires all schedule lines posted)
-    // - active -> terminated (blocks further postings; requires no future lines already posted)
+    // - active -> terminated (blocks further postings;  requires no future lines already posted)
     // - closed/terminated are terminal states
     if (current === "draft" && nextStatus === "active") {
-      throw new AppError(409, "Use initial recognition posting to activate a lease");
+      throw new AppError(409, "Use initial recognition posting to activate a lease"); 
     }
     if (current === "draft" && nextStatus === "closed") {
-      throw new AppError(409, "Cannot close a draft lease");
+      throw new AppError(409, "Cannot close a draft lease"); 
     }
     if (["closed", "terminated"].includes(current)) {
-      throw new AppError(409, `Cannot change status from '${current}'`);
+      throw new AppError(409, `Cannot change status from '${current}'`); 
     }
 
-    const effectiveDate = payload.effective_date ? toISODate(payload.effective_date) : null;
+    const effectiveDate = payload.effective_date ? toISODate(payload.effective_date) : null; 
 
     if (current === "active" && nextStatus === "closed") {
       const { rows: unposted } = await client.query(
@@ -955,19 +955,19 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
         LIMIT 1
         `,
         [leaseId]
-      );
+      ); 
       if (unposted.length) {
-        throw new AppError(409, "Cannot close lease while there are unposted schedule lines");
+        throw new AppError(409, "Cannot close lease while there are unposted schedule lines"); 
       }
     }
 
     if ((current === "active" && nextStatus === "terminated") || (current === "draft" && nextStatus === "terminated")) {
       if (!effectiveDate) {
-        throw new AppError(400, "effective_date is required to terminate a lease");
+        throw new AppError(400, "effective_date is required to terminate a lease"); 
       }
 
       if (current === "draft" && lease.initial_recognition_journal_id) {
-        throw new AppError(409, "Cannot terminate a draft lease that already has initial recognition posted");
+        throw new AppError(409, "Cannot terminate a draft lease that already has initial recognition posted"); 
       }
 
       // Prevent termination if there are already posted lines after the effective date
@@ -984,9 +984,9 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
         LIMIT 1
         `,
         [leaseId, effectiveDate]
-      );
+      ); 
       if (futurePosted.length) {
-        throw new AppError(409, "Cannot terminate: there are already posted schedule lines after the effective_date");
+        throw new AppError(409, "Cannot terminate: there are already posted schedule lines after the effective_date"); 
       }
     }
 
@@ -994,12 +994,12 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
       activated_at: lease.activated_at,
       terminated_at: lease.terminated_at,
       closed_at: lease.closed_at,
-    };
+    }; 
 
-    if (nextStatus === "terminated") tsFields.terminated_at = tsFields.terminated_at || new Date().toISOString();
-    if (nextStatus === "closed") tsFields.closed_at = tsFields.closed_at || new Date().toISOString();
+    if (nextStatus === "terminated") tsFields.terminated_at = tsFields.terminated_at || new Date().toISOString(); 
+    if (nextStatus === "closed") tsFields.closed_at = tsFields.closed_at || new Date().toISOString(); 
 
-    const reason = payload.reason || null;
+    const reason = payload.reason || null; 
 
     const { rows: afterRows } = await client.query(
       `
@@ -1013,7 +1013,7 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
       RETURNING *
       `,
       [leaseId, orgId, nextStatus, reason, tsFields.terminated_at, tsFields.closed_at]
-    );
+    ); 
 
     await recordLeaseEvent({
       client,
@@ -1022,15 +1022,15 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
       leaseId,
       eventType: "STATUS_CHANGED",
       payload: { from: current, to: nextStatus, reason, effective_date: effectiveDate },
-    });
+    }); 
 
-    await client.query("COMMIT");
-    return { changed: true, before: lease, after: afterRows[0] };
+    await client.query("COMMIT"); 
+    return { changed: true, before: lease, after: afterRows[0] }; 
   } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
+    await client.query("ROLLBACK"); 
+    throw e; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
@@ -1047,4 +1047,4 @@ module.exports = {
   toDecimal,
   roundCurrency,
   calculatePresentValue,
-};
+}; 

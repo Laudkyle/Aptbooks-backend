@@ -1,45 +1,45 @@
-const router = require("express").Router();
-const { authRequired } = require("../../middleware/auth.middleware");
-const { requirePermission } = require("../../middleware/permission.middleware");
-const { pool } = require("../../db/pool");
-const { AppError } = require("../../shared/errors/AppError");
+const router = require("express").Router(); 
+const { authRequired } = require("../../middleware/auth.middleware"); 
+const { requirePermission } = require("../../middleware/permission.middleware"); 
+const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError"); 
 
-router.use(authRequired);
+router.use(authRequired); 
 
 // List errors with basic filtering
 router.get("/", requirePermission("settings.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const limit = Math.min(Number(req.query.limit || 50) || 50, 200);
-    const status = req.query.status ? Number(req.query.status) : null;
-    const method = req.query.method ? String(req.query.method).toUpperCase() : null;
-    const path = req.query.path ? String(req.query.path) : null;
-    const correlationId = req.query.correlationId ? String(req.query.correlationId) : null;
+    const orgId = req.user.organization_id; 
+    const limit = Math.min(Number(req.query.limit || 50) || 50, 200); 
+    const status = req.query.status ? Number(req.query.status) : null; 
+    const method = req.query.method ? String(req.query.method).toUpperCase() : null; 
+    const path = req.query.path ? String(req.query.path) : null; 
+    const correlationId = req.query.correlationId ? String(req.query.correlationId) : null; 
 
-    const params = [];
-    let where = "WHERE 1=1";
+    const params = []; 
+    let where = "WHERE 1=1"; 
     // org-scoped if we have it
     if (orgId) {
-      params.push(orgId);
-      where += ` AND (organization_id IS NULL OR organization_id=$${params.length})`;
+      params.push(orgId); 
+      where += ` AND (organization_id IS NULL OR organization_id=$${params.length})`; 
     }
     if (status) {
-      params.push(status);
-      where += ` AND status=$${params.length}`;
+      params.push(status); 
+      where += ` AND status=$${params.length}`; 
     }
     if (method) {
-      params.push(method);
-      where += ` AND method=$${params.length}`;
+      params.push(method); 
+      where += ` AND method=$${params.length}`; 
     }
     if (path) {
-      params.push(path);
-      where += ` AND path LIKE ($${params.length} || '%')`;
+      params.push(path); 
+      where += ` AND path LIKE ($${params.length} || '%')`; 
     }
     if (correlationId) {
-      params.push(correlationId);
-      where += ` AND correlation_id=$${params.length}`;
+      params.push(correlationId); 
+      where += ` AND correlation_id=$${params.length}`; 
     }
-    params.push(limit);
+    params.push(limit); 
 
     const { rows } = await pool.query(
       `
@@ -50,16 +50,16 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
       LIMIT $${params.length}
       `,
       params
-    );
-    res.json({ data: rows });
-  } catch (e) { next(e); }
-});
+    ); 
+    res.json({ data: rows }); 
+  } catch (e) { next(e);  }
+}); 
 
 // Error statistics
 router.get("/stats/summary/", requirePermission("settings.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const days = Math.min(Number(req.query.days || 7) || 7, 90);
+    const orgId = req.user.organization_id; 
+    const days = Math.min(Number(req.query.days || 7) || 7, 90); 
     const { rows } = await pool.query(
       `
       SELECT
@@ -72,7 +72,7 @@ router.get("/stats/summary/", requirePermission("settings.read"), async (req, re
         AND ($2::uuid IS NULL OR organization_id=$2)
       `,
       [days, orgId || null]
-    );
+    ); 
 
     const { rows: top } = await pool.query(
       `
@@ -85,19 +85,19 @@ router.get("/stats/summary/", requirePermission("settings.read"), async (req, re
       LIMIT 10
       `,
       [days, orgId || null]
-    );
+    ); 
 
-    res.json({ summary: rows[0] || { total: 0, server_errors: 0, client_errors: 0, unique_correlations: 0 }, top_paths: top });
-  } catch (e) { next(e); }
-});
+    res.json({ summary: rows[0] || { total: 0, server_errors: 0, client_errors: 0, unique_correlations: 0 }, top_paths: top }); 
+  } catch (e) { next(e);  }
+}); 
 
 // Get by correlation id
 router.get("/:correlationId", requirePermission("settings.read"), async (req, res, next) => {
   try {
-    const correlationId = String(req.params.correlationId);
-    if (!correlationId) throw new AppError(400, "correlationId required");
+    const correlationId = String(req.params.correlationId); 
+    if (!correlationId) throw new AppError(400, "correlationId required"); 
 
-    const orgId = req.user.organization_id;
+    const orgId = req.user.organization_id; 
     const { rows } = await pool.query(
       `
       SELECT *
@@ -108,9 +108,9 @@ router.get("/:correlationId", requirePermission("settings.read"), async (req, re
       LIMIT 50
       `,
       [correlationId, orgId || null]
-    );
-    res.json({ data: rows });
-  } catch (e) { next(e); }
-});
+    ); 
+    res.json({ data: rows }); 
+  } catch (e) { next(e);  }
+}); 
 
-module.exports = router;
+module.exports = router; 

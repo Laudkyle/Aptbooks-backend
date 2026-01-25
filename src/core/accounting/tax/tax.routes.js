@@ -1,40 +1,40 @@
-const express = require("express");
+const express = require("express"); 
 
-const { authRequired } = require("../../../middleware/auth.middleware");
-const { requirePermission } = require("../../../middleware/permission.middleware");
-const { idempotency } = require("../../../middleware/idempotency.middleware");
-const { validate } = require("../../../shared/validators/validate");
-const { AppError } = require("../../../shared/errors/AppError");
-const { writeAudit } = require("../../foundation/audit-logs/audit.service");
+const { authRequired } = require("../../../middleware/auth.middleware"); 
+const { requirePermission } = require("../../../middleware/permission.middleware"); 
+const { idempotency } = require("../../../middleware/idempotency.middleware"); 
+const { validate } = require("../../../shared/validators/validate"); 
+const { AppError } = require("../../../shared/errors/AppError"); 
+const { writeAudit } = require("../../foundation/audit-logs/audit.service"); 
 
-const svc = require("./tax.service");
+const svc = require("./tax.service"); 
 const {
   createJurisdictionSchema,
   updateJurisdictionSchema,
   createTaxCodeSchema,
   updateTaxCodeSchema,
   setTaxSettingsSchema
-} = require("./tax.validators");
+} = require("./tax.validators"); 
 
-const router = express.Router();
-router.use(authRequired);
+const router = express.Router(); 
+router.use(authRequired); 
 
 // Admin CRUD for VAT/GST tax setup
-router.use(requirePermission("tax.read"));
+router.use(requirePermission("tax.read")); 
 
 // Jurisdictions
 router.get("/jurisdictions", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    res.json({ data: await svc.listJurisdictions({ orgId }) });
-  } catch (e) { next(e); }
-});
+    const orgId = req.user.organization_id; 
+    res.json({ data: await svc.listJurisdictions({ orgId }) }); 
+  } catch (e) { next(e);  }
+}); 
 
 router.post("/jurisdictions", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const payload = validate(createJurisdictionSchema, req.body);
-    const created = await svc.createJurisdiction({ orgId, payload });
+    const orgId = req.user.organization_id; 
+    const payload = validate(createJurisdictionSchema, req.body); 
+    const created = await svc.createJurisdiction({ orgId, payload }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -45,20 +45,20 @@ router.post("/jurisdictions", idempotency({ required: true }), requirePermission
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: created
-    });
+    }); 
 
-    res.status(201).json(created);
+    res.status(201).json(created); 
   } catch (e) {
-    if (e?.code === "23505") return next(new AppError(409, "Tax jurisdiction already exists"));
-    next(e);
+    if (e?.code === "23505") return next(new AppError(409, "Tax jurisdiction already exists")); 
+    next(e); 
   }
-});
+}); 
 
 router.patch("/jurisdictions/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const payload = validate(updateJurisdictionSchema, req.body);
-    const out = await svc.updateJurisdiction({ orgId, jurisdictionId: req.params.id, payload });
+    const orgId = req.user.organization_id; 
+    const payload = validate(updateJurisdictionSchema, req.body); 
+    const out = await svc.updateJurisdiction({ orgId, jurisdictionId: req.params.id, payload }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -70,19 +70,19 @@ router.patch("/jurisdictions/:id", requirePermission("tax.manage"), async (req, 
       userAgent: req.audit?.userAgent,
       before: out.before,
       after: out.after
-    });
+    }); 
 
-    res.json(out.after);
+    res.json(out.after); 
   } catch (e) {
-    if (e?.code === "23505") return next(new AppError(409, "Tax jurisdiction already exists"));
-    next(e);
+    if (e?.code === "23505") return next(new AppError(409, "Tax jurisdiction already exists")); 
+    next(e); 
   }
-});
+}); 
 
 router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const out = await svc.deleteJurisdiction({ orgId, jurisdictionId: req.params.id });
+    const orgId = req.user.organization_id; 
+    const out = await svc.deleteJurisdiction({ orgId, jurisdictionId: req.params.id }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -93,30 +93,30 @@ router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: out
-    });
+    }); 
 
-    res.json(out);
-  } catch (e) { next(e); }
-});
+    res.json(out); 
+  } catch (e) { next(e);  }
+}); 
 
 // Tax Codes
 router.get("/codes", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = req.user.organization_id; 
     const query = {
       status: req.query.status,
       taxType: req.query.taxType,
       jurisdictionId: req.query.jurisdictionId
-    };
-    res.json({ data: await svc.listTaxCodes({ orgId, query }) });
-  } catch (e) { next(e); }
-});
+    }; 
+    res.json({ data: await svc.listTaxCodes({ orgId, query }) }); 
+  } catch (e) { next(e);  }
+}); 
 
 router.post("/codes", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const payload = validate(createTaxCodeSchema, req.body);
-    const created = await svc.createTaxCode({ orgId, payload });
+    const orgId = req.user.organization_id; 
+    const payload = validate(createTaxCodeSchema, req.body); 
+    const created = await svc.createTaxCode({ orgId, payload }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -127,20 +127,20 @@ router.post("/codes", idempotency({ required: true }), requirePermission("tax.ma
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: created
-    });
+    }); 
 
-    res.status(201).json(created);
+    res.status(201).json(created); 
   } catch (e) {
-    if (e?.code === "23505") return next(new AppError(409, "Tax code already exists"));
-    next(e);
+    if (e?.code === "23505") return next(new AppError(409, "Tax code already exists")); 
+    next(e); 
   }
-});
+}); 
 
 router.patch("/codes/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const payload = validate(updateTaxCodeSchema, req.body);
-    const out = await svc.updateTaxCode({ orgId, taxCodeId: req.params.id, payload });
+    const orgId = req.user.organization_id; 
+    const payload = validate(updateTaxCodeSchema, req.body); 
+    const out = await svc.updateTaxCode({ orgId, taxCodeId: req.params.id, payload }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -152,19 +152,19 @@ router.patch("/codes/:id", requirePermission("tax.manage"), async (req, res, nex
       userAgent: req.audit?.userAgent,
       before: out.before,
       after: out.after
-    });
+    }); 
 
-    res.json(out.after);
+    res.json(out.after); 
   } catch (e) {
-    if (e?.code === "23505") return next(new AppError(409, "Tax code already exists"));
-    next(e);
+    if (e?.code === "23505") return next(new AppError(409, "Tax code already exists")); 
+    next(e); 
   }
-});
+}); 
 
 router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const out = await svc.deleteTaxCode({ orgId, taxCodeId: req.params.id });
+    const orgId = req.user.organization_id; 
+    const out = await svc.deleteTaxCode({ orgId, taxCodeId: req.params.id }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -175,25 +175,25 @@ router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, ne
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: out
-    });
+    }); 
 
-    res.json(out);
-  } catch (e) { next(e); }
-});
+    res.json(out); 
+  } catch (e) { next(e);  }
+}); 
 
 // Settings
 router.get("/settings", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    res.json({ data: await svc.getTaxSettings({ orgId }) });
-  } catch (e) { next(e); }
-});
+    const orgId = req.user.organization_id; 
+    res.json({ data: await svc.getTaxSettings({ orgId }) }); 
+  } catch (e) { next(e);  }
+}); 
 
 router.put("/settings", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const payload = validate(setTaxSettingsSchema, req.body);
-    const updated = await svc.setTaxSettings({ orgId, payload });
+    const orgId = req.user.organization_id; 
+    const payload = validate(setTaxSettingsSchema, req.body); 
+    const updated = await svc.setTaxSettings({ orgId, payload }); 
 
     await writeAudit({
       organizationId: orgId,
@@ -204,10 +204,10 @@ router.put("/settings", requirePermission("tax.manage"), async (req, res, next) 
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: updated
-    });
+    }); 
 
-    res.json(updated);
-  } catch (e) { next(e); }
-});
+    res.json(updated); 
+  } catch (e) { next(e);  }
+}); 
 
-module.exports = router;
+module.exports = router; 

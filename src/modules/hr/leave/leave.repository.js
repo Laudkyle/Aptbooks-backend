@@ -1,6 +1,6 @@
-const { pool } = require("../../../db/pool");
+const { pool } = require("../../../db/pool"); 
 
-function q(client) { return client || pool; }
+function q(client) { return client || pool;  }
 
 // -------------------- Leave Types --------------------
 async function createLeaveType(orgId, payload) {
@@ -11,49 +11,49 @@ async function createLeaveType(orgId, payload) {
       RETURNING *
     `,
     [orgId, payload.code, payload.name, payload.unit || "days", !!payload.is_paid]
-  );
-  return rows[0];
+  ); 
+  return rows[0]; 
 }
 
 async function listLeaveTypes(orgId, query = {}) {
-  const params = [orgId];
-  let where = "WHERE organization_id=$1";
-  if (query.status) { params.push(query.status); where += ` AND status=$${params.length}`; }
-  const r = await pool.query(`SELECT * FROM hr_leave_types ${where} ORDER BY code ASC`, params);
-  return r.rows;
+  const params = [orgId]; 
+  let where = "WHERE organization_id=$1"; 
+  if (query.status) { params.push(query.status);  where += ` AND status=$${params.length}`;  }
+  const r = await pool.query(`SELECT * FROM hr_leave_types ${where} ORDER BY code ASC`, params); 
+  return r.rows; 
 }
 
 async function getLeaveType(orgId, id) {
-  const r = await pool.query(`SELECT * FROM hr_leave_types WHERE organization_id=$1 AND id=$2`, [orgId, id]);
-  return r.rows[0] || null;
+  const r = await pool.query(`SELECT * FROM hr_leave_types WHERE organization_id=$1 AND id=$2`, [orgId, id]); 
+  return r.rows[0] || null; 
 }
 
 async function updateLeaveType(orgId, id, payload) {
-  const fields = [];
-  const params = [orgId, id];
-  const set = (k, v) => { params.push(v); fields.push(`${k}=$${params.length}`); };
+  const fields = []; 
+  const params = [orgId, id]; 
+  const set = (k, v) => { params.push(v);  fields.push(`${k}=$${params.length}`);  }; 
 
-  if (payload.code !== undefined) set("code", payload.code);
-  if (payload.name !== undefined) set("name", payload.name);
-  if (payload.unit !== undefined) set("unit", payload.unit);
-  if (payload.is_paid !== undefined) set("is_paid", !!payload.is_paid);
-  if (payload.status !== undefined) set("status", payload.status);
+  if (payload.code !== undefined) set("code", payload.code); 
+  if (payload.name !== undefined) set("name", payload.name); 
+  if (payload.unit !== undefined) set("unit", payload.unit); 
+  if (payload.is_paid !== undefined) set("is_paid", !!payload.is_paid); 
+  if (payload.status !== undefined) set("status", payload.status); 
 
-  if (!fields.length) return getLeaveType(orgId, id);
+  if (!fields.length) return getLeaveType(orgId, id); 
 
   const r = await pool.query(
     `UPDATE hr_leave_types SET ${fields.join(", ")}, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     params
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function deactivateLeaveType(orgId, id) {
   const r = await pool.query(
     `UPDATE hr_leave_types SET status='inactive', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, id]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 // -------------------- Leave Balances --------------------
@@ -67,24 +67,24 @@ async function upsertLeaveBalance(orgId, { employeeId, leaveTypeId, balanceDays 
       RETURNING *
     `,
     [orgId, employeeId, leaveTypeId, balanceDays]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 async function getLeaveBalance(orgId, { employeeId, leaveTypeId }, client=null, forUpdate=false) {
-  const lock = forUpdate ? " FOR UPDATE" : "";
+  const lock = forUpdate ? " FOR UPDATE" : ""; 
   const r = await q(client).query(
     `SELECT * FROM hr_leave_balances WHERE organization_id=$1 AND employee_id=$2 AND leave_type_id=$3${lock}`,
     [orgId, employeeId, leaveTypeId]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function listLeaveBalances(orgId, query = {}) {
-  const params = [orgId];
-  let where = "WHERE b.organization_id=$1";
-  if (query.employee_id) { params.push(query.employee_id); where += ` AND b.employee_id=$${params.length}`; }
-  if (query.leave_type_id) { params.push(query.leave_type_id); where += ` AND b.leave_type_id=$${params.length}`; }
+  const params = [orgId]; 
+  let where = "WHERE b.organization_id=$1"; 
+  if (query.employee_id) { params.push(query.employee_id);  where += ` AND b.employee_id=$${params.length}`;  }
+  if (query.leave_type_id) { params.push(query.leave_type_id);  where += ` AND b.leave_type_id=$${params.length}`;  }
   const r = await pool.query(
     `
       SELECT b.*, lt.code AS leave_type_code, lt.name AS leave_type_name
@@ -94,8 +94,8 @@ async function listLeaveBalances(orgId, query = {}) {
       ORDER BY lt.code ASC
     `,
     params
-  );
-  return r.rows;
+  ); 
+  return r.rows; 
 }
 
 async function insertLeaveLedger(orgId, { employeeId, leaveTypeId, deltaDays, reason, refType=null, refId=null }, client=null) {
@@ -106,8 +106,8 @@ async function insertLeaveLedger(orgId, { employeeId, leaveTypeId, deltaDays, re
       RETURNING *
     `,
     [orgId, employeeId, leaveTypeId, deltaDays, reason || null, refType, refId]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 // -------------------- Leave Requests --------------------
@@ -120,12 +120,12 @@ async function createLeaveRequest(orgId, userId, payload) {
       RETURNING *
     `,
     [orgId, payload.employee_id, payload.leave_type_id, payload.start_date, payload.end_date, payload.days, payload.reason || null, userId]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 async function getLeaveRequest(orgId, id, client=null, forUpdate=false) {
-  const lock = forUpdate ? " FOR UPDATE" : "";
+  const lock = forUpdate ? " FOR UPDATE" : ""; 
   const r = await q(client).query(
     `
       SELECT lr.*,
@@ -138,18 +138,18 @@ async function getLeaveRequest(orgId, id, client=null, forUpdate=false) {
       ${lock}
     `,
     [orgId, id]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function listLeaveRequests(orgId, query = {}) {
-  const params = [orgId];
-  let where = "WHERE lr.organization_id=$1";
-  if (query.status) { params.push(query.status); where += ` AND lr.status=$${params.length}`; }
-  if (query.employee_id) { params.push(query.employee_id); where += ` AND lr.employee_id=$${params.length}`; }
-  if (query.leave_type_id) { params.push(query.leave_type_id); where += ` AND lr.leave_type_id=$${params.length}`; }
-  if (query.from_date) { params.push(query.from_date); where += ` AND lr.start_date >= $${params.length}`; }
-  if (query.to_date) { params.push(query.to_date); where += ` AND lr.end_date <= $${params.length}`; }
+  const params = [orgId]; 
+  let where = "WHERE lr.organization_id=$1"; 
+  if (query.status) { params.push(query.status);  where += ` AND lr.status=$${params.length}`;  }
+  if (query.employee_id) { params.push(query.employee_id);  where += ` AND lr.employee_id=$${params.length}`;  }
+  if (query.leave_type_id) { params.push(query.leave_type_id);  where += ` AND lr.leave_type_id=$${params.length}`;  }
+  if (query.from_date) { params.push(query.from_date);  where += ` AND lr.start_date >= $${params.length}`;  }
+  if (query.to_date) { params.push(query.to_date);  where += ` AND lr.end_date <= $${params.length}`;  }
 
   const r = await pool.query(
     `
@@ -163,16 +163,16 @@ async function listLeaveRequests(orgId, query = {}) {
       ORDER BY lr.created_at DESC
     `,
     params
-  );
-  return r.rows;
+  ); 
+  return r.rows; 
 }
 
 async function setLeaveRequestStatus(orgId, id, status, client=null) {
   const r = await q(client).query(
     `UPDATE hr_leave_requests SET status=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, id, status]
-  );
-  return r.rows[0] || null;
+  ); 
+  return r.rows[0] || null; 
 }
 
 async function setLeaveBalance(orgId, { employeeId, leaveTypeId, newBalance }, client=null) {
@@ -185,8 +185,8 @@ async function setLeaveBalance(orgId, { employeeId, leaveTypeId, newBalance }, c
       RETURNING *
     `,
     [orgId, employeeId, leaveTypeId, newBalance]
-  );
-  return r.rows[0];
+  ); 
+  return r.rows[0]; 
 }
 
 module.exports = {
@@ -196,4 +196,4 @@ module.exports = {
   upsertLeaveBalance, getLeaveBalance, listLeaveBalances, insertLeaveLedger, setLeaveBalance,
   // requests
   createLeaveRequest, getLeaveRequest, listLeaveRequests, setLeaveRequestStatus,
-};
+}; 

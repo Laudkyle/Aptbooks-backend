@@ -306,7 +306,7 @@ components:
 
     VoidJournalResponse:
       type: object
-      description: Implementation-specific; commonly includes reversalJournalId and updated status.
+      description: Implementation-specific;  commonly includes reversalJournalId and updated status.
       additionalProperties: true
 
     TrialBalanceRow:

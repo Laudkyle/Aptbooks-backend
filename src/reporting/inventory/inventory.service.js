@@ -1,11 +1,11 @@
-const { pool } = require("../../db/pool");
+const { pool } = require("../../db/pool"); 
 
 async function valuationCurrent({ orgId, warehouseId }) {
-  const params = [orgId];
-  let filter = "";
+  const params = [orgId]; 
+  let filter = ""; 
   if (warehouseId) {
-    params.push(warehouseId);
-    filter = "AND ib.warehouse_id=$2";
+    params.push(warehouseId); 
+    filter = "AND ib.warehouse_id=$2"; 
   }
 
   const { rows } = await pool.query(
@@ -28,9 +28,9 @@ async function valuationCurrent({ orgId, warehouseId }) {
     ORDER BY w.code, ii.sku
     `,
     params
-  );
+  ); 
 
-  const total_value = rows.reduce((s, r) => s + Number(r.extended_value || 0), 0);
+  const total_value = rows.reduce((s, r) => s + Number(r.extended_value || 0), 0); 
   return {
     warehouse_id: warehouseId || null,
     total_value,
@@ -41,7 +41,7 @@ async function valuationCurrent({ orgId, warehouseId }) {
       avg_unit_cost: Number(r.avg_unit_cost || 0),
       extended_value: Number(r.extended_value || 0)
     }))
-  };
+  }; 
 }
 
-module.exports = { valuationCurrent };
+module.exports = { valuationCurrent }; 

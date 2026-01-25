@@ -1,78 +1,78 @@
-const { pool } = require("../../../db/pool");
-const { AppError } = require("../../../shared/errors/AppError");
+const { pool } = require("../../../db/pool"); 
+const { AppError } = require("../../../shared/errors/AppError"); 
 
-const periodIF = require("../../../interfaces/periodManagement.interface");
-const journalIF = require("../../../interfaces/journalPosting.interface");
-const documentsSvc = require("../../../workflow/documents/documents.service");
-const partnerIF = require("../../../interfaces/partnerManagement.interface");
+const periodIF = require("../../../interfaces/periodManagement.interface"); 
+const journalIF = require("../../../interfaces/journalPosting.interface"); 
+const documentsSvc = require("../../../workflow/documents/documents.service"); 
+const partnerIF = require("../../../interfaces/partnerManagement.interface"); 
 
 const {
   multiplyQtyByUnitPriceToMoney,
   bigIntToDecimalString,
   parseDecimalToBigInt
-} = require("../../../shared/utils/money");
+} = require("../../../shared/utils/money"); 
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
     `SELECT base_currency_code FROM organizations WHERE id=$1`,
     [orgId]
-  );
-  if (!rows.length) throw new AppError(400, "Invalid organization");
-  return rows[0].base_currency_code;
+  ); 
+  if (!rows.length) throw new AppError(400, "Invalid organization"); 
+  return rows[0].base_currency_code; 
 }
 
-const repo = require("./bills.repository");
+const repo = require("./bills.repository"); 
 
 async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
   const { rows } = await pool.query(
     `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, accountId]
-  );
-  if (!rows.length) throw new AppError(400, errMsg || "Invalid account");
-  if (!rows[0].is_postable) throw new AppError(400, "Non-postable account used");
-  if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
+  ); 
+  if (!rows.length) throw new AppError(400, errMsg || "Invalid account"); 
+  if (!rows[0].is_postable) throw new AppError(400, "Non-postable account used"); 
+  if (rows[0].status !== "active") throw new AppError(400, "Inactive account used"); 
 }
 
 function calcTotals(lines) {
-  let subtotalCents = 0n;
+  let subtotalCents = 0n; 
 
   const computed = lines.map((l) => {
-    const qty = l.quantity ?? 1;
-    const unitPrice = l.unitPrice ?? 0;
-    const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
-    subtotalCents += lineCents;
+    const qty = l.quantity ?? 1; 
+    const unitPrice = l.unitPrice ?? 0; 
+    const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2); 
+    subtotalCents += lineCents; 
 
     return {
       ...l,
       quantity: qty,
       unitPrice,
       lineTotal: bigIntToDecimalString(lineCents, 2)
-    };
-  });
+    }; 
+  }); 
 
-  const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  return { computed, subtotal, total: subtotal };
+  const subtotal = bigIntToDecimalString(subtotalCents, 2); 
+  return { computed, subtotal, total: subtotal }; 
 }
 
 async function createDraftBill({ orgId, actorUserId, payload }) {
-  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: payload.vendorId });
-  if (vendor.type !== "vendor") throw new AppError(400, "Partner is not a vendor");
-  if (vendor.status !== "active") throw new AppError(400, "Vendor is inactive");
-  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: payload.vendorId }); 
+  if (vendor.type !== "vendor") throw new AppError(400, "Partner is not a vendor"); 
+  if (vendor.status !== "active") throw new AppError(400, "Vendor is inactive"); 
+  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId"); 
 
   for (const l of payload.lines) {
-    await assertPostableActiveAccount({ orgId, accountId: l.expenseAccountId, errMsg: "Invalid expenseAccountId" });
+    await assertPostableActiveAccount({ orgId, accountId: l.expenseAccountId, errMsg: "Invalid expenseAccountId" }); 
   }
 
-  const { computed, subtotal, total } = calcTotals(payload.lines);
+  const { computed, subtotal, total } = calcTotals(payload.lines); 
 
-  const client = await pool.connect();
+  const client = await pool.connect(); 
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN"); 
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+    const baseCurrency = await getOrgBaseCurrency(client, orgId); 
 
-    const billNo = await repo.nextBillNo(client, orgId);
+    const billNo = await repo.nextBillNo(client, orgId); 
     const bill = await repo.insertBill(client, {
       orgId,
       vendorId: payload.vendorId,
@@ -83,10 +83,10 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       subtotal,
       total,
       currencyCode: baseCurrency
-    });
+    }); 
 
-    for (let i = 0; i < computed.length; i++) {
-      const l = computed[i];
+    for (let i = 0;  i < computed.length;  i++) {
+      const l = computed[i]; 
       await repo.insertBillLine(client, {
         billId: bill.id,
         lineNo: i + 1,
@@ -95,24 +95,24 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
         unitPrice: l.unitPrice,
         lineTotal: l.lineTotal,
         expenseAccountId: l.expenseAccountId
-      });
+      }); 
     }
 
-    await client.query("COMMIT");
-    return bill;
+    await client.query("COMMIT"); 
+    return bill; 
   } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
+    await client.query("ROLLBACK"); 
+    throw e; 
   } finally {
-    client.release();
+    client.release(); 
   }
 }
 
 async function getBillDetails({ orgId, billId }) {
-  const bill = await repo.getBillById(orgId, billId);
-  if (!bill) throw new AppError(404, "Bill not found");
+  const bill = await repo.getBillById(orgId, billId); 
+  if (!bill) throw new AppError(404, "Bill not found"); 
 
-  const lines = await repo.getBillLines(billId);
+  const lines = await repo.getBillLines(billId); 
 
   const { rows: paidRows } = await pool.query(
     `
@@ -124,59 +124,59 @@ async function getBillDetails({ orgId, billId }) {
       AND vp.status='posted'
     `,
     [billId, orgId]
-  );
+  ); 
 
-  const paid = Number(paidRows[0]?.paid || 0);
-  const total = Number(bill.total);
-  const outstanding = Number((total - paid).toFixed(2));
+  const paid = Number(paidRows[0]?.paid || 0); 
+  const total = Number(bill.total); 
+  const outstanding = Number((total - paid).toFixed(2)); 
 
-  return { bill, lines, paid, outstanding };
+  return { bill, lines, paid, outstanding }; 
 }
 
 async function listBills({ orgId, query }) {
-  return repo.listBills({ orgId, query });
+  return repo.listBills({ orgId, query }); 
 }
 
 async function issueBill({ orgId, actorUserId, billId }) {
-  const { withTransaction } = require("../../../db/tx");
+  const { withTransaction } = require("../../../db/tx"); 
   return withTransaction(async (client) => {
     const { rows: billRows } = await client.query(
       `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, billId]
-    );
-    if (!billRows.length) throw new AppError(404, "Bill not found");
-    const bill = billRows[0];
-    if (bill.status !== "draft") throw new AppError(409, "Only draft bills can be issued");
+    ); 
+    if (!billRows.length) throw new AppError(404, "Bill not found"); 
+    const bill = billRows[0]; 
+    if (bill.status !== "draft") throw new AppError(409, "Only draft bills can be issued"); 
 
-    await assertBillApprovalStateAllowsIssue({ orgId, bill, client });
+    await assertBillApprovalStateAllowsIssue({ orgId, bill, client }); 
 
     const { rows: lines } = await client.query(
       `SELECT * FROM bill_lines WHERE bill_id=$1 ORDER BY line_no`,
       [billId]
-    );
-    if (!lines.length) throw new AppError(400, "Bill has no lines");
+    ); 
+    if (!lines.length) throw new AppError(400, "Bill has no lines"); 
 
-    const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: bill.vendor_id, client });
-    if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+    const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: bill.vendor_id, client }); 
+    if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId"); 
 
-    const period = await periodIF.findOpenPeriodForDate({ orgId, date: bill.bill_date, client });
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: bill.bill_date, client }); 
 
-  const expenseMap = new Map();
+  const expenseMap = new Map(); 
   for (const l of lines) {
-    await assertPostableActiveAccount({ orgId, accountId: l.expense_account_id, errMsg: "Invalid expenseAccountId" });
-    expenseMap.set(l.expense_account_id, (expenseMap.get(l.expense_account_id) || 0) + Number(l.line_total));
+    await assertPostableActiveAccount({ orgId, accountId: l.expense_account_id, errMsg: "Invalid expenseAccountId" }); 
+    expenseMap.set(l.expense_account_id, (expenseMap.get(l.expense_account_id) || 0) + Number(l.line_total)); 
   }
 
-  const apAccountId = vendor.default_payable_account_id;
-  const total = Number(bill.total);
+  const apAccountId = vendor.default_payable_account_id; 
+  const total = Number(bill.total); 
 
-  const journalLines = [];
+  const journalLines = []; 
   for (const [accountId, amt] of expenseMap.entries()) {
-    journalLines.push({ accountId, debit: Number(amt.toFixed(2)), credit: 0, description: `Expense for ${bill.bill_no}` });
+    journalLines.push({ accountId, debit: Number(amt.toFixed(2)), credit: 0, description: `Expense for ${bill.bill_no}` }); 
   }
-  journalLines.push({ accountId: apAccountId, debit: 0, credit: total, description: `A/P for ${bill.bill_no}` });
+  journalLines.push({ accountId: apAccountId, debit: 0, credit: total, description: `A/P for ${bill.bill_no}` }); 
 
-  const idempotencyKey = `bill:${billId}:issue`;
+  const idempotencyKey = `bill:${billId}:issue`; 
 
   const draft = await journalIF.createDraftJournal({
     orgId,
@@ -190,9 +190,9 @@ async function issueBill({ orgId, actorUserId, billId }) {
       idempotencyKey,
       lines: journalLines
     }
-  });
+  }); 
 
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client }); 
 
   const { rows } = await client.query(
     `
@@ -207,10 +207,10 @@ async function issueBill({ orgId, actorUserId, billId }) {
     RETURNING *
     `,
     [orgId, billId, period.id, posted.journalId, actorUserId]
-  );
+  ); 
 
-  return rows[0];
-  });
+  return rows[0]; 
+  }); 
 }
 
 // -----------------------------------------------------------------------------
@@ -221,56 +221,56 @@ async function ensureDocumentType({ orgId, code, name, client }) {
   const { rows } = await client.query(
     `SELECT id FROM document_types WHERE organization_id=$1 AND code=$2 AND is_active=TRUE`,
     [orgId, code]
-  );
-  if (rows.length) return rows[0].id;
+  ); 
+  if (rows.length) return rows[0].id; 
   const created = await documentsSvc.createDocumentType({
     orgId,
     payload: { code, name, description: `${name} approvals` }
-  });
-  return created.id;
+  }); 
+  return created.id; 
 }
 
 async function assertBillApprovalStateAllowsIssue({ orgId, bill, client }) {
-  const db = client || pool;
+  const db = client || pool; 
   const { rows: dtRows } = await db.query(
     `SELECT id FROM document_types WHERE organization_id=$1 AND code='BILL' AND is_active=TRUE`,
     [orgId]
-  );
-  if (!dtRows.length) return;
+  ); 
+  if (!dtRows.length) return; 
 
-  const dtId = dtRows[0].id;
+  const dtId = dtRows[0].id; 
   const { rows: ladder } = await db.query(
     `SELECT 1 FROM document_type_approval_levels WHERE document_type_id=$1 LIMIT 1`,
     [dtId]
-  );
-  if (!ladder.length) return;
+  ); 
+  if (!ladder.length) return; 
 
   if (!bill.workflow_document_id) {
-    throw new AppError(409, "Bill requires approval before issue (missing workflow document)");
+    throw new AppError(409, "Bill requires approval before issue (missing workflow document)"); 
   }
   const { rows: docRows } = await db.query(
     `SELECT workflow_state_code FROM documents WHERE organization_id=$1 AND id=$2`,
     [orgId, bill.workflow_document_id]
-  );
-  if (!docRows.length) throw new AppError(409, "Bill workflow document not found");
+  ); 
+  if (!docRows.length) throw new AppError(409, "Bill workflow document not found"); 
   if (docRows[0].workflow_state_code !== 'APPROVED') {
-    throw new AppError(409, `Bill requires approval before issue (current state: ${docRows[0].workflow_state_code})`);
+    throw new AppError(409, `Bill requires approval before issue (current state: ${docRows[0].workflow_state_code})`); 
   }
 }
 
 async function submitBillForApproval({ orgId, actorUserId, billId }) {
-  const { withTransaction } = require("../../../db/tx");
+  const { withTransaction } = require("../../../db/tx"); 
   return withTransaction(async (client) => {
     const { rows } = await client.query(
       `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, billId]
-    );
-    if (!rows.length) throw new AppError(404, "Bill not found");
-    const bill = rows[0];
+    ); 
+    if (!rows.length) throw new AppError(404, "Bill not found"); 
+    const bill = rows[0]; 
 
-    let documentId = bill.workflow_document_id;
+    let documentId = bill.workflow_document_id; 
     if (!documentId) {
-      const documentTypeId = await ensureDocumentType({ orgId, code: "BILL", name: "Bill", client });
+      const documentTypeId = await ensureDocumentType({ orgId, code: "BILL", name: "Bill", client }); 
       const doc = await documentsSvc.createDocument({
         orgId,
         userId: actorUserId,
@@ -282,21 +282,21 @@ async function submitBillForApproval({ orgId, actorUserId, billId }) {
           entity_id: bill.id,
           entity_ref: bill.bill_no
         }
-      });
-      documentId = doc.id;
+      }); 
+      documentId = doc.id; 
       await client.query(
         `UPDATE bills SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
         [orgId, billId, documentId]
-      );
+      ); 
     }
 
     const { rows: lines } = await client.query(
       `SELECT * FROM bill_lines WHERE bill_id=$1 ORDER BY line_no`,
       [billId]
-    );
+    ); 
 
-    const snapshot = { bill, lines, snapshot_at: new Date().toISOString() };
-    const buf = Buffer.from(JSON.stringify(snapshot, null, 2), "utf8");
+    const snapshot = { bill, lines, snapshot_at: new Date().toISOString() }; 
+    const buf = Buffer.from(JSON.stringify(snapshot, null, 2), "utf8"); 
 
     await documentsSvc.addVersionFromBuffer({
       orgId,
@@ -305,64 +305,64 @@ async function submitBillForApproval({ orgId, actorUserId, billId }) {
       originalFilename: `bill-${bill.bill_no}.json`,
       mimeType: "application/json",
       buffer: buf
-    });
+    }); 
 
-    const submitted = await documentsSvc.submitDocument({ orgId, documentId });
-    return submitted.document;
-  });
+    const submitted = await documentsSvc.submitDocument({ orgId, documentId }); 
+    return submitted.document; 
+  }); 
 }
 
 async function approveBillWorkflow({ orgId, actorUserId, billId, comment }) {
-  const { withTransaction } = require("../../../db/tx");
+  const { withTransaction } = require("../../../db/tx"); 
   return withTransaction(async (client) => {
     const { rows } = await client.query(
       `SELECT workflow_document_id FROM bills WHERE organization_id=$1 AND id=$2`,
       [orgId, billId]
-    );
-    if (!rows.length) throw new AppError(404, "Bill not found");
-    if (!rows[0].workflow_document_id) throw new AppError(409, "Bill has no workflow document");
+    ); 
+    if (!rows.length) throw new AppError(404, "Bill not found"); 
+    if (!rows[0].workflow_document_id) throw new AppError(409, "Bill has no workflow document"); 
     const result = await documentsSvc.approveDocument({
       orgId,
       documentId: rows[0].workflow_document_id,
       userId: actorUserId,
       comment: comment || null
-    });
-    return result.document;
-  });
+    }); 
+    return result.document; 
+  }); 
 }
 
 async function rejectBillWorkflow({ orgId, actorUserId, billId, comment }) {
-  const { withTransaction } = require("../../../db/tx");
+  const { withTransaction } = require("../../../db/tx"); 
   return withTransaction(async (client) => {
     const { rows } = await client.query(
       `SELECT workflow_document_id FROM bills WHERE organization_id=$1 AND id=$2`,
       [orgId, billId]
-    );
-    if (!rows.length) throw new AppError(404, "Bill not found");
-    if (!rows[0].workflow_document_id) throw new AppError(409, "Bill has no workflow document");
+    ); 
+    if (!rows.length) throw new AppError(404, "Bill not found"); 
+    if (!rows[0].workflow_document_id) throw new AppError(409, "Bill has no workflow document"); 
     const result = await documentsSvc.rejectDocument({
       orgId,
       documentId: rows[0].workflow_document_id,
       userId: actorUserId,
       comment: comment || null
-    });
-    return result.document;
-  });
+    }); 
+    return result.document; 
+  }); 
 }
 
 async function voidBill({ orgId, actorUserId, billId, reason }) {
-  const { withTransaction } = require("../../../db/tx");
+  const { withTransaction } = require("../../../db/tx"); 
   return withTransaction(async (client) => {
     const { rows: billRows } = await client.query(
       `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, billId]
-    );
-    if (!billRows.length) throw new AppError(404, "Bill not found");
-    const bill = billRows[0];
-    if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Only issued/paid bills can be voided");
-    if (!bill.journal_entry_id) throw new AppError(500, "Bill missing journal reference");
+    ); 
+    if (!billRows.length) throw new AppError(404, "Bill not found"); 
+    const bill = billRows[0]; 
+    if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Only issued/paid bills can be voided"); 
+    if (!bill.journal_entry_id) throw new AppError(500, "Bill missing journal reference"); 
 
-    const out = await journalIF.voidPostedJournal({ orgId, journalId: bill.journal_entry_id, actorUserId, reason, client });
+    const out = await journalIF.voidPostedJournal({ orgId, journalId: bill.journal_entry_id, actorUserId, reason, client }); 
 
     const { rows } = await client.query(
     `
@@ -377,10 +377,10 @@ async function voidBill({ orgId, actorUserId, billId, reason }) {
     RETURNING *
     `,
     [orgId, billId, actorUserId, reason, out.reversalJournalId || null]
-  );
+  ); 
 
-    return { bill: rows[0], reversalJournalId: out.reversalJournalId };
-  });
+    return { bill: rows[0], reversalJournalId: out.reversalJournalId }; 
+  }); 
 }
 
 module.exports = {
@@ -392,4 +392,4 @@ module.exports = {
   rejectBillWorkflow,
   issueBill,
   voidBill
-};
+}; 

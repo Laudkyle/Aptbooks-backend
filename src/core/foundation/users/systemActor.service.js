@@ -1,10 +1,10 @@
-const { pool } = require("../../../db/pool");
-const { AppError } = require("../../../shared/errors/AppError");
+const { pool } = require("../../../db/pool"); 
+const { AppError } = require("../../../shared/errors/AppError"); 
 
-const SYSTEM_EMAIL = "system@aptbooks.local";
+const SYSTEM_EMAIL = "system@aptbooks.local"; 
 
 async function ensureSystemUserForOrg({ orgId }) {
-  // 1) Try by (orgId + is_system) first if you added the column; fallback to email.
+  // 1) Try by (orgId + is_system) first if you added the column;  fallback to email.
   const { rows: existing } = await pool.query(
     `
     SELECT id, organization_id, email, status
@@ -15,7 +15,7 @@ async function ensureSystemUserForOrg({ orgId }) {
     LIMIT 1
     `,
     [orgId, SYSTEM_EMAIL]
-  );
+  ); 
 
   if (existing.length) {
     // Ensure active + ensure is_system is TRUE if the column exists
@@ -28,8 +28,8 @@ async function ensureSystemUserForOrg({ orgId }) {
       WHERE id=$1 AND organization_id=$2
       `,
       [existing[0].id, orgId]
-    ).catch(() => {}); // if is_system doesn't exist, ignore
-    return existing[0].id;
+    ).catch(() => {});  // if is_system doesn't exist, ignore
+    return existing[0].id; 
   }
 
   // 2) Create a system user for this org.
@@ -50,19 +50,19 @@ async function ensureSystemUserForOrg({ orgId }) {
         RETURNING id
         `,
         [orgId, SYSTEM_EMAIL, ""]
-      );
-      return rows2;
+      ); 
+      return rows2; 
     }
-    throw e;
-  });
+    throw e; 
+  }); 
 
-  return rows[0].id;
+  return rows[0].id; 
 }
 
 async function getSystemActorUserId({ orgId }) {
-  const id = await ensureSystemUserForOrg({ orgId });
-  if (!id) throw new AppError(500, "Failed to resolve system actor");
-  return id;
+  const id = await ensureSystemUserForOrg({ orgId }); 
+  if (!id) throw new AppError(500, "Failed to resolve system actor"); 
+  return id; 
 }
 
-module.exports = { getSystemActorUserId, ensureSystemUserForOrg };
+module.exports = { getSystemActorUserId, ensureSystemUserForOrg }; 

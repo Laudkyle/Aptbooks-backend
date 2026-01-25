@@ -9,8 +9,8 @@
  * data access details from higher tiers.
  */
 
-const { pool } = require("../db/pool");
-const { env } = require("../config/env");
+const { pool } = require("../db/pool"); 
+const { env } = require("../config/env"); 
 
 /**
  * @typedef {Object} EntityResolution
@@ -23,53 +23,53 @@ const { env } = require("../config/env");
  * Canonical entity types supported out-of-the-box.
  *
  * Add new types here as modules are introduced.
- * IMPORTANT: Tier 10 should treat entity_type as data; do not enforce hard-coded enums there.
+ * IMPORTANT: Tier 10 should treat entity_type as data;  do not enforce hard-coded enums there.
  */
 const RESOLVERS = {
   invoice: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, invoice_no AS entity_ref FROM invoices WHERE organization_id=$1 AND id=$2`,
       [orgId, entityId]
-    );
-    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
-    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Invoice" };
+    ); 
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null }; 
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Invoice" }; 
   },
 
   bill: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, bill_no AS entity_ref FROM bills WHERE organization_id=$1 AND id=$2`,
       [orgId, entityId]
-    );
-    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
-    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Bill" };
+    ); 
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null }; 
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Bill" }; 
   },
 
   fixed_asset: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, code AS entity_ref FROM fixed_assets WHERE organization_id=$1 AND id=$2`,
       [orgId, entityId]
-    );
-    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
-    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Fixed Asset" };
+    ); 
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null }; 
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Fixed Asset" }; 
   },
 
   lease: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, code AS entity_ref FROM leases WHERE organization_id=$1 AND id=$2`,
       [orgId, entityId]
-    );
-    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
-    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Lease" };
+    ); 
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null }; 
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Lease" }; 
   },
   employee: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, employee_no AS entity_ref FROM hr_employees WHERE organization_id=$1 AND id=$2`,
       [orgId, entityId]
-    );
-    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
-    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Employee" };
+    ); 
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null }; 
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Employee" }; 
   }
-};
+}; 
 
 /**
  * Register an entity resolver. This allows modules to extend supported entity types
@@ -79,7 +79,7 @@ const RESOLVERS = {
  * @param {(args: {orgId: string, entityId: string}) => Promise<EntityResolution>} fn
  */
 function registerResolver(entityType, fn) {
-  RESOLVERS[entityType] = fn;
+  RESOLVERS[entityType] = fn; 
 }
 
 /**
@@ -99,27 +99,27 @@ function registerResolver(entityType, fn) {
  * @returns {Promise<EntityResolution>}
  */
 async function resolveEntity({ orgId, entityType, entityId, strict }) {
-  const isStrict = typeof strict === "boolean" ? strict : env.ENTITY_RESOLVER_STRICT;
+  const isStrict = typeof strict === "boolean" ? strict : env.ENTITY_RESOLVER_STRICT; 
 
   if (!entityType || !entityId) {
-    return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: false, entity_ref: null, entity_label: null }; 
   }
 
-  const resolver = RESOLVERS[String(entityType).toLowerCase()];
+  const resolver = RESOLVERS[String(entityType).toLowerCase()]; 
   if (!resolver) {
-    if (isStrict) return { exists: false, entity_ref: null, entity_label: null };
-    return { exists: true, entity_ref: null, entity_label: null };
+    if (isStrict) return { exists: false, entity_ref: null, entity_label: null }; 
+    return { exists: true, entity_ref: null, entity_label: null }; 
   }
 
-  return resolver({ orgId, entityId });
+  return resolver({ orgId, entityId }); 
 }
 
 function listSupportedEntityTypes() {
-  return Object.keys(RESOLVERS).sort();
+  return Object.keys(RESOLVERS).sort(); 
 }
 
 module.exports = {
   registerResolver,
   resolveEntity,
   listSupportedEntityTypes
-};
+}; 
