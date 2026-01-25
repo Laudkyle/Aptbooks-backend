@@ -1,12 +1,12 @@
-const router = require("express").Router(); 
-const crypto = require("crypto"); 
-const bcrypt = require("bcrypt"); 
-const jwt = require("jsonwebtoken"); 
-const { pool } = require("../../../db/pool"); 
-const { env } = require("../../../config/env"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
-const { writeAudit } = require("../audit-logs/audit.service"); 
-const { verifyTotp, generateSecretBase32, buildOtpauthUrl } = require("../../../shared/security/totp"); 
+const router = require("express").Router();
+const crypto = require("crypto");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const { pool } = require("../../../db/pool");
+const { env } = require("../../../config/env");
+const { AppError } = require("../../../shared/errors/AppError");
+const { writeAudit } = require("../audit-logs/audit.service");
+const { verifyTotp, generateSecretBase32, buildOtpauthUrl } = require("../../../shared/security/totp");
 const {
   signAccessToken,
   signRefreshToken,
@@ -15,107 +15,107 @@ const {
   revokeRefreshTokenByJti,
    revokeRefreshTokenFamily,
   revokeAllRefreshTokensForUser
-} = require("./tokens.service"); 
+} = require("./tokens.service");
 
 // Minimal in-memory rate limiter (per IP + email) for the login endpoint.
 // For horizontally scaled deployments, replace with a shared store (e.g., Redis).
-const WINDOW_MS = 15 * 60 * 1000; 
-const MAX_ATTEMPTS = 10; 
-const attempts = new Map(); 
+const WINDOW_MS = 15 * 60 * 1000;
+const MAX_ATTEMPTS = 10;
+const attempts = new Map();
 
 function rateLimitKey(req, email) {
-  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown"; 
-  return `${ip}:${String(email || "").toLowerCase()}`; 
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+  return `${ip}:${String(email || "").toLowerCase()}`;
 }
 
 function assertNotRateLimited(req, email) {
-  const key = rateLimitKey(req, email); 
-  const now = Date.now(); 
-  const entry = attempts.get(key) || { count: 0, resetAt: now + WINDOW_MS }; 
+  const key = rateLimitKey(req, email);
+  const now = Date.now();
+  const entry = attempts.get(key) || { count: 0, resetAt: now + WINDOW_MS };
 
   if (now > entry.resetAt) {
-    entry.count = 0; 
-    entry.resetAt = now + WINDOW_MS; 
+    entry.count = 0;
+    entry.resetAt = now + WINDOW_MS;
   }
 
-  entry.count += 1; 
-  attempts.set(key, entry); 
+  entry.count += 1;
+  attempts.set(key, entry);
 
   if (entry.count > MAX_ATTEMPTS) {
-    throw new AppError(429, "Too many login attempts. Please try again later."); 
+    throw new AppError(429, "Too many login attempts. Please try again later.");
   }
 }
 
 function clearAttempts(req, email) {
-  attempts.delete(rateLimitKey(req, email)); 
+  attempts.delete(rateLimitKey(req, email));
 }
 
 function getRefreshTokenFromRequest(req) {
   // 1) body
-  const bodyToken = req.body?.refreshToken; 
-  if (bodyToken && typeof bodyToken === "string") return bodyToken; 
+  const bodyToken = req.body?.refreshToken;
+  if (bodyToken && typeof bodyToken === "string") return bodyToken;
 
   // 2) header
-  const hdr = req.headers["x-refresh-token"]; 
-  if (hdr && typeof hdr === "string") return hdr; 
+  const hdr = req.headers["x-refresh-token"];
+  if (hdr && typeof hdr === "string") return hdr;
 
   // 3) cookie (manual parse to avoid external dependency)
-  const cookieHeader = req.headers["cookie"]; 
+  const cookieHeader = req.headers["cookie"];
   if (cookieHeader && typeof cookieHeader === "string") {
-    const parts = cookieHeader.split("; ").map((p) => p.trim()); 
+    const parts = cookieHeader.split(";").map((p) => p.trim());
     for (const p of parts) {
       if (p.startsWith(`${env.REFRESH_TOKEN_COOKIE_NAME}=`)) {
-        return decodeURIComponent(p.substring(env.REFRESH_TOKEN_COOKIE_NAME.length + 1)); 
+        return decodeURIComponent(p.substring(env.REFRESH_TOKEN_COOKIE_NAME.length + 1));
       }
     }
   }
 
-  return null; 
+  return null;
 }
 
 function setRefreshCookie(res, token) {
-  if (!env.REFRESH_TOKEN_USE_COOKIE) return; 
+  if (!env.REFRESH_TOKEN_USE_COOKIE) return;
 
   const opts = {
     httpOnly: true,
     secure: env.COOKIE_SECURE,
     sameSite: env.COOKIE_SAMESITE,
     path: "/auth/refresh"
-  }; 
-  if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN; 
+  };
+  if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
 
-  // Express has res.cookie built-in;  no cookie-parser required for setting.
-  res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, token, opts); 
+  // Express has res.cookie built-in;no cookie-parser required for setting.
+  res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, token, opts);
 }
 
 function clearRefreshCookie(res) {
-  if (!env.REFRESH_TOKEN_USE_COOKIE) return; 
-  const opts = { path: "/auth/refresh" }; 
-  if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN; 
-  res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, opts); 
+  if (!env.REFRESH_TOKEN_USE_COOKIE) return;
+  const opts = { path: "/auth/refresh" };
+  if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
+  res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, opts);
 }
 
 
 
 function jwtVerifyOpts() {
-  const opts = {}; 
-  if (env.JWT_ISSUER) opts.issuer = env.JWT_ISSUER; 
-  if (env.JWT_AUDIENCE) opts.audience = env.JWT_AUDIENCE; 
-  return opts; 
+  const opts = {};
+  if (env.JWT_ISSUER) opts.issuer = env.JWT_ISSUER;
+  if (env.JWT_AUDIENCE) opts.audience = env.JWT_AUDIENCE;
+  return opts;
 }
 
 router.post("/login", async (req, res, next) => {
   try {
-    const { email, password } = req.body || {}; 
-    if (!email || !password) throw new AppError(400, "email and password required"); 
+    const { email, password } = req.body || {};
+    if (!email || !password) throw new AppError(400, "email and password required");
 
-    assertNotRateLimited(req, email); 
+    assertNotRateLimited(req, email);
 
     const { rows } = await pool.query(
       `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled, two_factor_secret
          FROM users WHERE email=$1`,
       [email]
-    ); 
+    );
 
     if (!rows.length) {
       await writeAudit({
@@ -127,23 +127,23 @@ router.post("/login", async (req, res, next) => {
         ip: req.audit?.ip,
         userAgent: req.audit?.userAgent,
         after: { email, reason: "not_found" }
-      }); 
-      throw new AppError(401, "Invalid credentials"); 
+      });
+      throw new AppError(401, "Invalid credentials");
     }
 
-    const user = rows[0]; 
+    const user = rows[0];
 
-    if (user.is_system) throw new AppError(403, "System user cannot login"); 
-    if (user.status !== "active") throw new AppError(403, "User is not active"); 
+    if (user.is_system) throw new AppError(403, "System user cannot login");
+    if (user.status !== "active") throw new AppError(403, "User is not active");
 
-    const ok = await bcrypt.compare(password, user.password_hash); 
+    const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
       // login history (failure)
       await pool.query(
         `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent, failure_reason)
          VALUES ($1,$2,$3,FALSE,$4,$5,$6)`,
         [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null, "bad_password"]
-      ).catch(() => {}); 
+      ).catch(() => {});
       await writeAudit({
         organizationId: user.organization_id,
         actorUserId: user.id,
@@ -153,22 +153,22 @@ router.post("/login", async (req, res, next) => {
         ip: req.audit?.ip,
         userAgent: req.audit?.userAgent,
         after: { reason: "bad_password" }
-      }); 
-      throw new AppError(401, "Invalid credentials"); 
+      });
+      throw new AppError(401, "Invalid credentials");
     }
 
     // 2FA check if enabled
     if (user.two_factor_enabled) {
-      const otp = req.body?.otp; 
-      if (!otp) throw new AppError(401, "2FA code required"); 
-      const secret = user.two_factor_secret; 
+      const otp = req.body?.otp;
+      if (!otp) throw new AppError(401, "2FA code required");
+      const secret = user.two_factor_secret;
       if (!secret || !verifyTotp(secret, otp, { window: 1 })) {
         await pool.query(
           `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent, failure_reason)
            VALUES ($1,$2,$3,FALSE,$4,$5,$6)`,
           [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null, "bad_2fa"]
-        ).catch(() => {}); 
-        throw new AppError(401, "Invalid 2FA code"); 
+        ).catch(() => {});
+        throw new AppError(401, "Invalid 2FA code");
       }
     }
 
@@ -176,13 +176,13 @@ router.post("/login", async (req, res, next) => {
       userId: user.id,
       organizationId: user.organization_id,
       email
-    }); 
+    });
 
     const refresh = signRefreshToken({
       userId: user.id,
       organizationId: user.organization_id,
       email
-    }); 
+    });
 
     await persistRefreshToken({
       organizationId: user.organization_id,
@@ -193,11 +193,11 @@ router.post("/login", async (req, res, next) => {
       expiresAt: refresh.expiresAt,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent
-    }); 
+    });
 
-    setRefreshCookie(res, refresh.token); 
+    setRefreshCookie(res, refresh.token);
 
-    clearAttempts(req, email); 
+    clearAttempts(req, email);
 
     await writeAudit({
       organizationId: user.organization_id,
@@ -208,112 +208,112 @@ router.post("/login", async (req, res, next) => {
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { email }
-    }); 
+    });
 
     // login history (success) and user last login markers
     await pool.query(
       `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent)
        VALUES ($1,$2,$3,TRUE,$4,$5)`,
       [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null]
-    ).catch(() => {}); 
+    ).catch(() => {});
     await pool.query(
       `UPDATE users SET last_login_at=NOW(), last_login_ip=$2, last_login_user_agent=$3 WHERE id=$1`,
       [user.id, req.audit?.ip || null, req.audit?.userAgent || null]
-    ).catch(() => {}); 
+    ).catch(() => {});
 
     res.json({
       accessToken,
       refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : refresh.token
-    }); 
-  } catch (e) { next(e);  }
-}); 
+    });
+  } catch (e) { next(e);}
+});
 
 // 2FA enrollment (generate secret)
 router.post("/2fa/enroll", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const userId = req.user.id; 
-    const { rows } = await pool.query(`SELECT email, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]); 
-    if (!rows.length) throw new AppError(404, "User not found"); 
-    if (rows[0].two_factor_enabled) throw new AppError(409, "2FA already enabled"); 
-    const secret = generateSecretBase32(); 
-    const issuer = env.APP_NAME || "ERP"; 
-    const otpauth = buildOtpauthUrl({ issuer, email: rows[0].email, secret }); 
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+    const { rows } = await pool.query(`SELECT email, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    if (!rows.length) throw new AppError(404, "User not found");
+    if (rows[0].two_factor_enabled) throw new AppError(409, "2FA already enabled");
+    const secret = generateSecretBase32();
+    const issuer = env.APP_NAME || "ERP";
+    const otpauth = buildOtpauthUrl({ issuer, email: rows[0].email, secret });
     // store as pending secret (two_factor_secret) until enabled
-    await pool.query(`UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId, secret]); 
-    res.json({ secret, otpauth }); 
-  } catch (e) { next(e);  }
-}); 
+    await pool.query(`UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId, secret]);
+    res.json({ secret, otpauth });
+  } catch (e) { next(e);}
+});
 
 // 2FA enable (verify TOTP)
 router.post("/2fa/verify", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const userId = req.user.id; 
-    const otp = req.body?.otp; 
-    if (!otp) throw new AppError(400, "otp required"); 
-    const { rows } = await pool.query(`SELECT two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]); 
-    if (!rows.length) throw new AppError(404, "User not found"); 
-    if (rows[0].two_factor_enabled) throw new AppError(409, "2FA already enabled"); 
-    if (!rows[0].two_factor_secret) throw new AppError(409, "Enroll first"); 
-    if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp"); 
-    await pool.query(`UPDATE users SET two_factor_enabled=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]); 
-    res.json({ ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+    const otp = req.body?.otp;
+    if (!otp) throw new AppError(400, "otp required");
+    const { rows } = await pool.query(`SELECT two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    if (!rows.length) throw new AppError(404, "User not found");
+    if (rows[0].two_factor_enabled) throw new AppError(409, "2FA already enabled");
+    if (!rows[0].two_factor_secret) throw new AppError(409, "Enroll first");
+    if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp");
+    await pool.query(`UPDATE users SET two_factor_enabled=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    res.json({ ok: true });
+  } catch (e) { next(e);}
+});
 
 // 2FA disable (verify password + TOTP)
 router.post("/2fa/disable", require("../../../middleware/auth.middleware").authRequired, async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const userId = req.user.id; 
-    const password = req.body?.password; 
-    const otp = req.body?.otp; 
-    if (!password || !otp) throw new AppError(400, "password and otp required"); 
-    const { rows } = await pool.query(`SELECT password_hash, two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]); 
-    if (!rows.length) throw new AppError(404, "User not found"); 
-    if (!rows[0].two_factor_enabled) throw new AppError(409, "2FA not enabled"); 
-    const ok = await bcrypt.compare(password, rows[0].password_hash); 
-    if (!ok) throw new AppError(401, "Invalid credentials"); 
-    if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp"); 
-    await pool.query(`UPDATE users SET two_factor_enabled=FALSE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]); 
-    res.json({ ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const userId = req.user.id;
+    const password = req.body?.password;
+    const otp = req.body?.otp;
+    if (!password || !otp) throw new AppError(400, "password and otp required");
+    const { rows } = await pool.query(`SELECT password_hash, two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    if (!rows.length) throw new AppError(404, "User not found");
+    if (!rows[0].two_factor_enabled) throw new AppError(409, "2FA not enabled");
+    const ok = await bcrypt.compare(password, rows[0].password_hash);
+    if (!ok) throw new AppError(401, "Invalid credentials");
+    if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp");
+    await pool.query(`UPDATE users SET two_factor_enabled=FALSE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
+    res.json({ ok: true });
+  } catch (e) { next(e);}
+});
 
 /**
  * Public registration (org + initial admin user provisioning)
  * NOTE: In production you may want to gate this (invite-only) via env.PUBLIC_REGISTRATION_ENABLED=false.
  */
 router.post("/register", async (req, res, next) => {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    if (env.PUBLIC_REGISTRATION_ENABLED === false) throw new AppError(403, "Public registration disabled"); 
+    if (env.PUBLIC_REGISTRATION_ENABLED === false) throw new AppError(403, "Public registration disabled");
 
-    const { organizationName, baseCurrencyCode, email, password } = req.body || {}; 
-    if (!organizationName) throw new AppError(400, "organizationName required"); 
-    if (!email || !password) throw new AppError(400, "email and password required"); 
-    if (String(password).length < 10) throw new AppError(400, "password must be at least 10 characters"); 
+    const { organizationName, baseCurrencyCode, email, password } = req.body || {};
+    if (!organizationName) throw new AppError(400, "organizationName required");
+    if (!email || !password) throw new AppError(400, "email and password required");
+    if (String(password).length < 10) throw new AppError(400, "password must be at least 10 characters");
 
-    const currencyCode = (baseCurrencyCode || "GHS").toUpperCase(); 
-    const { rows: cRows } = await client.query(`SELECT code FROM currencies WHERE code=$1`, [currencyCode]); 
-    if (!cRows.length) throw new AppError(400, "Invalid baseCurrencyCode"); 
+    const currencyCode = (baseCurrencyCode || "GHS").toUpperCase();
+    const { rows: cRows } = await client.query(`SELECT code FROM currencies WHERE code=$1`, [currencyCode]);
+    if (!cRows.length) throw new AppError(400, "Invalid baseCurrencyCode");
 
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     // 1) Create org
     const { rows: orgRows } = await client.query(
       `INSERT INTO organizations(name, base_currency_code) VALUES ($1,$2) RETURNING id, name, base_currency_code`,
       [organizationName, currencyCode]
-    ); 
-    const org = orgRows[0]; 
+    );
+    const org = orgRows[0];
 
     // 2) Create Admin role
     const { rows: roleRows } = await client.query(
       `INSERT INTO roles(organization_id, name) VALUES ($1,'Admin') RETURNING id, name`,
       [org.id]
-    ); 
-    const role = roleRows[0]; 
+    );
+    const role = roleRows[0];
 
     // 3) Grant all permissions to Admin role
     await client.query(
@@ -323,29 +323,29 @@ router.post("/register", async (req, res, next) => {
       ON CONFLICT DO NOTHING
       `,
       [role.id]
-    ); 
+    );
 
     // 4) Create user
-    const passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS); 
+    const passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
     const { rows: userRows } = await client.query(
       `INSERT INTO users(organization_id, email, password_hash, status)
        VALUES ($1,$2,$3,'active')
        RETURNING id, email, organization_id, status, created_at`,
       [org.id, email, passwordHash]
-    ); 
-    const user = userRows[0]; 
+    );
+    const user = userRows[0];
 
     // 5) Membership + role assignment
     await client.query(
       `INSERT INTO user_organizations(user_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
       [user.id, org.id]
-    ); 
+    );
     await client.query(
       `INSERT INTO user_roles(user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
       [user.id, role.id]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
+    await client.query("COMMIT");
 
     await writeAudit({
       organizationId: org.id,
@@ -356,11 +356,11 @@ router.post("/register", async (req, res, next) => {
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { organization: org, user: { id: user.id, email: user.email } }
-    }); 
+    });
 
     // Auto-login after registration
-    const accessToken = signAccessToken({ userId: user.id, organizationId: org.id, email: user.email }); 
-    const refresh = signRefreshToken({ userId: user.id, organizationId: org.id, email: user.email }); 
+    const accessToken = signAccessToken({ userId: user.id, organizationId: org.id, email: user.email });
+    const refresh = signRefreshToken({ userId: user.id, organizationId: org.id, email: user.email });
     await persistRefreshToken({
       organizationId: org.id,
       userId: user.id,
@@ -370,20 +370,20 @@ router.post("/register", async (req, res, next) => {
       expiresAt: refresh.expiresAt,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent
-    }); 
+    });
 
     res.status(201).json({
       organization: org,
       user: { id: user.id, email: user.email, organization_id: user.organization_id },
       tokens: { accessToken, refreshToken: refresh.token }
-    }); 
+    });
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    next(e); 
+    await client.query("ROLLBACK");
+    next(e);
   } finally {
-    client.release(); 
+    client.release();
   }
-}); 
+});
 
 /**
  * Forgot password: create an expiring, single-use reset token.
@@ -391,31 +391,31 @@ router.post("/register", async (req, res, next) => {
  */
 router.post("/forgot-password", async (req, res, next) => {
   try {
-    const { email } = req.body || {}; 
-    if (!email) throw new AppError(400, "email required"); 
+    const { email } = req.body || {};
+    if (!email) throw new AppError(400, "email required");
 
     const { rows: users } = await pool.query(
       `SELECT id, email, organization_id, status, is_system FROM users WHERE email=$1`,
       [email]
-    ); 
+    );
 
     // Always respond OK (anti-enumeration)
-    if (!users.length) return res.json({ ok: true }); 
+    if (!users.length) return res.json({ ok: true });
 
-    const eligible = users.filter(u => !u.is_system && u.status === "active"); 
-    if (!eligible.length) return res.json({ ok: true }); 
+    const eligible = users.filter(u => !u.is_system && u.status === "active");
+    if (!eligible.length) return res.json({ ok: true });
 
-    const ttlMinutes = env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30; 
-    const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000); 
+    const ttlMinutes = env.PASSWORD_RESET_TOKEN_TTL_MINUTES || 30;
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000);
 
     // One token per user record (handles the rare case of same email across orgs)
-    const issued = []; 
+    const issued = [];
     for (const u of eligible) {
-      const token = crypto.randomBytes(32).toString("hex"); 
+      const token = crypto.randomBytes(32).toString("hex");
       const tokenHash = crypto
         .createHash("sha256")
         .update(token + String(env.PASSWORD_RESET_TOKEN_PEPPER || ""))
-        .digest("hex"); 
+        .digest("hex");
 
       await pool.query(
         `
@@ -423,7 +423,7 @@ router.post("/forgot-password", async (req, res, next) => {
         VALUES ($1,$2,$3,$4,$5)
         `,
         [u.id, tokenHash, expiresAt, req.audit?.ip || null, req.audit?.userAgent || null]
-      ); 
+      );
 
       await writeAudit({
         organizationId: u.organization_id,
@@ -434,33 +434,33 @@ router.post("/forgot-password", async (req, res, next) => {
         ip: req.audit?.ip,
         userAgent: req.audit?.userAgent,
         after: { email: u.email, expiresAt }
-      }); 
+      });
 
       if (env.RETURN_RESET_TOKEN_IN_RESPONSE) {
-        issued.push({ organization_id: u.organization_id, token, expiresAt }); 
+        issued.push({ organization_id: u.organization_id, token, expiresAt });
       }
     }
 
-    // In production you'd send tokens via email;  here we optionally return them for dev/test.
-    res.json(env.RETURN_RESET_TOKEN_IN_RESPONSE ? { ok: true, issued } : { ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    // In production you'd send tokens via email;here we optionally return them for dev/test.
+    res.json(env.RETURN_RESET_TOKEN_IN_RESPONSE ? { ok: true, issued } : { ok: true });
+  } catch (e) { next(e);}
+});
 
 router.post("/reset-password", async (req, res, next) => {
   try {
-    const { token, newPassword } = req.body || {}; 
-    if (!token) throw new AppError(400, "token required"); 
-    if (!newPassword) throw new AppError(400, "newPassword required"); 
-    if (String(newPassword).length < 10) throw new AppError(400, "newPassword must be at least 10 characters"); 
+    const { token, newPassword } = req.body || {};
+    if (!token) throw new AppError(400, "token required");
+    if (!newPassword) throw new AppError(400, "newPassword required");
+    if (String(newPassword).length < 10) throw new AppError(400, "newPassword must be at least 10 characters");
 
     const tokenHash = crypto
       .createHash("sha256")
       .update(String(token) + String(env.PASSWORD_RESET_TOKEN_PEPPER || ""))
-      .digest("hex"); 
+      .digest("hex");
 
-    const client = await pool.connect(); 
+    const client = await pool.connect();
     try {
-      await client.query("BEGIN"); 
+      await client.query("BEGIN");
 
       const { rows } = await client.query(
         `
@@ -473,20 +473,20 @@ router.post("/reset-password", async (req, res, next) => {
          LIMIT 1
         `,
         [tokenHash]
-      ); 
+      );
 
-      if (!rows.length) throw new AppError(400, "Invalid or expired token"); 
+      if (!rows.length) throw new AppError(400, "Invalid or expired token");
 
-      const rec = rows[0]; 
-      const passwordHash = await bcrypt.hash(newPassword, env.BCRYPT_ROUNDS); 
+      const rec = rows[0];
+      const passwordHash = await bcrypt.hash(newPassword, env.BCRYPT_ROUNDS);
 
-      await client.query(`UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2`, [passwordHash, rec.user_id]); 
-      await client.query(`UPDATE password_reset_tokens SET used_at=NOW() WHERE id=$1`, [rec.prt_id]); 
+      await client.query(`UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2`, [passwordHash, rec.user_id]);
+      await client.query(`UPDATE password_reset_tokens SET used_at=NOW() WHERE id=$1`, [rec.prt_id]);
 
       // Revoke all refresh tokens so a stolen refresh token cannot be used after reset.
-      await revokeAllRefreshTokensForUser({ organizationId: rec.organization_id, userId: rec.user_id, reason:"User forot password" }); 
+      await revokeAllRefreshTokensForUser({ organizationId: rec.organization_id, userId: rec.user_id, reason:"User forot password" });
 
-      await client.query("COMMIT"); 
+      await client.query("COMMIT");
 
       await writeAudit({
         organizationId: rec.organization_id,
@@ -497,25 +497,25 @@ router.post("/reset-password", async (req, res, next) => {
         ip: req.audit?.ip,
         userAgent: req.audit?.userAgent,
         after: { email: rec.email }
-      }); 
+      });
 
-      res.json({ ok: true }); 
+      res.json({ ok: true });
     } catch (e) {
-      await client.query("ROLLBACK"); 
-      throw e; 
+      await client.query("ROLLBACK");
+      throw e;
     } finally {
-      client.release(); 
+      client.release();
     }
-  } catch (e) { next(e);  }
-}); 
+  } catch (e) { next(e);}
+});
 router.post("/refresh", async (req, res, next) => {
   try {
-    const rt = getRefreshTokenFromRequest(req); 
-    if (!rt) throw new AppError(400, "refreshToken required"); 
+    const rt = getRefreshTokenFromRequest(req);
+    if (!rt) throw new AppError(400, "refreshToken required");
 
-    const rotated = await rotateRefreshToken({ token: rt }); 
+    const rotated = await rotateRefreshToken({ token: rt });
 
-    setRefreshCookie(res, rotated.refreshToken); 
+    setRefreshCookie(res, rotated.refreshToken);
 
     await writeAudit({
       organizationId: rotated.organizationId,
@@ -526,40 +526,40 @@ router.post("/refresh", async (req, res, next) => {
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { familyId: rotated.familyId }
-    }); 
+    });
 
     res.json({
       accessToken: rotated.accessToken,
       refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : rotated.refreshToken
-    }); 
-  } catch (e) { next(e);  }
-}); 
+    });
+  } catch (e) { next(e);}
+});
 
 router.post("/logout", async (req, res, next) => {
   try {
-    const rt = getRefreshTokenFromRequest(req); 
-    if (!rt) throw new AppError(400, "refreshToken required"); 
+    const rt = getRefreshTokenFromRequest(req);
+    if (!rt) throw new AppError(400, "refreshToken required");
 
-    let payload; 
+    let payload;
     try {
-      payload = jwt.verify(rt, env.JWT_REFRESH_SECRET, (env.JWT_ISSUER||env.JWT_AUDIENCE)?{ issuer: env.JWT_ISSUER || undefined, audience: env.JWT_AUDIENCE || undefined }: undefined); 
+      payload = jwt.verify(rt, env.JWT_REFRESH_SECRET, (env.JWT_ISSUER||env.JWT_AUDIENCE)?{ issuer: env.JWT_ISSUER || undefined, audience: env.JWT_AUDIENCE || undefined }: undefined);
     } catch (e) {
       // Even if token is invalid, clear cookie for client hygiene
-      clearRefreshCookie(res); 
-      throw new AppError(401, "Invalid refresh token"); 
+      clearRefreshCookie(res);
+      throw new AppError(401, "Invalid refresh token");
     }
 
-    if (payload?.typ !== "refresh") throw new AppError(401, "Invalid refresh token"); 
+    if (payload?.typ !== "refresh") throw new AppError(401, "Invalid refresh token");
 
-    const userId = payload.sub; 
-    const organizationId = payload.organization_id; 
-    const jti = payload.jti; 
+    const userId = payload.sub;
+    const organizationId = payload.organization_id;
+    const jti = payload.jti;
 
-    if (!userId || !organizationId || !jti) throw new AppError(401, "Invalid refresh token"); 
+    if (!userId || !organizationId || !jti) throw new AppError(401, "Invalid refresh token");
 
-    await revokeRefreshTokenByJti({ jti, organizationId, userId, reason: "logout" }); 
+    await revokeRefreshTokenByJti({ jti, organizationId, userId, reason: "logout" });
 
-    clearRefreshCookie(res); 
+    clearRefreshCookie(res);
 
     await writeAudit({
       organizationId,
@@ -570,36 +570,36 @@ router.post("/logout", async (req, res, next) => {
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: {}
-    }); 
+    });
 
-    res.json({ ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    res.json({ ok: true });
+  } catch (e) { next(e);}
+});
 
 router.post("/logout-all", async (req, res, next) => {
   try {
-    const rt = getRefreshTokenFromRequest(req); 
-    if (!rt) throw new AppError(400, "refreshToken required"); 
+    const rt = getRefreshTokenFromRequest(req);
+    if (!rt) throw new AppError(400, "refreshToken required");
 
-    let payload; 
+    let payload;
     try {
-      payload = jwt.verify(rt, env.JWT_REFRESH_SECRET, (env.JWT_ISSUER||env.JWT_AUDIENCE)?{ issuer: env.JWT_ISSUER || undefined, audience: env.JWT_AUDIENCE || undefined }: undefined); 
+      payload = jwt.verify(rt, env.JWT_REFRESH_SECRET, (env.JWT_ISSUER||env.JWT_AUDIENCE)?{ issuer: env.JWT_ISSUER || undefined, audience: env.JWT_AUDIENCE || undefined }: undefined);
     } catch (e) {
-      clearRefreshCookie(res); 
-      throw new AppError(401, "Invalid refresh token"); 
+      clearRefreshCookie(res);
+      throw new AppError(401, "Invalid refresh token");
     }
 
-    if (payload?.typ !== "refresh") throw new AppError(401, "Invalid refresh token"); 
+    if (payload?.typ !== "refresh") throw new AppError(401, "Invalid refresh token");
 
-    const userId = payload.sub; 
-    const organizationId = payload.organization_id; 
-    const familyId = payload.fid; 
+    const userId = payload.sub;
+    const organizationId = payload.organization_id;
+    const familyId = payload.fid;
 
-    if (!userId || !organizationId || !familyId) throw new AppError(401, "Invalid refresh token"); 
+    if (!userId || !organizationId || !familyId) throw new AppError(401, "Invalid refresh token");
 
-    await revokeRefreshTokenFamily({ familyId, organizationId, userId }); 
+    await revokeRefreshTokenFamily({ familyId, organizationId, userId });
 
-    clearRefreshCookie(res); 
+    clearRefreshCookie(res);
 
     await writeAudit({
       organizationId,
@@ -610,10 +610,10 @@ router.post("/logout-all", async (req, res, next) => {
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { familyId }
-    }); 
+    });
 
-    res.json({ ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    res.json({ ok: true });
+  } catch (e) { next(e);}
+});
 
-module.exports = router; 
+module.exports = router;

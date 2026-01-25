@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 async function createCategory({ orgId, payload }) {
   const { rows } = await pool.query(
@@ -22,16 +22,16 @@ async function createCategory({ orgId, payload }) {
       payload.disposalGainAccountId,
       payload.disposalLossAccountId
     ]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listCategories({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM asset_categories WHERE organization_id=$1 ORDER BY code ASC`,
     [orgId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 
@@ -39,8 +39,8 @@ async function getCategory({ orgId, id }) {
   const { rows } = await pool.query(
     `SELECT * FROM asset_categories WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateCategory({ orgId, id, payload }) {
@@ -71,16 +71,16 @@ async function updateCategory({ orgId, id, payload }) {
       payload.disposalLossAccountId ?? null,
       payload.status ?? null
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function countAssetsInCategory({ orgId, categoryId }) {
   const { rows } = await pool.query(
     `SELECT COUNT(1)::int AS cnt FROM fixed_assets WHERE organization_id=$1 AND category_id=$2`,
     [orgId, categoryId]
-  ); 
-  return rows[0]?.cnt || 0; 
+  );
+  return rows[0]?.cnt || 0;
 }
 
 module.exports = {
@@ -89,4 +89,4 @@ module.exports = {
   getCategory,
   updateCategory,
   countAssetsInCategory
-}; 
+};

@@ -1,11 +1,11 @@
-const { pool } = require("../../../../db/pool"); 
+const { pool } = require("../../../../db/pool");
 
 async function nextReceiptNo(client, orgId) {
   await client.query(
     `INSERT INTO customer_receipt_sequences(organization_id, next_no)
      VALUES ($1, 1) ON CONFLICT (organization_id) DO NOTHING`,
     [orgId]
-  ); 
+  );
 
   const { rows } = await client.query(
     `UPDATE customer_receipt_sequences
@@ -13,10 +13,10 @@ async function nextReceiptNo(client, orgId) {
      WHERE organization_id=$1
      RETURNING next_no`,
     [orgId]
-  ); 
+  );
 
-  const no = BigInt(rows[0].next_no) - 1n; 
-  return `RCPT-${String(no).padStart(6, "0")}`; 
+  const no = BigInt(rows[0].next_no) - 1n;
+  return `RCPT-${String(no).padStart(6, "0")}`;
 }
 
 async function insertCustomerReceipt(client, {
@@ -42,8 +42,8 @@ async function insertCustomerReceipt(client, {
     RETURNING *
     `,
     [orgId, customerId, receiptNo, receiptDate, paymentMethodId || null, cashAccountId, amountTotal, currencyCode, memo || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function upsertAllocation(client, { customerReceiptId, invoiceId, amountApplied, discountTaken }) {
@@ -55,14 +55,14 @@ async function upsertAllocation(client, { customerReceiptId, invoiceId, amountAp
     DO UPDATE SET amount_applied=EXCLUDED.amount_applied, discount_taken=EXCLUDED.discount_taken
     `,
     [customerReceiptId, invoiceId, amountApplied, discountTaken || "0.00"]
-  ); 
+  );
 }
 
 async function deleteAllocations(client, customerReceiptId) {
   await client.query(
     `DELETE FROM customer_receipt_allocations WHERE customer_receipt_id=$1`,
     [customerReceiptId]
-  ); 
+  );
 }
 
 async function recordAllocationEvent(client, { orgId, customerReceiptId, actorUserId, action, before, after }) {
@@ -74,39 +74,39 @@ async function recordAllocationEvent(client, { orgId, customerReceiptId, actorUs
     VALUES ($1,$2,$3,$4,$5,$6)
     `,
     [orgId, customerReceiptId, actorUserId || null, action, before || null, after || null]
-  ); 
+  );
 }
 
 async function getCustomerReceiptById(orgId, id) {
   const { rows } = await pool.query(
     `SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getAllocations(customerReceiptId) {
   const { rows } = await pool.query(
     `SELECT * FROM customer_receipt_allocations WHERE customer_receipt_id=$1 ORDER BY created_at ASC`,
     [customerReceiptId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function listCustomerReceipts({ orgId, query }) {
-  const params = [orgId]; 
-  const where = ["organization_id=$1"]; 
-  let i = 2; 
+  const params = [orgId];
+  const where = ["organization_id=$1"];
+  let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);  params.push(query.status);  }
-  if (query?.customerId) { where.push(`customer_id=$${i++}`);  params.push(query.customerId);  }
+  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
+  if (query?.customerId) { where.push(`customer_id=$${i++}`);params.push(query.customerId);}
 
   const { rows } = await pool.query(
     `SELECT * FROM customer_receipts WHERE ${where.join(" AND ")}
      ORDER BY receipt_date DESC, created_at DESC`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 module.exports = {
@@ -118,4 +118,4 @@ module.exports = {
   getCustomerReceiptById,
   getAllocations,
   listCustomerReceipts
-}; 
+};

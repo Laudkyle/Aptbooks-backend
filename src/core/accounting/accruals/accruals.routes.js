@@ -1,26 +1,26 @@
-const router = require("express").Router(); 
-const { authRequired } = require("../../../middleware/auth.middleware"); 
-const { requirePermission } = require("../../../middleware/permission.middleware"); 
-const { validate } = require("../../../shared/validators/validate"); 
+const router = require("express").Router();
+const { authRequired } = require("../../../middleware/auth.middleware");
+const { requirePermission } = require("../../../middleware/permission.middleware");
+const { validate } = require("../../../shared/validators/validate");
 const {
   createAccrualRuleSchema,
   runDueAccrualsSchema,
   runPeriodEndAccrualsSchema
-} = require("../../../shared/validators/accrual.validators"); 
-const { getSystemActorUserId } = require("../../../core/foundation/users/systemActor.service"); 
-const svc = require("./accruals.service"); 
-const { writeAudit } = require("../../foundation/audit-logs/audit.service"); 
+} = require("../../../shared/validators/accrual.validators");
+const { getSystemActorUserId } = require("../../../core/foundation/users/systemActor.service");
+const svc = require("./accruals.service");
+const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 
-router.use(authRequired); 
+router.use(authRequired);
 
 // Create accrual rule
 router.post("/", requirePermission("accounting.accruals.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = await getSystemActorUserId({ orgId }); 
-    const payload = validate(createAccrualRuleSchema, req.body); 
+    const orgId = req.user.organization_id;
+    const actorUserId = await getSystemActorUserId({ orgId });
+    const payload = validate(createAccrualRuleSchema, req.body);
 
-    const created = await svc.createRule({ orgId, actorUserId, payload }); 
+    const created = await svc.createRule({ orgId, actorUserId, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -31,30 +31,30 @@ router.post("/", requirePermission("accounting.accruals.manage"), async (req, re
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: created
-    }); 
+    });
 
-    res.status(201).json(created); 
-  } catch (e) { next(e);  }
-}); 
+    res.status(201).json(created);
+  } catch (e) { next(e);}
+});
 
 // List rules
 router.get("/", requirePermission("accounting.accruals.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    res.json(await svc.listRules({ orgId })); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    res.json(await svc.listRules({ orgId }));
+  } catch (e) { next(e);}
+});
 
 
 
 // Run due accruals for a date
 router.post("/run/due", requirePermission("accounting.accruals.run"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = await getSystemActorUserId({ orgId }); 
+    const orgId = req.user.organization_id;
+    const actorUserId = await getSystemActorUserId({ orgId });
 
-    const body = validate(runDueAccrualsSchema, req.body || {}); 
-    const out = await svc.runDueAccruals({ orgId, actorUserId, asOfDate: body.asOfDate }); 
+    const body = validate(runDueAccrualsSchema, req.body || {});
+    const out = await svc.runDueAccruals({ orgId, actorUserId, asOfDate: body.asOfDate });
 
     await writeAudit({
       organizationId: orgId,
@@ -65,20 +65,20 @@ router.post("/run/due", requirePermission("accounting.accruals.run"), async (req
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { asOfDate: body.asOfDate, count: out.length }
-    }); 
+    });
 
-    res.json(out); 
-  } catch (e) { next(e);  }
-}); 
+    res.json(out);
+  } catch (e) { next(e);}
+});
 router.post("/run/reversals", requirePermission("accounting.accruals.run"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = await getSystemActorUserId({ orgId }); 
+    const orgId = req.user.organization_id;
+    const actorUserId = await getSystemActorUserId({ orgId });
 
-    const { periodId } = req.body || {}; 
-    if (!periodId) return res.status(400).json({ error: "periodId required" }); 
+    const { periodId } = req.body || {};
+    if (!periodId) return res.status(400).json({ error: "periodId required" });
 
-    const out = await svc.runReversals({ orgId, actorUserId, periodId }); 
+    const out = await svc.runReversals({ orgId, actorUserId, periodId });
 
     await writeAudit({
       organizationId: orgId,
@@ -89,40 +89,40 @@ router.post("/run/reversals", requirePermission("accounting.accruals.run"), asyn
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: out
-    }); 
+    });
 
-    res.json(out); 
-  } catch (e) { next(e);  }
-}); 
+    res.json(out);
+  } catch (e) { next(e);}
+});
 // List runs (monitoring)
 router.get("/runs", requirePermission("accounting.accruals.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    res.json(await svc.listRuns({ orgId, query: req.query })); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    res.json(await svc.listRuns({ orgId, query: req.query }));
+  } catch (e) { next(e);}
+});
 
 // Get one run (monitoring)
 router.get("/runs/:runId", requirePermission("accounting.accruals.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    res.json(await svc.getRun({ orgId, runId: req.params.runId })); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    res.json(await svc.getRun({ orgId, runId: req.params.runId }));
+  } catch (e) { next(e);}
+});
 
 // Run period-end accruals for a period
 router.post("/run/period-end", requirePermission("accounting.accruals.run"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = await getSystemActorUserId({ orgId }); 
+    const orgId = req.user.organization_id;
+    const actorUserId = await getSystemActorUserId({ orgId });
 
-    const body = validate(runPeriodEndAccrualsSchema, req.body || {}); 
+    const body = validate(runPeriodEndAccrualsSchema, req.body || {});
     const out = await svc.runPeriodEndAccruals({
       orgId,
       actorUserId,
       periodId: body.periodId,
       asOfDateOverride: body.asOfDate
-    }); 
+    });
 
     await writeAudit({
       organizationId: orgId,
@@ -133,16 +133,16 @@ router.post("/run/period-end", requirePermission("accounting.accruals.run"), asy
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { periodId: body.periodId, count: out.length }
-    }); 
+    });
 
-    res.json(out); 
-  } catch (e) { next(e);  }
-}); 
+    res.json(out);
+  } catch (e) { next(e);}
+});
 // Get rule + lines
 router.get("/:id", requirePermission("accounting.accruals.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    res.json(await svc.getRuleWithLines({ orgId, ruleId: req.params.id })); 
-  } catch (e) { next(e);  }
-}); 
-module.exports = router; 
+    const orgId = req.user.organization_id;
+    res.json(await svc.getRuleWithLines({ orgId, ruleId: req.params.id }));
+  } catch (e) { next(e);}
+});
+module.exports = router;

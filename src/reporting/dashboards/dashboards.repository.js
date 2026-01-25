@@ -1,24 +1,24 @@
-const { pool } = require("../../db/pool"); 
+const { pool } = require("../../db/pool");
 
 async function listDashboards({ organizationId, includeArchived = false, limit = 50, offset = 0 }) {
-  const params = [organizationId]; 
-  let where = `organization_id=$1`; 
-  if (!includeArchived) where += ` AND is_archived=FALSE`; 
-  params.push(Math.min(Math.max(Number(limit) || 50, 1), 200)); 
-  params.push(Math.max(Number(offset) || 0, 0)); 
+  const params = [organizationId];
+  let where = `organization_id=$1`;
+  if (!includeArchived) where += ` AND is_archived=FALSE`;
+  params.push(Math.min(Math.max(Number(limit) || 50, 1), 200));
+  params.push(Math.max(Number(offset) || 0, 0));
   const { rows } = await pool.query(
     `SELECT * FROM dashboards WHERE ${where} ORDER BY updated_at DESC LIMIT $2 OFFSET $3`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getDashboard({ organizationId, dashboardId }) {
   const { rows } = await pool.query(
     `SELECT * FROM dashboards WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [organizationId, dashboardId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function createDashboard({ organizationId, actorUserId, name, description, layoutJson }) {
@@ -29,12 +29,12 @@ async function createDashboard({ organizationId, actorUserId, name, description,
     RETURNING *
     `,
     [organizationId, name, description || null, JSON.stringify(layoutJson || {}), actorUserId || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateDashboard({ organizationId, dashboardId, patch }) {
-  const { name, description, layoutJson, isArchived } = patch; 
+  const { name, description, layoutJson, isArchived } = patch;
   const { rows } = await pool.query(
     `
     UPDATE dashboards
@@ -54,19 +54,19 @@ async function updateDashboard({ organizationId, dashboardId, patch }) {
       layoutJson ? JSON.stringify(layoutJson) : null,
       typeof isArchived === "boolean" ? isArchived : null,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function listWidgets({ organizationId, dashboardId, includeArchived = false }) {
-  const params = [organizationId, dashboardId]; 
-  let where = `organization_id=$1 AND dashboard_id=$2`; 
-  if (!includeArchived) where += ` AND is_archived=FALSE`; 
+  const params = [organizationId, dashboardId];
+  let where = `organization_id=$1 AND dashboard_id=$2`;
+  if (!includeArchived) where += ` AND is_archived=FALSE`;
   const { rows } = await pool.query(
     `SELECT * FROM dashboard_widgets WHERE ${where} ORDER BY created_at ASC`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function createWidget({ organizationId, dashboardId, title, widgetType, configJson, positionJson }) {
@@ -77,12 +77,12 @@ async function createWidget({ organizationId, dashboardId, title, widgetType, co
     RETURNING *
     `,
     [organizationId, dashboardId, title, widgetType, JSON.stringify(configJson || {}), JSON.stringify(positionJson || {})]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateWidget({ organizationId, widgetId, patch }) {
-  const { title, widgetType, configJson, positionJson, isArchived } = patch; 
+  const { title, widgetType, configJson, positionJson, isArchived } = patch;
   const { rows } = await pool.query(
     `
     UPDATE dashboard_widgets
@@ -104,8 +104,8 @@ async function updateWidget({ organizationId, widgetId, patch }) {
       positionJson ? JSON.stringify(positionJson) : null,
       typeof isArchived === "boolean" ? isArchived : null,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 module.exports = {
@@ -116,4 +116,4 @@ module.exports = {
   listWidgets,
   createWidget,
   updateWidget,
-}; 
+};

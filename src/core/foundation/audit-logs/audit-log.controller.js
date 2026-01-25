@@ -1,4 +1,4 @@
-const auditLogService = require('./audit-log.service'); 
+const auditLogService = require('./audit-log.service');
 
 class AuditLogController {
   /**
@@ -6,7 +6,7 @@ class AuditLogController {
    */
   async getAuditLogs(req, res, next) {
     try {
-      const { organizationId } = req.organization;  // From auth middleware
+      const { organizationId } = req.organization;// From auth middleware
       const {
         page = 1,
         limit = 50,
@@ -16,7 +16,7 @@ class AuditLogController {
         startDate,
         endDate,
         search
-      } = req.query; 
+      } = req.query;
 
       const filters = {
         entityType: entityType || null,
@@ -25,14 +25,14 @@ class AuditLogController {
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
         search: search || null
-      }; 
+      };
 
       const result = await auditLogService.getAuditLogs(
         organizationId,
         filters,
         parseInt(page, 10),
         parseInt(limit, 10)
-      ); 
+      );
 
       res.json({
         success: true,
@@ -45,9 +45,9 @@ class AuditLogController {
           hasNextPage: result.hasNextPage,
           hasPrevPage: result.hasPrevPage
         }
-      }); 
+      });
     } catch (error) {
-      next(error); 
+      next(error);
     }
   }
 
@@ -56,21 +56,21 @@ class AuditLogController {
    */
   async getEntityAuditTrail(req, res, next) {
     try {
-      const { organizationId } = req.organization; 
-      const { entityType, entityId } = req.params; 
+      const { organizationId } = req.organization;
+      const { entityType, entityId } = req.params;
 
       const auditTrail = await auditLogService.getEntityAuditTrail(
         organizationId,
         entityType,
         entityId
-      ); 
+      );
 
       res.json({
         success: true,
         data: auditTrail
-      }); 
+      });
     } catch (error) {
-      next(error); 
+      next(error);
     }
   }
 
@@ -79,20 +79,20 @@ class AuditLogController {
    */
   async getAuditStatistics(req, res, next) {
     try {
-      const { organizationId } = req.organization; 
-      const { period = 'month' } = req.query; 
+      const { organizationId } = req.organization;
+      const { period = 'month' } = req.query;
 
       const statistics = await auditLogService.getAuditStatistics(
         organizationId,
         period
-      ); 
+      );
 
       res.json({
         success: true,
         data: statistics
-      }); 
+      });
     } catch (error) {
-      next(error); 
+      next(error);
     }
   }
 
@@ -101,31 +101,31 @@ class AuditLogController {
    */
   async exportAuditLogs(req, res, next) {
     try {
-      const { organizationId } = req.organization; 
+      const { organizationId } = req.organization;
       const {
         startDate,
         endDate,
         format = 'json'
-      } = req.query; 
+      } = req.query;
 
       const exportData = await auditLogService.exportAuditLogs(organizationId, {
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
         format
-      }); 
+      });
 
       if (format === 'csv') {
-        res.setHeader('Content-Type', 'text/csv'); 
-        res.setHeader('Content-Disposition', `attachment;  filename="audit-logs-${Date.now()}.csv"`); 
-        return res.send(exportData); 
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment;filename="audit-logs-${Date.now()}.csv"`);
+        return res.send(exportData);
       }
 
       res.json({
         success: true,
         data: exportData
-      }); 
+      });
     } catch (error) {
-      next(error); 
+      next(error);
     }
   }
 
@@ -134,23 +134,23 @@ class AuditLogController {
    */
   async applyRetentionPolicy(req, res, next) {
     try {
-      const { organizationId } = req.organization; 
-      const { retentionDays = 365 } = req.body; 
+      const { organizationId } = req.organization;
+      const { retentionDays = 365 } = req.body;
 
       const deletedCount = await auditLogService.applyRetentionPolicy(
         organizationId,
         parseInt(retentionDays, 10)
-      ); 
+      );
 
       res.json({
         success: true,
         message: `Successfully cleaned up ${deletedCount} old audit logs`,
         data: { deletedCount }
-      }); 
+      });
     } catch (error) {
-      next(error); 
+      next(error);
     }
   }
 }
 
-module.exports = new AuditLogController(); 
+module.exports = new AuditLogController();

@@ -1,31 +1,31 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 async function createCategory(orgId, payload) {
-  const { code, name, inventoryAccountId, cogsAccountId, adjustmentAccountId, clearingAccountId, parentId } = payload; 
+  const { code, name, inventoryAccountId, cogsAccountId, adjustmentAccountId, clearingAccountId, parentId } = payload;
   const { rows } = await pool.query(
     `INSERT INTO item_categories(
         organization_id, code, name, inventory_account_id, cogs_account_id, adjustment_account_id, clearing_account_id, parent_id
      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
     [orgId, code, name, inventoryAccountId, cogsAccountId, adjustmentAccountId, clearingAccountId, parentId || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listCategories(orgId) {
   const { rows } = await pool.query(
     `SELECT * FROM item_categories WHERE organization_id=$1 ORDER BY code`,
     [orgId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getCategory(orgId, id) {
   const { rows } = await pool.query(
     `SELECT * FROM item_categories WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateCategory(orgId, id, payload) {
@@ -50,16 +50,16 @@ async function updateCategory(orgId, id, payload) {
       payload.clearingAccountId ?? null,
       payload.parentId ?? null,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function deleteCategory(orgId, id) {
   const { rows } = await pool.query(
     `DELETE FROM item_categories WHERE organization_id=$1 AND id=$2 RETURNING id`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
-module.exports = { createCategory, listCategories, getCategory, updateCategory, deleteCategory }; 
+module.exports = { createCategory, listCategories, getCategory, updateCategory, deleteCategory };

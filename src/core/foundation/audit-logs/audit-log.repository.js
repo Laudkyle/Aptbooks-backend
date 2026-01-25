@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 class AuditLogRepository {
   /**
@@ -39,7 +39,7 @@ class AuditLogRepository {
         after_json
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING id, created_at
-    `; 
+    `;
 
     const values = [
       organizationId,
@@ -51,10 +51,10 @@ class AuditLogRepository {
       userAgent || null,
       before ? JSON.stringify(before) : null,
       after ? JSON.stringify(after) : null
-    ]; 
+    ];
 
-    const result = await pool.query(query, values); 
-    return result.rows[0]; 
+    const result = await pool.query(query, values);
+    return result.rows[0];
   }
 
   /**
@@ -82,38 +82,38 @@ class AuditLogRepository {
     search = null
   } = {}) {
     // Build WHERE clause
-    const conditions = ["al.organization_id = $1"]; 
-    const values = [organizationId]; 
-    let paramIndex = 2; 
+    const conditions = ["al.organization_id = $1"];
+    const values = [organizationId];
+    let paramIndex = 2;
 
     if (entityType) {
-      conditions.push(`al.entity_type = $${paramIndex}`); 
-      values.push(entityType); 
-      paramIndex++; 
+      conditions.push(`al.entity_type = $${paramIndex}`);
+      values.push(entityType);
+      paramIndex++;
     }
 
     if (action) {
-      conditions.push(`al.action = $${paramIndex}`); 
-      values.push(action); 
-      paramIndex++; 
+      conditions.push(`al.action = $${paramIndex}`);
+      values.push(action);
+      paramIndex++;
     }
 
     if (actorUserId) {
-      conditions.push(`al.actor_user_id = $${paramIndex}`); 
-      values.push(actorUserId); 
-      paramIndex++; 
+      conditions.push(`al.actor_user_id = $${paramIndex}`);
+      values.push(actorUserId);
+      paramIndex++;
     }
 
     if (startDate) {
-      conditions.push(`al.created_at >= $${paramIndex}`); 
-      values.push(startDate); 
-      paramIndex++; 
+      conditions.push(`al.created_at >= $${paramIndex}`);
+      values.push(startDate);
+      paramIndex++;
     }
 
     if (endDate) {
-      conditions.push(`al.created_at <= $${paramIndex}`); 
-      values.push(endDate); 
-      paramIndex++; 
+      conditions.push(`al.created_at <= $${paramIndex}`);
+      values.push(endDate);
+      paramIndex++;
     }
 
     if (search) {
@@ -121,22 +121,22 @@ class AuditLogRepository {
         al.before_json::text ILIKE $${paramIndex} OR
         al.after_json::text ILIKE $${paramIndex} OR
         al.action ILIKE $${paramIndex}
-      )`); 
-      values.push(`%${search}%`); 
-      paramIndex++; 
+      )`);
+      values.push(`%${search}%`);
+      paramIndex++;
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''; 
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     // Get total count
     const countQuery = `
       SELECT COUNT(*) as total
       FROM audit_logs al
       ${whereClause}
-    `; 
+    `;
 
-    const countResult = await pool.query(countQuery, values); 
-    const total = parseInt(countResult.rows[0].total, 10); 
+    const countResult = await pool.query(countQuery, values);
+    const total = parseInt(countResult.rows[0].total, 10);
 
     // Get paginated results with user info
     const query = `
@@ -159,10 +159,10 @@ class AuditLogRepository {
       ${whereClause}
       ORDER BY al.created_at DESC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `; 
+    `;
 
-    const paginatedValues = [...values, limit, offset]; 
-    const result = await pool.query(query, paginatedValues); 
+    const paginatedValues = [...values, limit, offset];
+    const result = await pool.query(query, paginatedValues);
 
     return {
       logs: result.rows.map(row => ({
@@ -173,7 +173,7 @@ class AuditLogRepository {
       total,
       limit,
       offset
-    }; 
+    };
   }
 
   /**
@@ -204,15 +204,15 @@ class AuditLogRepository {
         AND al.entity_id = $3
       ORDER BY al.created_at DESC
       LIMIT $4
-    `; 
+    `;
 
-    const result = await pool.query(query, [organizationId, entityType, entityId, limit]); 
+    const result = await pool.query(query, [organizationId, entityType, entityId, limit]);
 
     return result.rows.map(row => ({
       ...row,
       before: row.before_json ? JSON.parse(row.before_json) : null,
       after: row.after_json ? JSON.parse(row.after_json) : null
-    })); 
+    }));
   }
 
   /**
@@ -230,20 +230,20 @@ class AuditLogRepository {
       FROM audit_logs al
       LEFT JOIN users u ON al.actor_user_id = u.id
       WHERE al.organization_id = $1 AND al.id = $2
-    `; 
+    `;
 
-    const result = await pool.query(query, [organizationId, auditLogId]); 
+    const result = await pool.query(query, [organizationId, auditLogId]);
 
     if (result.rows.length === 0) {
-      return null; 
+      return null;
     }
 
-    const row = result.rows[0]; 
+    const row = result.rows[0];
     return {
       ...row,
       before: row.before_json ? JSON.parse(row.before_json) : null,
       after: row.after_json ? JSON.parse(row.after_json) : null
-    }; 
+    };
   }
 
   /**
@@ -267,30 +267,30 @@ class AuditLogRepository {
         AND created_at BETWEEN $2 AND $3
       GROUP BY entity_type, action, DATE(created_at)
       ORDER BY DATE(created_at) DESC, count DESC
-    `; 
+    `;
 
-    const result = await pool.query(query, [organizationId, startDate, endDate]); 
+    const result = await pool.query(query, [organizationId, startDate, endDate]);
 
     return {
       totalActions: result.rows.reduce((sum, row) => sum + parseInt(row.count, 10), 0),
       uniqueUsers: result.rows.length > 0 ? parseInt(result.rows[0].unique_users, 10) : 0,
       breakdownByEntity: result.rows.reduce((acc, row) => {
-        if (!acc[row.entity_type]) acc[row.entity_type] = 0; 
-        acc[row.entity_type] += parseInt(row.count, 10); 
-        return acc; 
+        if (!acc[row.entity_type]) acc[row.entity_type] = 0;
+        acc[row.entity_type] += parseInt(row.count, 10);
+        return acc;
       }, {}),
       breakdownByAction: result.rows.reduce((acc, row) => {
-        if (!acc[row.action]) acc[row.action] = 0; 
-        acc[row.action] += parseInt(row.count, 10); 
-        return acc; 
+        if (!acc[row.action]) acc[row.action] = 0;
+        acc[row.action] += parseInt(row.count, 10);
+        return acc;
       }, {}),
       dailyActivity: result.rows.reduce((acc, row) => {
-        if (!acc[row.date]) acc[row.date] = 0; 
-        acc[row.date] += parseInt(row.count, 10); 
-        return acc; 
+        if (!acc[row.date]) acc[row.date] = 0;
+        acc[row.date] += parseInt(row.count, 10);
+        return acc;
       }, {}),
       rawData: result.rows
-    }; 
+    };
   }
 
   /**
@@ -305,10 +305,10 @@ class AuditLogRepository {
       WHERE organization_id = $1
         AND created_at < $2
       RETURNING id
-    `; 
+    `;
 
-    const result = await pool.query(query, [organizationId, olderThan]); 
-    return result.rowCount; 
+    const result = await pool.query(query, [organizationId, olderThan]);
+    return result.rowCount;
   }
 
   /**
@@ -340,19 +340,19 @@ class AuditLogRepository {
         AND ($2::timestamp IS NULL OR al.created_at >= $2)
         AND ($3::timestamp IS NULL OR al.created_at <= $3)
       ORDER BY al.created_at DESC
-    `; 
+    `;
 
-    const result = await pool.query(query, [organizationId, startDate, endDate]); 
+    const result = await pool.query(query, [organizationId, startDate, endDate]);
     
     const logs = result.rows.map(row => ({
       ...row,
       before: row.before_json ? JSON.parse(row.before_json) : null,
       after: row.after_json ? JSON.parse(row.after_json) : null
-    })); 
+    }));
 
     if (format === 'csv') {
       // Convert to CSV format
-      const headers = ['ID', 'Date', 'Action', 'Entity Type', 'Entity ID', 'Actor', 'IP', 'User Agent']; 
+      const headers = ['ID', 'Date', 'Action', 'Entity Type', 'Entity ID', 'Actor', 'IP', 'User Agent'];
       const csvRows = [
         headers.join(','),
         ...logs.map(log => [
@@ -365,12 +365,12 @@ class AuditLogRepository {
           log.ip,
           `"${log.user_agent || ''}"`
         ].join(','))
-      ]; 
-      return csvRows.join('\n'); 
+      ];
+      return csvRows.join('\n');
     }
 
-    return logs; 
+    return logs;
   }
 }
 
-module.exports = new AuditLogRepository(); 
+module.exports = new AuditLogRepository();

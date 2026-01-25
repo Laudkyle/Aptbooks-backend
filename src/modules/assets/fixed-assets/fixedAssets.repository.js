@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 async function createAsset({ orgId, payload }) {
   const { rows } = await pool.query(
@@ -24,40 +24,40 @@ async function createAsset({ orgId, payload }) {
       payload.departmentId ?? null,
       payload.costCenterId ?? null
     ]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listAssets({ orgId, query }) {
-  const params = [orgId]; 
-  const where = ["organization_id=$1"];  
-  let i = 2; 
+  const params = [orgId];
+  const where = ["organization_id=$1"];
+  let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);  params.push(query.status);  }
-  if (query?.categoryId) { where.push(`category_id=$${i++}`);  params.push(query.categoryId);  }
-  if (query?.locationId) { where.push(`location_id=$${i++}`);  params.push(query.locationId);  }
-  if (query?.departmentId) { where.push(`department_id=$${i++}`);  params.push(query.departmentId);  }
-  if (query?.costCenterId) { where.push(`cost_center_id=$${i++}`);  params.push(query.costCenterId);  }
+  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
+  if (query?.categoryId) { where.push(`category_id=$${i++}`);params.push(query.categoryId);}
+  if (query?.locationId) { where.push(`location_id=$${i++}`);params.push(query.locationId);}
+  if (query?.departmentId) { where.push(`department_id=$${i++}`);params.push(query.departmentId);}
+  if (query?.costCenterId) { where.push(`cost_center_id=$${i++}`);params.push(query.costCenterId);}
   if (query?.q) {
-    where.push(`(code ILIKE $${i} OR name ILIKE $${i})`); 
-    params.push(`%${query.q}%`); 
-    i++; 
+    where.push(`(code ILIKE $${i} OR name ILIKE $${i})`);
+    params.push(`%${query.q}%`);
+    i++;
   }
 
 
   const { rows } = await pool.query(
     `SELECT * FROM fixed_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getAsset({ orgId, assetId }) {
   const { rows } = await pool.query(
     `SELECT * FROM fixed_assets WHERE organization_id=$1 AND id=$2`,
     [orgId, assetId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getAssetWithCategoryAccounts({ orgId, assetId }) {
@@ -76,8 +76,8 @@ async function getAssetWithCategoryAccounts({ orgId, assetId }) {
     WHERE a.organization_id=$1 AND a.id=$2
     `,
     [orgId, assetId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateAsset({ orgId, assetId, payload }) {
@@ -112,16 +112,16 @@ async function updateAsset({ orgId, assetId, payload }) {
       payload.costCenterId ?? null,
       payload.status ?? null
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function deleteDraftAsset({ orgId, assetId }) {
   const { rows } = await pool.query(
     `DELETE FROM fixed_assets WHERE organization_id=$1 AND id=$2 AND status='draft' RETURNING id`,
     [orgId, assetId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateStatus({ orgId, assetId, status, tsField }) {
@@ -133,8 +133,8 @@ async function updateStatus({ orgId, assetId, status, tsField }) {
     RETURNING *
     `,
     [orgId, assetId, status]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function markAcquired({ orgId, assetId, actorUserId, journalId, memo }) {
@@ -151,8 +151,8 @@ async function markAcquired({ orgId, assetId, actorUserId, journalId, memo }) {
     RETURNING *
     `,
     [orgId, assetId, journalId, actorUserId, memo || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function markDisposed({ orgId, assetId, actorUserId, journalId, entryDate, proceeds, memo }) {
@@ -171,8 +171,8 @@ async function markDisposed({ orgId, assetId, actorUserId, journalId, entryDate,
     RETURNING *
     `,
     [orgId, assetId, journalId, entryDate, proceeds, actorUserId, memo || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateCurrentValue({ orgId, assetId, currentValue, impairmentTotal, lastRevaluationAt }) {
@@ -187,8 +187,8 @@ async function updateCurrentValue({ orgId, assetId, currentValue, impairmentTota
     RETURNING *
     `,
     [orgId, assetId, currentValue, impairmentTotal, lastRevaluationAt]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function insertAssetEvent({ orgId, assetId, eventType, eventDate, reference, memo, payloadJson, createdBy }) {
@@ -199,8 +199,8 @@ async function insertAssetEvent({ orgId, assetId, eventType, eventDate, referenc
     RETURNING *
     `,
     [orgId, assetId, eventType, eventDate, reference || null, memo || null, payloadJson ? JSON.stringify(payloadJson) : null, createdBy || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 module.exports = {
@@ -215,4 +215,4 @@ module.exports = {
   markDisposed,
   updateCurrentValue,
   insertAssetEvent,
-}; 
+};

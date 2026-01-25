@@ -1,4 +1,4 @@
-const { pool } = require("../../db/pool"); 
+const { pool } = require("../../db/pool");
 
 async function insertFinancialStatement({ orgId, periodId, statementType, templateId, asOfDate, comparePeriodId, mode, parameters, generatedByUserId, payload }) {
   const { rows } =  await pool.query(
@@ -32,22 +32,22 @@ async function insertFinancialStatement({ orgId, periodId, statementType, templa
     generatedByUserId || null,
     JSON.stringify(payload || {})      // Convert to JSON string
   ]
-); 
-  return rows[0]; 
+);
+  return rows[0];
 }
 
 async function listFinancialStatements({ orgId, periodId, statementType, limit = 50 }) {
-  const params = [orgId]; 
-  let where = `WHERE organization_id=$1`; 
+  const params = [orgId];
+  let where = `WHERE organization_id=$1`;
   if (periodId) {
-    params.push(periodId); 
-    where += ` AND period_id=$${params.length}`; 
+    params.push(periodId);
+    where += ` AND period_id=$${params.length}`;
   }
   if (statementType) {
-    params.push(statementType); 
-    where += ` AND statement_type=$${params.length}`; 
+    params.push(statementType);
+    where += ` AND statement_type=$${params.length}`;
   }
-  params.push(Math.min(Number(limit || 50) || 50, 200)); 
+  params.push(Math.min(Number(limit || 50) || 50, 200));
 
   const { rows } = await pool.query(
     `
@@ -60,8 +60,8 @@ async function listFinancialStatements({ orgId, periodId, statementType, limit =
     LIMIT $${params.length}
     `,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getDefaultTemplate({ orgId, statementType }) {
@@ -74,8 +74,8 @@ async function getDefaultTemplate({ orgId, statementType }) {
     LIMIT 1
     `,
     [orgId, statementType]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function createTemplate({ orgId, statementType, name, description }) {
@@ -86,18 +86,18 @@ async function createTemplate({ orgId, statementType, name, description }) {
     RETURNING *
     `,
     [orgId, name, statementType, description || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function bulkInsertLines({ orgId, templateId, lines }) {
-  if (!lines.length) return []; 
-  const values = []; 
-  const params = []; 
-  let i = 1; 
+  if (!lines.length) return [];
+  const values = [];
+  const params = [];
+  let i = 1;
   for (const ln of lines) {
-    params.push(orgId, templateId, ln.line_no, ln.label, ln.line_type, ln.account_id || null, ln.expression || null, ln.sort_order || 0, ln.parent_line_id || null, ln.is_visible ?? true, ln.dr_cr_normal || null, ln.section_code || null); 
-    values.push(`($${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++})`); 
+    params.push(orgId, templateId, ln.line_no, ln.label, ln.line_type, ln.account_id || null, ln.expression || null, ln.sort_order || 0, ln.parent_line_id || null, ln.is_visible ?? true, ln.dr_cr_normal || null, ln.section_code || null);
+    values.push(`($${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++})`);
   }
   const { rows } = await pool.query(
     `
@@ -109,18 +109,18 @@ async function bulkInsertLines({ orgId, templateId, lines }) {
     RETURNING *
     `,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function bulkInsertLineAccounts({ mappings }) {
-  if (!mappings.length) return; 
-  const values = []; 
-  const params = []; 
-  let i = 1; 
+  if (!mappings.length) return;
+  const values = [];
+  const params = [];
+  let i = 1;
   for (const m of mappings) {
-    params.push(m.line_id, m.account_id, m.weight ?? 1, m.sign_override || null); 
-    values.push(`($${i++},$${i++},$${i++},$${i++})`); 
+    params.push(m.line_id, m.account_id, m.weight ?? 1, m.sign_override || null);
+    values.push(`($${i++},$${i++},$${i++},$${i++})`);
   }
   await pool.query(
     `
@@ -130,7 +130,7 @@ async function bulkInsertLineAccounts({ mappings }) {
       SET weight=EXCLUDED.weight, sign_override=EXCLUDED.sign_override
     `,
     params
-  ); 
+  );
 }
 
 async function getTemplateGraph({ orgId, templateId }) {
@@ -142,8 +142,8 @@ async function getTemplateGraph({ orgId, templateId }) {
     ORDER BY sort_order, line_no
     `,
     [orgId, templateId]
-  ); 
-  if (!lines.length) return { lines: [], mappings: [] }; 
+  );
+  if (!lines.length) return { lines: [], mappings: [] };
   const { rows: maps } = await pool.query(
     `
     SELECT sla.line_id, sla.account_id, sla.weight, sla.sign_override,
@@ -155,8 +155,8 @@ async function getTemplateGraph({ orgId, templateId }) {
     WHERE coa.organization_id=$1 AND sla.line_id = ANY($2::uuid[])
     `,
     [orgId, lines.map((l) => l.id)]
-  ); 
-  return { lines, mappings: maps }; 
+  );
+  return { lines, mappings: maps };
 }
 
 module.exports = {
@@ -167,4 +167,4 @@ module.exports = {
   bulkInsertLines,
   bulkInsertLineAccounts,
   getTemplateGraph
-}; 
+};

@@ -1,11 +1,11 @@
-const router = require("express").Router(); 
-const { authRequired } = require("../../../middleware/auth.middleware"); 
-const { requirePermission } = require("../../../middleware/permission.middleware"); 
-const { validate } = require("../../../shared/validators/validate"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
-const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service"); 
+const router = require("express").Router();
+const { authRequired } = require("../../../middleware/auth.middleware");
+const { requirePermission } = require("../../../middleware/permission.middleware");
+const { validate } = require("../../../shared/validators/validate");
+const { AppError } = require("../../../shared/errors/AppError");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 
-const svc = require("./partners.service"); 
+const svc = require("./partners.service");
 const {
   createPartnerSchema,
   updatePartnerSchema,
@@ -14,18 +14,18 @@ const {
   updateContactSchema,
   createAddressSchema,
   updateAddressSchema
-} = require("../../../shared/validators/business/partners.validators"); 
+} = require("../../../shared/validators/business/partners.validators");
 
-const { setCreditPolicySchema } = require("../../../shared/validators/business/creditPolicy.validators"); 
+const { setCreditPolicySchema } = require("../../../shared/validators/business/creditPolicy.validators");
 
-router.use(authRequired); 
+router.use(authRequired);
 
 // PARTNERS
 router.post("/", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(createPartnerSchema, req.body); 
-    const created = await svc.createPartner({ orgId, payload }); 
+    const orgId = req.user.organization_id;
+    const payload = validate(createPartnerSchema, req.body);
+    const created = await svc.createPartner({ orgId, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -36,35 +36,35 @@ router.post("/", requirePermission("partners.manage"), async (req, res, next) =>
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: created
-    }); 
+    });
 
-    res.status(201).json(created); 
+    res.status(201).json(created);
   } catch (e) {
-    if (e?.code === "23505") return next(new AppError(409, "Partner already exists")); 
-    next(e); 
+    if (e?.code === "23505") return next(new AppError(409, "Partner already exists"));
+    next(e);
   }
-}); 
+});
 
 router.get("/", requirePermission("partners.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const query = validate(listPartnersQuerySchema, req.query); 
-    res.json(await svc.listPartners({ orgId, query })); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const query = validate(listPartnersQuerySchema, req.query);
+    res.json(await svc.listPartners({ orgId, query }));
+  } catch (e) { next(e);}
+});
 
 router.get("/:id", requirePermission("partners.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    res.json(await svc.getPartnerDetails({ orgId, partnerId: req.params.id })); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    res.json(await svc.getPartnerDetails({ orgId, partnerId: req.params.id }));
+  } catch (e) { next(e);}
+});
 
 router.patch("/:id", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(updatePartnerSchema, req.body); 
-    const out = await svc.updatePartner({ orgId, partnerId: req.params.id, payload }); 
+    const orgId = req.user.organization_id;
+    const payload = validate(updatePartnerSchema, req.body);
+    const out = await svc.updatePartner({ orgId, partnerId: req.params.id, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -76,29 +76,29 @@ router.patch("/:id", requirePermission("partners.manage"), async (req, res, next
       userAgent: req.audit?.userAgent,
       before: out.before,
       after: out.after
-    }); 
+    });
 
-    res.json(out.after); 
+    res.json(out.after);
   } catch (e) {
-    if (e?.code === "23505") return next(new AppError(409, "Partner already exists")); 
-    next(e); 
+    if (e?.code === "23505") return next(new AppError(409, "Partner already exists"));
+    next(e);
   }
-}); 
+});
 
 // CREDIT POLICY
 router.get("/:id/credit-policy", requirePermission("partners.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const policy = await svc.getCreditPolicy({ orgId, partnerId: req.params.id }); 
-    res.json(policy); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const policy = await svc.getCreditPolicy({ orgId, partnerId: req.params.id });
+    res.json(policy);
+  } catch (e) { next(e);}
+});
 
 router.put("/:id/credit-policy", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(setCreditPolicySchema, req.body); 
-    const out = await svc.setCreditPolicy({ orgId, partnerId: req.params.id, payload }); 
+    const orgId = req.user.organization_id;
+    const payload = validate(setCreditPolicySchema, req.body);
+    const out = await svc.setCreditPolicy({ orgId, partnerId: req.params.id, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -110,18 +110,18 @@ router.put("/:id/credit-policy", requirePermission("partners.manage"), async (re
       userAgent: req.audit?.userAgent,
       before: out.before,
       after: out.after
-    }); 
+    });
 
-    res.json(out.after); 
-  } catch (e) { next(e);  }
-}); 
+    res.json(out.after);
+  } catch (e) { next(e);}
+});
 
 // CONTACTS
 router.post("/:id/contacts", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(createContactSchema, req.body); 
-    const created = await svc.addContact({ orgId, partnerId: req.params.id, payload }); 
+    const orgId = req.user.organization_id;
+    const payload = validate(createContactSchema, req.body);
+    const created = await svc.addContact({ orgId, partnerId: req.params.id, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -132,22 +132,22 @@ router.post("/:id/contacts", requirePermission("partners.manage"), async (req, r
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: created
-    }); 
+    });
 
-    res.status(201).json(created); 
-  } catch (e) { next(e);  }
-}); 
+    res.status(201).json(created);
+  } catch (e) { next(e);}
+});
 
 router.patch("/:id/contacts/:contactId", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(updateContactSchema, req.body); 
+    const orgId = req.user.organization_id;
+    const payload = validate(updateContactSchema, req.body);
     const out = await svc.updateContact({
       orgId,
       partnerId: req.params.id,
       contactId: req.params.contactId,
       payload
-    }); 
+    });
 
     await writeAudit({
       organizationId: orgId,
@@ -159,18 +159,18 @@ router.patch("/:id/contacts/:contactId", requirePermission("partners.manage"), a
       userAgent: req.audit?.userAgent,
       before: out.before,
       after: out.after
-    }); 
+    });
 
-    res.json(out.after); 
-  } catch (e) { next(e);  }
-}); 
+    res.json(out.after);
+  } catch (e) { next(e);}
+});
 
 // ADDRESSES
 router.post("/:id/addresses", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(createAddressSchema, req.body); 
-    const created = await svc.addAddress({ orgId, partnerId: req.params.id, payload }); 
+    const orgId = req.user.organization_id;
+    const payload = validate(createAddressSchema, req.body);
+    const created = await svc.addAddress({ orgId, partnerId: req.params.id, payload });
 
     await writeAudit({
       organizationId: orgId,
@@ -181,22 +181,22 @@ router.post("/:id/addresses", requirePermission("partners.manage"), async (req, 
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: created
-    }); 
+    });
 
-    res.status(201).json(created); 
-  } catch (e) { next(e);  }
-}); 
+    res.status(201).json(created);
+  } catch (e) { next(e);}
+});
 
 router.patch("/:id/addresses/:addressId", requirePermission("partners.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const payload = validate(updateAddressSchema, req.body); 
+    const orgId = req.user.organization_id;
+    const payload = validate(updateAddressSchema, req.body);
     const out = await svc.updateAddress({
       orgId,
       partnerId: req.params.id,
       addressId: req.params.addressId,
       payload
-    }); 
+    });
 
     await writeAudit({
       organizationId: orgId,
@@ -208,10 +208,10 @@ router.patch("/:id/addresses/:addressId", requirePermission("partners.manage"), 
       userAgent: req.audit?.userAgent,
       before: out.before,
       after: out.after
-    }); 
+    });
 
-    res.json(out.after); 
-  } catch (e) { next(e);  }
-}); 
+    res.json(out.after);
+  } catch (e) { next(e);}
+});
 
-module.exports = router; 
+module.exports = router;

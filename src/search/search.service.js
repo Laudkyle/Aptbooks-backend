@@ -1,19 +1,19 @@
-const { pool } = require("../db/pool"); 
-const { AppError } = require("../shared/errors/AppError"); 
+const { pool } = require("../db/pool");
+const { AppError } = require("../shared/errors/AppError");
 
 function normalizeQ(q) {
-  const s = String(q || "").trim(); 
-  if (s.length < 2) throw new AppError(400, "q must be at least 2 characters"); 
-  if (s.length > 100) throw new AppError(400, "q too long"); 
-  return s; 
+  const s = String(q || "").trim();
+  if (s.length < 2) throw new AppError(400, "q must be at least 2 characters");
+  if (s.length > 100) throw new AppError(400, "q too long");
+  return s;
 }
 
 async function globalSearch({ orgId, q, limitPerType = 10 }) {
-  const query = normalizeQ(q); 
-  const like = `%${query}%`; 
-  const lim = Math.min(Number(limitPerType || 10), 25); 
+  const query = normalizeQ(q);
+  const like = `%${query}%`;
+  const lim = Math.min(Number(limitPerType || 10), 25);
 
-  const results = {}; 
+  const results = {};
 
   // Business partners (customers/vendors)
   {
@@ -27,13 +27,13 @@ async function globalSearch({ orgId, q, limitPerType = 10 }) {
       LIMIT ${lim}
       `,
       [orgId, like]
-    ); 
+    );
     results.partners = rows.map((r) => ({
       type: "partner",
       id: r.id,
       label: r.name,
       meta: { partnerType: r.type, code: r.code, status: r.status }
-    })); 
+    }));
   }
 
   // Chart of accounts
@@ -48,13 +48,13 @@ async function globalSearch({ orgId, q, limitPerType = 10 }) {
       LIMIT ${lim}
       `,
       [orgId, like]
-    ); 
+    );
     results.accounts = rows.map((r) => ({
       type: "account",
       id: r.id,
       label: `${r.code} - ${r.name}`,
       meta: { code: r.code, status: r.status }
-    })); 
+    }));
   }
 
   // Journal entries
@@ -72,13 +72,13 @@ async function globalSearch({ orgId, q, limitPerType = 10 }) {
       LIMIT ${lim}
       `,
       [orgId, like]
-    ); 
+    );
     results.journals = rows.map((r) => ({
       type: "journal",
       id: r.id,
       label: `JE #${r.entry_no} (${r.status})`,
       meta: { entryNo: r.entry_no, entryDate: r.entry_date, memo: r.memo }
-    })); 
+    }));
   }
 
   // Documents & workflow
@@ -93,7 +93,7 @@ async function globalSearch({ orgId, q, limitPerType = 10 }) {
       LIMIT ${lim}
       `,
       [orgId, like]
-    ); 
+    );
     results.documents = rows.map((r) => ({
       type: "document",
       id: r.id,
@@ -105,10 +105,10 @@ async function globalSearch({ orgId, q, limitPerType = 10 }) {
         workflowState: r.workflow_state_code,
         updatedAt: r.updated_at
       }
-    })); 
+    }));
   }
 
-  return { query, results }; 
+  return { query, results };
 }
 
-module.exports = { globalSearch }; 
+module.exports = { globalSearch };

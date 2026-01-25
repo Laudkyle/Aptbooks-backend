@@ -1,16 +1,16 @@
-const { AppError } = require("../../shared/errors/AppError"); 
-const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError");
+const { pool } = require("../../db/pool");
 
 function assertDate(value, fieldName) {
-  if (!value) throw new AppError(400, `${fieldName} is required`); 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`); 
+  if (!value) throw new AppError(400, `${fieldName} is required`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`);
 }
 
 async function getAgingBuckets({ orgId, bucketSetId }) {
   // If bucketSetId not supplied, use default.
   const set = bucketSetId
     ? (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND id=$2`, [orgId, bucketSetId])).rows[0]
-    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]; 
+    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0];
 
   if (!set) {
     // Backwards compatibility: if migrations not yet run.
@@ -24,7 +24,7 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
         { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
         { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
       ]
-    }; 
+    };
   }
   const { rows: buckets } = await pool.query(
     `SELECT label, start_days, end_days, sort_order
@@ -32,25 +32,25 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
       WHERE organization_id=$1 AND bucket_set_id=$2
       ORDER BY sort_order ASC, id ASC`,
     [orgId, set.id]
-  ); 
-  return { bucketSet: set, buckets }; 
+  );
+  return { bucketSet: set, buckets };
 }
 
 function assignBucketLabel(buckets, daysPastDue) {
-  const dpd = Number(daysPastDue || 0); 
+  const dpd = Number(daysPastDue || 0);
   for (const b of buckets) {
-    const start = Number(b.start_days); 
-    const end = b.end_days === null || b.end_days === undefined ? null : Number(b.end_days); 
-    if (dpd >= start && (end === null || dpd <= end)) return b.label; 
+    const start = Number(b.start_days);
+    const end = b.end_days === null || b.end_days === undefined ? null : Number(b.end_days);
+    if (dpd >= start && (end === null || dpd <= end)) return b.label;
   }
   // Fallback
-  return buckets[buckets.length - 1]?.label || 'CURRENT'; 
+  return buckets[buckets.length - 1]?.label || 'CURRENT';
 }
 
 async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
-  assertDate(asOfDate, "asOfDate"); 
+  assertDate(asOfDate, "asOfDate");
 
-  const { buckets } = await getAgingBuckets({ orgId, bucketSetId }); 
+  const { buckets } = await getAgingBuckets({ orgId, bucketSetId });
 
   // Use operational view (includes receipts allocations, discounts, credit notes, and write-offs).
   const { rows } = await pool.query(
@@ -74,28 +74,28 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
        AND oi.outstanding > 0
      ORDER BY bp.name, oi.due_date NULLS LAST, oi.invoice_no`,
     [orgId, asOfDate]
-  ); 
+  );
 
-  const byCustomer = new Map(); 
-  const totals = { total: 0 }; 
-  for (const b of buckets) totals[b.label] = 0; 
+  const byCustomer = new Map();
+  const totals = { total: 0 };
+  for (const b of buckets) totals[b.label] = 0;
 
   for (const r of rows) {
-    const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0)); 
-    const outstanding = Number(r.outstanding || 0); 
+    const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0));
+    const outstanding = Number(r.outstanding || 0);
     if (!byCustomer.has(r.customer_id)) {
       byCustomer.set(r.customer_id, {
         customer_id: r.customer_id,
         customer_name: r.customer_name,
         buckets: Object.assign({ total: 0 }, Object.fromEntries(buckets.map(b => [b.label, 0]))),
         invoices: []
-      }); 
+      });
     }
-    const c = byCustomer.get(r.customer_id); 
-    c.buckets[bucket] += outstanding; 
-    c.buckets.total += outstanding; 
-    totals[bucket] += outstanding; 
-    totals.total += outstanding; 
+    const c = byCustomer.get(r.customer_id);
+    c.buckets[bucket] += outstanding;
+    c.buckets.total += outstanding;
+    totals[bucket] += outstanding;
+    totals.total += outstanding;
     c.invoices.push({
       invoice_id: r.invoice_id,
       invoice_no: r.invoice_no,
@@ -109,26 +109,26 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
       outstanding,
       days_past_due: Number(r.days_past_due || 0),
       bucket
-    }); 
+    });
   }
 
   return {
     as_of_date: asOfDate,
     totals,
     customers: Array.from(byCustomer.values())
-  }; 
+  };
 }
 
 async function customerStatement({ orgId, customerId, fromDate, toDate }) {
-  if (!customerId) throw new AppError(400, "customerId is required"); 
-  assertDate(fromDate, "from"); 
-  assertDate(toDate, "to"); 
+  if (!customerId) throw new AppError(400, "customerId is required");
+  assertDate(fromDate, "from");
+  assertDate(toDate, "to");
 
   const { rows: customerRows } = await pool.query(
     `SELECT id, name FROM business_partners WHERE id=$1`,
     [customerId]
-  ); 
-  if (!customerRows.length) throw new AppError(404, "Customer not found"); 
+  );
+  if (!customerRows.length) throw new AppError(404, "Customer not found");
 
   // Opening balance: outstanding as of day before fromDate
   const { rows: openingRows } = await pool.query(
@@ -154,8 +154,8 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
       AND i.invoice_date < $3::date
     `,
     [orgId, customerId, fromDate]
-  ); 
-  const opening = Number(openingRows[0]?.opening || 0); 
+  );
+  const opening = Number(openingRows[0]?.opening || 0);
 
   // Activity: invoices and receipts within [fromDate, toDate]
   const { rows: invoices } = await pool.query(
@@ -168,7 +168,7 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     ORDER BY invoice_date, invoice_no
     `,
     [orgId, customerId, fromDate, toDate]
-  ); 
+  );
 
   const { rows: receipts } = await pool.query(
     `
@@ -188,10 +188,10 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     ORDER BY cr.receipt_date, cr.receipt_no
     `,
     [orgId, customerId, fromDate, toDate]
-  ); 
+  );
 
   // Build a combined statement (opening balance then chronological entries)
-  const entries = []; 
+  const entries = [];
   for (const i of invoices) {
     entries.push({
       date: i.invoice_date,
@@ -200,10 +200,10 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
       description: i.memo || null,
       debit: Number(i.total || 0),
       credit: 0
-    }); 
+    });
   }
   for (const r of receipts) {
-    // Receipts reduce AR;  show as credit.
+    // Receipts reduce AR;show as credit.
     entries.push({
       date: r.receipt_date,
       type: "receipt",
@@ -211,11 +211,11 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
       description: r.memo || null,
       debit: 0,
       credit: Number(r.allocated_total || r.amount_total || 0)
-    }); 
+    });
   }
-  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference))); 
+  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference)));
 
-  let running = opening; 
+  let running = opening;
   const lines = [{
     date: fromDate,
     type: "opening_balance",
@@ -224,10 +224,10 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     debit: 0,
     credit: 0,
     balance: running
-  }]; 
+  }];
   for (const e of entries) {
-    running += Number(e.debit || 0) - Number(e.credit || 0); 
-    lines.push({ ...e, balance: running }); 
+    running += Number(e.debit || 0) - Number(e.credit || 0);
+    lines.push({ ...e, balance: running });
   }
 
   return {
@@ -237,10 +237,10 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     opening_balance: opening,
     closing_balance: running,
     lines
-  }; 
+  };
 }
 
 module.exports = {
   agedReceivables,
   customerStatement
-}; 
+};

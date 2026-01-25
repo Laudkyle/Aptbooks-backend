@@ -1,6 +1,6 @@
 -- 005_tier3_invoices.sql
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; 
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS invoices (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (organization_id, invoice_no)
-); 
+);
 
 CREATE TABLE IF NOT EXISTS invoice_lines (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -55,15 +55,15 @@ CREATE TABLE IF NOT EXISTS invoice_lines (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (invoice_id, line_no)
-); 
+);
 
 -- simple sequence table for invoice numbers
 CREATE TABLE IF NOT EXISTS invoice_sequences (
   organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
   next_no BIGINT NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-); 
+);
 
-CREATE INDEX IF NOT EXISTS idx_invoices_org_status_date ON invoices(organization_id, status, invoice_date); 
-CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(organization_id, customer_id); 
-CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id); 
+CREATE INDEX IF NOT EXISTS idx_invoices_org_status_date ON invoices(organization_id, status, invoice_date);
+CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(organization_id, customer_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_lines_invoice ON invoice_lines(invoice_id);

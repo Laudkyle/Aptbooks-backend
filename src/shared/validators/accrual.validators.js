@@ -1,16 +1,16 @@
-const { z, uuid, isoDate } = require("./common.validators"); 
+const { z, uuid, isoDate } = require("./common.validators");
 
 const accrualRuleLineSchema = z.object({
   accountId: uuid,
   dc: z.enum(["debit", "credit"]),
   amountValue: z.number().positive(),
   description: z.string().max(300).optional(),
-}); 
+});
 const deferralScheduleSchema = z.object({
   totalAmount: z.number().positive(),
   periodCount: z.number().positive(),
   startPeriodId: z.uuid()
-}); 
+});
 const createAccrualRuleSchema = z
   .object({
     code: z.string().min(1).max(50),
@@ -39,38 +39,38 @@ const createAccrualRuleSchema = z
   .superRefine((v, ctx) => {
     // enforce balanced template for fixed-value rules
     let debit = 0,
-      credit = 0; 
+      credit = 0;
     for (const [i, l] of v.lines.entries()) {
-      const amt = Number(l.amountValue || 0); 
+      const amt = Number(l.amountValue || 0);
       if (amt <= 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `Line ${i + 1} amountValue must be > 0`,
           path: ["lines", i, "amountValue"],
-        }); 
+        });
       }
-      if (l.dc === "debit") debit += amt; 
-      else credit += amt; 
+      if (l.dc === "debit") debit += amt;
+      else credit += amt;
     }
     if (Number(debit.toFixed(2)) !== Number(credit.toFixed(2))) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Accrual rule lines not balanced",
         path: ["lines"],
-      }); 
+      });
     }
     // DEFERRAL strictness: must have schedule + exactly 2 lines + 1 debit/1 credit
   if (v.ruleType === "DEFERRAL") {
     if (!v.deferralSchedule) {
-      ctx.addIssue({ code: "custom", message: "DEFERRAL rules require deferralSchedule" }); 
+      ctx.addIssue({ code: "custom", message: "DEFERRAL rules require deferralSchedule" });
     }
     if (v.lines.length !== 2) {
-      ctx.addIssue({ code: "custom", message: "DEFERRAL rules must have exactly 2 lines" }); 
+      ctx.addIssue({ code: "custom", message: "DEFERRAL rules must have exactly 2 lines" });
     } else {
-      const d = v.lines.filter((x) => x.dc === "debit").length; 
-      const c = v.lines.filter((x) => x.dc === "credit").length; 
+      const d = v.lines.filter((x) => x.dc === "debit").length;
+      const c = v.lines.filter((x) => x.dc === "credit").length;
       if (d !== 1 || c !== 1) {
-        ctx.addIssue({ code: "custom", message: "DEFERRAL rules must have 1 debit line and 1 credit line" }); 
+        ctx.addIssue({ code: "custom", message: "DEFERRAL rules must have 1 debit line and 1 credit line" });
       }
     }
   }
@@ -82,30 +82,30 @@ const createAccrualRuleSchema = z
           code: z.ZodIssueCode.custom,
           message: "REVERSING rules must have autoReverse=true",
           path: ["autoReverse"],
-        }); 
+        });
       }
       if (v.reverseTiming && v.reverseTiming !== "NEXT_PERIOD_START") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Invalid reverseTiming",
           path: ["reverseTiming"],
-        }); 
+        });
       }
     }
-  }); 
+  });
 
 const runDueAccrualsSchema = z.object({
   asOfDate: isoDate,
-}); 
+});
 
 const runPeriodEndAccrualsSchema = z.object({
   periodId: uuid,
   asOfDate: isoDate.optional(),
-}); 
+});
 
 
 module.exports = {
   createAccrualRuleSchema,
   runDueAccrualsSchema,
   runPeriodEndAccrualsSchema,deferralScheduleSchema
-}; 
+};

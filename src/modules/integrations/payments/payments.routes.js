@@ -1,104 +1,104 @@
-const router = require("express").Router(); 
-const { authRequired } = require("../../../middleware/auth.middleware"); 
-const { requirePermission } = require("../../../middleware/permission.middleware"); 
-const { validate } = require("../../../shared/validators/validate"); 
-const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
+const router = require("express").Router();
+const { authRequired } = require("../../../middleware/auth.middleware");
+const { requirePermission } = require("../../../middleware/permission.middleware");
+const { validate } = require("../../../shared/validators/validate");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const { AppError } = require("../../../shared/errors/AppError");
 
 const {
   createPaystackIntentSchema,
   createMtnRequestToPaySchema
-} = require("./payments.validators"); 
+} = require("./payments.validators");
 
-const svc = require("./payments.service"); 
-const repo = require("./payments.repository"); 
-const paystack = require("./providers/paystack.provider"); 
+const svc = require("./payments.service");
+const repo = require("./payments.repository");
+const paystack = require("./providers/paystack.provider");
 
 // Authenticated endpoints
 router.post("/paystack/initialize", authRequired, requirePermission("payments.integrations.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = req.user.id; 
-    const payload = validate(createPaystackIntentSchema, req.body); 
-    const out = await svc.createPaystackInboundIntent({ orgId, actorUserId, payload }); 
-    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.paystack.intent_created", entityType: "payment_intents", entityId: out.intentId, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out }); 
-    res.status(201).json(out); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const payload = validate(createPaystackIntentSchema, req.body);
+    const out = await svc.createPaystackInboundIntent({ orgId, actorUserId, payload });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.paystack.intent_created", entityType: "payment_intents", entityId: out.intentId, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out });
+    res.status(201).json(out);
+  } catch (e) { next(e);}
+});
 
 router.post("/mtn/request-to-pay", authRequired, requirePermission("payments.integrations.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = req.user.id; 
-    const payload = validate(createMtnRequestToPaySchema, req.body); 
-    const out = await svc.createMtnInboundIntent({ orgId, actorUserId, payload }); 
-    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.mtn.intent_created", entityType: "payment_intents", entityId: out.intentId, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out }); 
-    res.status(201).json(out); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const payload = validate(createMtnRequestToPaySchema, req.body);
+    const out = await svc.createMtnInboundIntent({ orgId, actorUserId, payload });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.mtn.intent_created", entityType: "payment_intents", entityId: out.intentId, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out });
+    res.status(201).json(out);
+  } catch (e) { next(e);}
+});
 
 router.get("/intents/:id", authRequired, requirePermission("payments.integrations.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const intent = await repo.getIntentById({ orgId, id: req.params.id }); 
-    if (!intent) throw new AppError(404, "Payment intent not found"); 
-    res.json(intent); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const intent = await repo.getIntentById({ orgId, id: req.params.id });
+    if (!intent) throw new AppError(404, "Payment intent not found");
+    res.json(intent);
+  } catch (e) { next(e);}
+});
 
 router.post("/intents/:id/verify", authRequired, requirePermission("payments.integrations.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = req.user.id; 
-    const out = await svc.verifyIntent({ orgId, id: req.params.id }); 
-    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.intent_verified", entityType: "payment_intents", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out }); 
-    res.json(out); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const out = await svc.verifyIntent({ orgId, id: req.params.id });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.intent_verified", entityType: "payment_intents", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out });
+    res.json(out);
+  } catch (e) { next(e);}
+});
 
 router.post("/intents/:id/post-to-ledger", authRequired, requirePermission("transactions.customer_receipt.post"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id; 
-    const actorUserId = req.user.id; 
-    const out = await svc.postInboundIntentToLedger({ orgId, actorUserId, id: req.params.id }); 
-    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.intent_posted_to_ledger", entityType: "payment_intents", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out }); 
-    res.json(out); 
-  } catch (e) { next(e);  }
-}); 
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const out = await svc.postInboundIntentToLedger({ orgId, actorUserId, id: req.params.id });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "payments.intent_posted_to_ledger", entityType: "payment_intents", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out });
+    res.json(out);
+  } catch (e) { next(e);}
+});
 
-// Webhooks (no auth;  verified per provider)
+// Webhooks (no auth;verified per provider)
 router.post("/webhooks/paystack", async (req, res, next) => {
   try {
-    const sig = req.header("x-paystack-signature") || ""; 
-    const raw = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body || {}); 
-    const ok = paystack.verifyWebhookSignature({ rawBody: raw, signatureHeader: sig }); 
-    if (!ok) throw new AppError(401, "Invalid Paystack signature"); 
+    const sig = req.header("x-paystack-signature") || "";
+    const raw = req.rawBody ? req.rawBody.toString("utf8") : JSON.stringify(req.body || {});
+    const ok = paystack.verifyWebhookSignature({ rawBody: raw, signatureHeader: sig });
+    if (!ok) throw new AppError(401, "Invalid Paystack signature");
 
-    const ev = await repo.recordWebhookEvent({ providerCode: "paystack", externalEventId: req.body?.event, signature: sig, payload: req.body || {} }); 
+    const ev = await repo.recordWebhookEvent({ providerCode: "paystack", externalEventId: req.body?.event, signature: sig, payload: req.body || {} });
     try {
-      const ref = req.body?.data?.reference; 
+      const ref = req.body?.data?.reference;
       if (ref) {
-        const intent = await repo.findIntentByProviderReference({ providerCode: "paystack", reference: ref }); 
+        const intent = await repo.findIntentByProviderReference({ providerCode: "paystack", reference: ref });
         if (intent) {
-          const status = req.body?.event === "charge.success" ? "success" : (req.body?.event === "charge.failed" ? "failed" : "pending"); 
-          await repo.updateIntentStatus({ id: intent.id, orgId: intent.organization_id, status, rawLastResponse: req.body?.data || req.body, providerTransactionId: String(req.body?.data?.id || "") }); 
+          const status = req.body?.event === "charge.success" ? "success" : (req.body?.event === "charge.failed" ? "failed" : "pending");
+          await repo.updateIntentStatus({ id: intent.id, orgId: intent.organization_id, status, rawLastResponse: req.body?.data || req.body, providerTransactionId: String(req.body?.data?.id || "") });
         }
       }
-      await repo.markWebhookProcessed({ id: ev.id, error: null }); 
+      await repo.markWebhookProcessed({ id: ev.id, error: null });
     } catch (inner) {
-      await repo.markWebhookProcessed({ id: ev.id, error: inner.message || String(inner) }); 
+      await repo.markWebhookProcessed({ id: ev.id, error: inner.message || String(inner) });
     }
 
-    res.json({ ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    res.json({ ok: true });
+  } catch (e) { next(e);}
+});
 
 router.post("/webhooks/mtn", async (req, res, next) => {
   try {
-    const ev = await repo.recordWebhookEvent({ providerCode: "mtn_momo", externalEventId: req.body?.referenceId || null, signature: null, payload: req.body || {} }); 
-    await repo.markWebhookProcessed({ id: ev.id, error: null }); 
-    res.json({ ok: true }); 
-  } catch (e) { next(e);  }
-}); 
+    const ev = await repo.recordWebhookEvent({ providerCode: "mtn_momo", externalEventId: req.body?.referenceId || null, signature: null, payload: req.body || {} });
+    await repo.markWebhookProcessed({ id: ev.id, error: null });
+    res.json({ ok: true });
+  } catch (e) { next(e);}
+});
 
-module.exports = router; 
+module.exports = router;

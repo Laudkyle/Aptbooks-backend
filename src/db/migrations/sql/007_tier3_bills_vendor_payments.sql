@@ -1,6 +1,6 @@
 -- 007_tier3_bills_vendor_payments.sql
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; 
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================================
 -- BILLS (Accounts Payable) - Tier 3
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS bills (
 
   CHECK (due_date >= bill_date),
   UNIQUE (organization_id, bill_no)
-); 
+);
 
 CREATE TABLE IF NOT EXISTS bill_lines (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -60,23 +60,23 @@ CREATE TABLE IF NOT EXISTS bill_lines (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (bill_id, line_no)
-); 
+);
 
 -- Simple sequence table for bill numbers
 CREATE TABLE IF NOT EXISTS bill_sequences (
   organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
   next_no BIGINT NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-); 
+);
 
 CREATE INDEX IF NOT EXISTS idx_bills_org_status_date
-  ON bills(organization_id, status, bill_date); 
+  ON bills(organization_id, status, bill_date);
 
 CREATE INDEX IF NOT EXISTS idx_bills_vendor
-  ON bills(organization_id, vendor_id); 
+  ON bills(organization_id, vendor_id);
 
 CREATE INDEX IF NOT EXISTS idx_bill_lines_bill
-  ON bill_lines(bill_id); 
+  ON bill_lines(bill_id);
 
 -- ============================================================
 -- VENDOR PAYMENTS (Partial allocations allowed) - Tier 3
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS vendor_payments (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (organization_id, payment_no)
-); 
+);
 
 CREATE TABLE IF NOT EXISTS vendor_payment_allocations (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -131,23 +131,23 @@ CREATE TABLE IF NOT EXISTS vendor_payment_allocations (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   UNIQUE (vendor_payment_id, bill_id)
-); 
+);
 
 -- Sequence table for vendor payment numbers
 CREATE TABLE IF NOT EXISTS vendor_payment_sequences (
   organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
   next_no BIGINT NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-); 
+);
 
 CREATE INDEX IF NOT EXISTS idx_vendor_payments_org_status_date
-  ON vendor_payments(organization_id, status, payment_date); 
+  ON vendor_payments(organization_id, status, payment_date);
 
 CREATE INDEX IF NOT EXISTS idx_vendor_payments_vendor
-  ON vendor_payments(organization_id, vendor_id); 
+  ON vendor_payments(organization_id, vendor_id);
 
 CREATE INDEX IF NOT EXISTS idx_vendor_payment_allocs_payment
-  ON vendor_payment_allocations(vendor_payment_id); 
+  ON vendor_payment_allocations(vendor_payment_id);
 
 CREATE INDEX IF NOT EXISTS idx_vendor_payment_allocs_bill
-  ON vendor_payment_allocations(bill_id); 
+  ON vendor_payment_allocations(bill_id);

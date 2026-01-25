@@ -1,35 +1,35 @@
-const { pool } = require("../../../db/pool"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
+const { pool } = require("../../../db/pool");
+const { AppError } = require("../../../shared/errors/AppError");
 
-const periodIF = require("../../../interfaces/periodManagement.interface"); 
-const journalIF = require("../../../interfaces/journalPosting.interface"); 
+const periodIF = require("../../../interfaces/periodManagement.interface");
+const journalIF = require("../../../interfaces/journalPosting.interface");
 
 // --------------------------
 // Helpers for DEFERRAL rules
 // --------------------------
 function assertDeferralRuleShape({ rule, lines }) {
   if (rule.rule_type !== "DEFERRAL")
-    throw new AppError(500, "Internal: not a DEFERRAL rule"); 
+    throw new AppError(500, "Internal: not a DEFERRAL rule");
   // v1 strictness: exactly 2 lines, one debit and one credit, both fixed
   if (!Array.isArray(lines) || lines.length !== 2) {
     throw new AppError(
       400,
       "DEFERRAL rules must have exactly 2 lines (1 debit, 1 credit)"
-    ); 
+    );
   }
-  const debitLines = lines.filter((l) => l.dc === "debit"); 
-  const creditLines = lines.filter((l) => l.dc === "credit"); 
+  const debitLines = lines.filter((l) => l.dc === "debit");
+  const creditLines = lines.filter((l) => l.dc === "credit");
   if (debitLines.length !== 1 || creditLines.length !== 1) {
     throw new AppError(
       400,
       "DEFERRAL rules must have exactly 1 debit line and 1 credit line"
-    ); 
+    );
   }
   for (const l of lines) {
     if (l.amount_type !== "fixed")
-      throw new AppError(400, "DEFERRAL v1 supports fixed amount_type only"); 
+      throw new AppError(400, "DEFERRAL v1 supports fixed amount_type only");
     if (!(Number(l.amount_value) > 0))
-      throw new AppError(400, "amount_value must be > 0"); 
+      throw new AppError(400, "amount_value must be > 0");
   }
 }
 
@@ -45,44 +45,44 @@ function buildJournalLinesFromRuleLines({
       const amt =
         amountOverride != null
           ? Number(amountOverride)
-          : Number(l.amount_value); 
-      const debit = l.dc === "debit" ? amt : 0; 
-      const credit = l.dc === "credit" ? amt : 0; 
+          : Number(l.amount_value);
+      const debit = l.dc === "debit" ? amt : 0;
+      const credit = l.dc === "credit" ? amt : 0;
       return {
         accountId: l.account_id,
         debit,
         credit,
         description: (l.description || memoSuffix || "").trim() || null,
-      }; 
-    }); 
+      };
+    });
 }
 function ymd(d) {
-  const y = d.getUTCFullYear(); 
-  const m = String(d.getUTCMonth() + 1).padStart(2, "0"); 
-  const day = String(d.getUTCDate()).padStart(2, "0"); 
-  return `${y}-${m}-${day}`; 
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function sumFixedLines(lines) {
-  let debit = 0; 
-  let credit = 0; 
+  let debit = 0;
+  let credit = 0;
   for (const l of lines) {
-    const amt = Number(l.amountValue || 0); 
-    if (l.dc === "debit") debit += amt; 
-    else credit += amt; 
+    const amt = Number(l.amountValue || 0);
+    if (l.dc === "debit") debit += amt;
+    else credit += amt;
   }
-  debit = Number(debit.toFixed(2)); 
-  credit = Number(credit.toFixed(2)); 
-  return { debit, credit }; 
+  debit = Number(debit.toFixed(2));
+  credit = Number(credit.toFixed(2));
+  return { debit, credit };
 }
 function parseYMD(input, fieldName = "date") {
   // Accept: "YYYY-MM-DD" OR JS Date object
   if (input instanceof Date) {
     if (Number.isNaN(input.getTime()))
-      throw new AppError(400, `Invalid ${fieldName}`); 
+      throw new AppError(400, `Invalid ${fieldName}`);
     return new Date(
       Date.UTC(input.getUTCFullYear(), input.getUTCMonth(), input.getUTCDate())
-    ); 
+    );
   }
 
   if (typeof input === "string") {
@@ -91,29 +91,29 @@ function parseYMD(input, fieldName = "date") {
       throw new AppError(
         400,
         `Invalid ${fieldName}: ${input} (expected YYYY-MM-DD)`
-      ); 
+      );
     }
-    const d = new Date(`${input}T00:00:00.000Z`); 
+    const d = new Date(`${input}T00:00:00.000Z`);
     if (Number.isNaN(d.getTime()))
-      throw new AppError(400, `Invalid ${fieldName}: ${input}`); 
-    return d; 
+      throw new AppError(400, `Invalid ${fieldName}: ${input}`);
+    return d;
   }
 
-  if (input == null) return null; 
+  if (input == null) return null;
 
-  throw new AppError(400, `Invalid ${fieldName} type`); 
+  throw new AppError(400, `Invalid ${fieldName} type`);
 }
 
 async function assertPostableActiveAccount({ orgId, accountId }) {
   const { rows } = await pool.query(
     `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, accountId]
-  ); 
-  if (!rows.length) throw new AppError(400, "Invalid accountId in rule line"); 
+  );
+  if (!rows.length) throw new AppError(400, "Invalid accountId in rule line");
   if (!rows[0].is_postable)
-    throw new AppError(400, "Non-postable account used in rule line"); 
+    throw new AppError(400, "Non-postable account used in rule line");
   if (rows[0].status !== "active")
-    throw new AppError(400, "Inactive account used in rule line"); 
+    throw new AppError(400, "Inactive account used in rule line");
 }
 
 /**
@@ -131,33 +131,33 @@ async function assertPostableActiveAccount({ orgId, accountId }) {
  * }
  */
 async function createRule({ orgId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     // Basic bounds validation
     if (payload.startDate && payload.endDate) {
-      const sd = parseYMD(payload.startDate); 
-      const ed = parseYMD(payload.endDate); 
-      if (ed < sd) throw new AppError(400, "endDate must be >= startDate"); 
+      const sd = parseYMD(payload.startDate);
+      const ed = parseYMD(payload.endDate);
+      if (ed < sd) throw new AppError(400, "endDate must be >= startDate");
     }
 
     // REVERSING rules should be consistent
     if (payload.ruleType === "REVERSING") {
       if (!payload.autoReverse)
-        throw new AppError(400, "REVERSING rules must have autoReverse=true"); 
+        throw new AppError(400, "REVERSING rules must have autoReverse=true");
       if (
         payload.reverseTiming &&
         payload.reverseTiming !== "NEXT_PERIOD_START"
       ) {
-        throw new AppError(400, "reverseTiming must be NEXT_PERIOD_START"); 
+        throw new AppError(400, "reverseTiming must be NEXT_PERIOD_START");
       }
     }
 
     // Validate lines
-    const lines = payload.lines || []; 
+    const lines = payload.lines || [];
     if (!Array.isArray(lines) || lines.length === 0)
-      throw new AppError(400, "lines required"); 
+      throw new AppError(400, "lines required");
 
     // Normalize and validate each line
     const normalized = lines.map((l, idx) => ({
@@ -166,24 +166,24 @@ async function createRule({ orgId, payload }) {
       dc: l.dc,
       amountValue: Number(l.amountValue || 0),
       description: l.description || null,
-    })); 
+    }));
 
     for (const l of normalized) {
-      if (!l.accountId) throw new AppError(400, "line.accountId required"); 
+      if (!l.accountId) throw new AppError(400, "line.accountId required");
       if (l.dc !== "debit" && l.dc !== "credit")
-        throw new AppError(400, "line.dc must be debit|credit"); 
+        throw new AppError(400, "line.dc must be debit|credit");
       if (!Number.isFinite(l.amountValue) || l.amountValue <= 0)
-        throw new AppError(400, "line.amountValue must be > 0"); 
-      await assertPostableActiveAccount({ orgId, accountId: l.accountId }); 
+        throw new AppError(400, "line.amountValue must be > 0");
+      await assertPostableActiveAccount({ orgId, accountId: l.accountId });
     }
 
     // Balance check (fixed-only v1)
-    const totals = sumFixedLines(normalized); 
+    const totals = sumFixedLines(normalized);
     if (totals.debit !== totals.credit) {
       throw new AppError(
         400,
         `Rule lines not balanced (debit=${totals.debit}, credit=${totals.credit})`
-      ); 
+      );
     }
 
     const { rows: rRows } = await client.query(
@@ -209,9 +209,9 @@ async function createRule({ orgId, payload }) {
         payload.status || "active",
         Boolean(payload.isRequired),
       ]
-    ); 
+    );
 
-    const rule = rRows[0]; 
+    const rule = rRows[0];
 
     for (const l of normalized) {
       await client.query(
@@ -222,19 +222,19 @@ async function createRule({ orgId, payload }) {
         VALUES ($1,$2,$3,$4,'fixed',$5,$6)
         `,
         [rule.id, l.lineNo, l.accountId, l.dc, l.amountValue, l.description]
-      ); 
+      );
     }
     // If DEFERRAL: create/update schedule (optional)
     if (payload.ruleType === "DEFERRAL" && payload.deferralSchedule) {
       const { totalAmount, periodCount, startPeriodId } =
-        payload.deferralSchedule; 
+        payload.deferralSchedule;
 
       // Ensure rule lines are valid for DEFERRAL
       const { rows: ruleLines } = await client.query(
         `SELECT line_no, account_id, dc, amount_type, amount_value, description
      FROM accrual_rule_lines WHERE accrual_rule_id=$1 ORDER BY line_no`,
         [rule.id]
-      ); 
+      );
 
       assertDeferralRuleShape({
         rule: { rule_type: "DEFERRAL" },
@@ -243,7 +243,7 @@ async function createRule({ orgId, payload }) {
           amount_type: x.amount_type,
           amount_value: x.amount_value,
         })),
-      }); 
+      });
 
       // Initialise schedule as active
       await client.query(
@@ -262,16 +262,16 @@ async function createRule({ orgId, payload }) {
       updated_at=NOW()
     `,
         [rule.id, totalAmount, periodCount, startPeriodId]
-      ); 
+      );
     }
 
-    await client.query("COMMIT"); 
-    return rule; 
+    await client.query("COMMIT");
+    return rule;
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -279,8 +279,8 @@ async function listRules({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM accrual_rules WHERE organization_id=$1 ORDER BY created_at DESC`,
     [orgId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
@@ -288,12 +288,12 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
   const { rows: pRows } = await pool.query(
     `SELECT id, status, start_date, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
     [orgId, periodId]
-  ); 
-  if (!pRows.length) throw new AppError(400, "Invalid periodId"); 
-  const period = pRows[0]; 
-  if (period.status !== "open") throw new AppError(409, "Period is not open"); 
+  );
+  if (!pRows.length) throw new AppError(400, "Invalid periodId");
+  const period = pRows[0];
+  if (period.status !== "open") throw new AppError(409, "Period is not open");
 
-  // 1) Find eligible schedules (NO FOR UPDATE here;  we claim per schedule later)
+  // 1) Find eligible schedules (NO FOR UPDATE here;we claim per schedule later)
   const { rows: schedules } = await pool.query(
     `
     SELECT
@@ -318,44 +318,44 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
     ORDER BY r.code ASC
     `,
     [orgId, period.start_date]
-  ); 
+  );
 
-  const results = []; 
+  const results = [];
 
   for (const s of schedules) {
-    const totalAmount = Number(s.total_amount); 
-    const remaining = Number(s.remaining_amount); 
-    const periodCount = Number(s.period_count || 0); 
-    if (!(periodCount > 0)) continue; 
+    const totalAmount = Number(s.total_amount);
+    const remaining = Number(s.remaining_amount);
+    const periodCount = Number(s.period_count || 0);
+    if (!(periodCount > 0)) continue;
 
-    const perPeriod = Number((totalAmount / periodCount).toFixed(2)); 
-    const recognitionAmount = Number(Math.min(perPeriod, remaining).toFixed(2)); 
+    const perPeriod = Number((totalAmount / periodCount).toFixed(2));
+    const recognitionAmount = Number(Math.min(perPeriod, remaining).toFixed(2));
     if (!(recognitionAmount > 0)) {
       // tiny rounding residue: mark complete safely
       await pool.query(
         `UPDATE accrual_schedules SET status='complete', remaining_amount=0, updated_at=NOW() WHERE id=$1 AND status='active'`,
         [s.schedule_id]
-      ); 
-      continue; 
+      );
+      continue;
     }
 
     // 2) Claim/create run in a short transaction (no journal posting here)
-    let runId = null; 
-    let alreadyRan = false; 
+    let runId = null;
+    let alreadyRan = false;
 
     {
-      const client = await pool.connect(); 
+      const client = await pool.connect();
       try {
-        await client.query("BEGIN"); 
+        await client.query("BEGIN");
 
         // Lock schedule row to prevent concurrent decrements
         const { rows: lockedSched } = await client.query(
           `SELECT id, remaining_amount, status FROM accrual_schedules WHERE id=$1 FOR UPDATE`,
           [s.schedule_id]
-        ); 
+        );
         if (!lockedSched.length || lockedSched[0].status !== "active") {
-          await client.query("ROLLBACK"); 
-          continue; 
+          await client.query("ROLLBACK");
+          continue;
         }
 
         // Insert accrual run once per (org, rule, period, date)
@@ -376,23 +376,23 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
               period.id,
               period.end_date,
             ]
-          ); 
-          runId = runRows[0].id; 
+          );
+          runId = runRows[0].id;
         } catch (e) {
           if (String(e.code) === "23505") {
-            alreadyRan = true; 
+            alreadyRan = true;
           } else {
-            throw e; 
+            throw e;
           }
         }
 
-        await client.query("COMMIT"); 
+        await client.query("COMMIT");
       } catch (e) {
-        await client.query("ROLLBACK"); 
-        client.release(); 
-        throw e; 
+        await client.query("ROLLBACK");
+        client.release();
+        throw e;
       } finally {
-        client.release(); 
+        client.release();
       }
     }
 
@@ -403,9 +403,9 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
         periodId: period.id,
         status: "skipped",
         reason: "already_ran_for_period",
-      }); 
+      });
 
-      continue; 
+      continue;
     }
   
     // 3) Load rule + lines (outside any lock-heavy tx)
@@ -413,60 +413,60 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
       `SELECT id, rule_type, frequency, status, code, name
        FROM accrual_rules WHERE organization_id=$1 AND id=$2`,
       [orgId, s.accrual_rule_id]
-    ); 
+    );
     if (!ruleRows.length) {
       // mark run failed
       await pool.query(
         `UPDATE accrual_runs SET status='failed', failed_at=NOW(), failure_reason=$3, failure_count=failure_count+1, completed_at=NOW()
          WHERE organization_id=$1 AND id=$2`,
         [orgId, runId, "rule_not_found"]
-      ); 
-      continue; 
+      );
+      continue;
     }
-    const rule = ruleRows[0]; 
+    const rule = ruleRows[0];
 
     const { rows: ruleLines } = await pool.query(
       `SELECT line_no, account_id, dc, amount_type, amount_value, description
        FROM accrual_rule_lines WHERE accrual_rule_id=$1 ORDER BY line_no`,
       [rule.id]
-    ); 
+    );
 
     try {
-      assertDeferralRuleShape({ rule, lines: ruleLines }); 
+      assertDeferralRuleShape({ rule, lines: ruleLines });
     } catch (e) {
       await pool.query(
         `UPDATE accrual_runs SET status='failed', failed_at=NOW(), failure_reason=$3, failure_count=failure_count+1, completed_at=NOW(), error=$4
          WHERE organization_id=$1 AND id=$2`,
         [orgId, runId, "invalid_deferral_rule_shape", String(e.message || e)]
-      ); 
-      continue; 
+      );
+      continue;
     }
 
     const journalLines = buildJournalLinesFromRuleLines({
       ruleLines,
       amountOverride: recognitionAmount,
       memoSuffix: `Deferral ${rule.code}`,
-    }); 
+    });
 
     const debitTotal = Number(
       journalLines.reduce((a, l) => a + Number(l.debit || 0), 0).toFixed(2)
-    ); 
+    );
     const creditTotal = Number(
       journalLines.reduce((a, l) => a + Number(l.credit || 0), 0).toFixed(2)
-    ); 
+    );
     if (debitTotal !== creditTotal) {
       await pool.query(
         `UPDATE accrual_runs SET status='failed', failed_at=NOW(), failure_reason=$3, failure_count=failure_count+1, completed_at=NOW()
          WHERE organization_id=$1 AND id=$2`,
         [orgId, runId, "journal_not_balanced"]
-      ); 
-      continue; 
+      );
+      continue;
     }
 
     // 4) Post journal via kernel interface (safe: no outer tx holding locks)
-    const idempotencyKey = `accrual:deferral:${s.schedule_id}:${period.id}`; 
+    const idempotencyKey = `accrual:deferral:${s.schedule_id}:${period.id}`;
 
-    let posted; 
+    let posted;
     try {
       const draft = await journalIF.createDraftJournal({
         orgId,
@@ -479,13 +479,13 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
           idempotencyKey,
           lines: journalLines,
         },
-      }); 
+      });
 
       posted = await journalIF.postDraftJournal({
         orgId,
         journalId: draft.journalId,
         actorUserId,
-      }); 
+      });
     } catch (e) {
       // Persist failure on run (do NOT change schedule)
       await pool.query(
@@ -498,15 +498,15 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
              completed_at=NOW()
          WHERE organization_id=$1 AND id=$2`,
         [orgId, runId, "journal_post_failed", String(e.message || e)]
-      ); 
-      continue; 
+      );
+      continue;
     }
 
     // 5) Link posting + decrement schedule in a short transaction
     {
-      const client = await pool.connect(); 
+      const client = await pool.connect();
       try {
-        await client.query("BEGIN"); 
+        await client.query("BEGIN");
 
         // Link run → journal (idempotent)
         await client.query(
@@ -516,7 +516,7 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
           ON CONFLICT (accrual_run_id) DO NOTHING
           `,
           [runId, posted.journalId]
-        ); 
+        );
 
         // Mark run posted
         await client.query(
@@ -526,20 +526,20 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
           WHERE organization_id=$1 AND id=$2
           `,
           [orgId, runId]
-        ); 
+        );
 
        // Decrement schedule safely using current DB value (prevents double-decrement)
 const { rows: schedNow } = await client.query(
   `SELECT remaining_amount FROM accrual_schedules WHERE id=$1 FOR UPDATE`,
   [s.schedule_id]
-); 
+);
 
 if (schedNow.length) {
-  const nowRemaining = Number(schedNow[0].remaining_amount); 
-  const newRemainingValue = Number((nowRemaining - recognitionAmount).toFixed(2)); 
+  const nowRemaining = Number(schedNow[0].remaining_amount);
+  const newRemainingValue = Number((nowRemaining - recognitionAmount).toFixed(2));
   
   // Ensure it doesn't go negative
-  const finalRemaining = Math.max(0, newRemainingValue); 
+  const finalRemaining = Math.max(0, newRemainingValue);
   await client.query(
   `
   UPDATE accrual_schedules
@@ -549,12 +549,12 @@ if (schedNow.length) {
   WHERE id=$1
   `,
   [s.schedule_id, finalRemaining]
-); 
+);
 }
 
-        await client.query("COMMIT"); 
+        await client.query("COMMIT");
       } catch (e) {
-        await client.query("ROLLBACK"); 
+        await client.query("ROLLBACK");
         // Important: journal is posted but schedule update failed.
         // This should be alerted (operator can reconcile by recomputing remaining).
         await pool.query(
@@ -562,10 +562,10 @@ if (schedNow.length) {
            SET error = COALESCE(error,'') || $3
            WHERE organization_id=$1 AND id=$2`,
           [orgId, runId, ` | schedule_update_failed: ${String(e.message || e)}`]
-        ); 
-        throw e; 
+        );
+        throw e;
       } finally {
-        client.release(); 
+        client.release();
       }
     }
 
@@ -576,24 +576,24 @@ if (schedNow.length) {
       runId,
       journalId: posted.journalId,
       recognitionAmount,
-    }); 
+    });
   }
 
-  return results; 
+  return results;
 }
 
 async function getRuleWithLines({ orgId, ruleId }) {
   const { rows: r } = await pool.query(
     `SELECT * FROM accrual_rules WHERE organization_id=$1 AND id=$2`,
     [orgId, ruleId]
-  ); 
-  if (!r.length) throw new AppError(404, "Accrual rule not found"); 
+  );
+  if (!r.length) throw new AppError(404, "Accrual rule not found");
 
   const { rows: lines } = await pool.query(
     `SELECT * FROM accrual_rule_lines WHERE accrual_rule_id=$1 ORDER BY line_no`,
     [ruleId]
-  ); 
-  return { rule: r[0], lines }; 
+  );
+  return { rule: r[0], lines };
 }
 
 /**
@@ -609,67 +609,67 @@ async function runOne({
   asOfDate,
   periodIdOverride = null,
 }) {
-  const asOf = parseYMD(asOfDate); 
-  const asOfYMD = ymd(asOf); 
+  const asOf = parseYMD(asOfDate);
+  const asOfYMD = ymd(asOf);
 
-  const { rule, lines } = await getRuleWithLines({ orgId, ruleId }); 
+  const { rule, lines } = await getRuleWithLines({ orgId, ruleId });
 
   // Bounds
   if (rule.start_date) {
-    const sd = parseYMD(ymd(parseYMD(rule.start_date))); 
+    const sd = parseYMD(ymd(parseYMD(rule.start_date)));
     if (asOf < sd)
       return {
         skipped: true,
         reason: "Before rule start_date",
         ruleId,
         asOfDate: asOfYMD,
-      }; 
+      };
   }
   if (rule.end_date) {
-    const ed = parseYMD(ymd(parseYMD(rule.end_date))); 
+    const ed = parseYMD(ymd(parseYMD(rule.end_date)));
     if (asOf > ed)
       return {
         skipped: true,
         reason: "After rule end_date",
         ruleId,
         asOfDate: asOfYMD,
-      }; 
+      };
   }
 
   // Determine period
-  let period = null; 
+  let period = null;
   if (periodIdOverride) {
     const { rows: p } = await pool.query(
       `SELECT * FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
       [orgId, periodIdOverride]
-    ); 
-    if (!p.length) throw new AppError(400, "Invalid periodId"); 
+    );
+    if (!p.length) throw new AppError(400, "Invalid periodId");
     if (p[0].status !== "open")
       return {
         skipped: true,
         reason: "Target period not open",
         ruleId,
         asOfDate: asOfYMD,
-      }; 
-    period = p[0]; 
+      };
+    period = p[0];
   } else {
     // Graceful skip if no open period covers date
     try {
-      period = await periodIF.findOpenPeriodForDate({ orgId, date: asOfYMD }); 
+      period = await periodIF.findOpenPeriodForDate({ orgId, date: asOfYMD });
       if (!period)
         return {
           skipped: true,
           reason: "No open period for date",
           ruleId,
           asOfDate: asOfYMD,
-        }; 
+        };
     } catch (_) {
       return {
         skipped: true,
         reason: "No open period for date",
         ruleId,
         asOfDate: asOfYMD,
-      }; 
+      };
     }
   }
 
@@ -679,10 +679,10 @@ async function runOne({
       dc: l.dc,
       amountValue: Number(l.amount_value || 0),
     }))
-  ); 
+  );
   if (totals.debit !== totals.credit) {
     // This should not happen if createRule validated, but keep it defensive
-    throw new AppError(500, "Accrual rule lines are not balanced"); 
+    throw new AppError(500, "Accrual rule lines are not balanced");
   }
 
   // Prepare journal lines
@@ -691,21 +691,21 @@ async function runOne({
     debit: l.dc === "debit" ? Number(l.amount_value) : 0,
     credit: l.dc === "credit" ? Number(l.amount_value) : 0,
     description: l.description || rule.name,
-  })); 
+  }));
 
-  const idempotencyKey = `accrual:post:${ruleId}:${period.id}:${asOfYMD}`; 
+  const idempotencyKey = `accrual:post:${ruleId}:${period.id}:${asOfYMD}`;
 
-  const client = await pool.connect(); 
-  let runRow = null; 
+  const client = await pool.connect();
+  let runRow = null;
 
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     // Advisory lock for (orgId, ruleId, periodId, asOfDate) to prevent concurrent duplicates
-    // Uses hashtext which is stable;  suitable for xact lock.
+    // Uses hashtext which is stable;suitable for xact lock.
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
       `accrual_run:${orgId}:${ruleId}:${period.id}:${asOfYMD}`,
-    ]); 
+    ]);
 
     // If run already exists, return idempotently
     const { rows: existing } = await client.query(
@@ -715,21 +715,21 @@ async function runOne({
       LIMIT 1
       `,
       [orgId, ruleId, period.id, asOfYMD]
-    ); 
+    );
 
     if (existing.length) {
-      const ex = existing[0]; 
+      const ex = existing[0];
       if (["posted", "reversed", "skipped"].includes(ex.status)) {
-        await client.query("COMMIT"); 
+        await client.query("COMMIT");
         return {
           skipped: true,
           reason: `Already ${ex.status}`,
           runId: ex.id,
           ruleId,
           asOfDate: asOfYMD,
-        }; 
+        };
       }
-      runRow = ex; 
+      runRow = ex;
     } else {
       const { rows: created } = await client.query(
         `
@@ -740,16 +740,16 @@ async function runOne({
         RETURNING *
         `,
         [orgId, ruleId, period.id, asOfYMD]
-      ); 
-      runRow = created[0]; 
+      );
+      runRow = created[0];
     }
 
-    await client.query("COMMIT"); 
+    await client.query("COMMIT");
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 
   // Post journal OUTSIDE the above transaction.
@@ -766,13 +766,13 @@ async function runOne({
         idempotencyKey,
         lines: journalLines,
       },
-    }); 
+    });
 
     const posted = await journalIF.postDraftJournal({
       orgId,
       journalId: draft.journalId,
       actorUserId,
-    }); 
+    });
 
     // Persist linkage + mark posted
     await pool.query(
@@ -782,7 +782,7 @@ async function runOne({
       ON CONFLICT (accrual_run_id) DO NOTHING
       `,
       [runRow.id, posted.journalId]
-    ); 
+    );
 
     await pool.query(
       `
@@ -791,9 +791,9 @@ async function runOne({
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, runRow.id]
-    ); 
+    );
 
-    return { runId: runRow.id, status: "posted", journalId: posted.journalId }; 
+    return { runId: runRow.id, status: "posted", journalId: posted.journalId };
   } catch (e) {
     // Persist failure
     await pool.query(
@@ -803,8 +803,8 @@ async function runOne({
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, runRow.id, String(e?.message || e)]
-    ); 
-    throw e; 
+    );
+    throw e;
   }
 }
 
@@ -822,56 +822,56 @@ async function runDueAccruals({ orgId, actorUserId, asOfDate }) {
     ORDER BY created_at ASC
     `,
     [orgId]
-  ); 
+  );
 
-  const asOf = parseYMD(asOfDate); 
+  const asOf = parseYMD(asOfDate);
 
   const withinBounds = (r) => {
     if (r.start_date) {
-      const sd = parseYMD(ymd(parseYMD(r.start_date))); 
-      if (asOf < sd) return false; 
+      const sd = parseYMD(ymd(parseYMD(r.start_date)));
+      if (asOf < sd) return false;
     }
     if (r.end_date) {
-      const ed = parseYMD(ymd(parseYMD(r.end_date))); 
-      if (asOf > ed) return false; 
+      const ed = parseYMD(ymd(parseYMD(r.end_date)));
+      if (asOf > ed) return false;
     }
-    return true; 
-  }; 
+    return true;
+  };
 
   const isDue = (r) => {
-    if (!withinBounds(r)) return false; 
+    if (!withinBounds(r)) return false;
 
-    if (r.frequency === "DAILY") return true; 
+    if (r.frequency === "DAILY") return true;
 
     if (r.frequency === "WEEKLY") {
-      // Anchor: start_date weekday;  if none, Monday
+      // Anchor: start_date weekday;if none, Monday
       const anchor = r.start_date
         ? parseYMD(ymd(parseYMD(r.start_date)))
-        : new Date("1970-01-05T00:00:00.000Z"); 
-      return asOf.getUTCDay() === anchor.getUTCDay(); 
+        : new Date("1970-01-05T00:00:00.000Z");
+      return asOf.getUTCDay() === anchor.getUTCDay();
     }
 
     if (r.frequency === "MONTHLY") {
-      // Anchor day-of-month;  if none, 1st.
+      // Anchor day-of-month;if none, 1st.
       const anchorDay = r.start_date
         ? parseYMD(ymd(parseYMD(r.start_date))).getUTCDate()
-        : 1; 
-      const y = asOf.getUTCFullYear(); 
-      const m = asOf.getUTCMonth(); 
-      const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate(); 
-      const dueDay = Math.min(anchorDay, lastDay); 
-      return asOf.getUTCDate() === dueDay; 
+        : 1;
+      const y = asOf.getUTCFullYear();
+      const m = asOf.getUTCMonth();
+      const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+      const dueDay = Math.min(anchorDay, lastDay);
+      return asOf.getUTCDate() === dueDay;
     }
 
-    return false; 
-  }; 
+    return false;
+  };
 
-  const results = []; 
+  const results = [];
   for (const r of rules) {
-    if (!isDue(r)) continue; 
-    results.push(await runOne({ orgId, actorUserId, ruleId: r.id, asOfDate })); 
+    if (!isDue(r)) continue;
+    results.push(await runOne({ orgId, actorUserId, ruleId: r.id, asOfDate }));
   }
-  return results; 
+  return results;
 }
 
 /**
@@ -887,11 +887,11 @@ async function runPeriodEndAccruals({
   const { rows: p } = await pool.query(
     `SELECT id, status, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
     [orgId, periodId]
-  ); 
-  if (!p.length) throw new AppError(400, "Invalid periodId"); 
-  if (p[0].status !== "open") throw new AppError(409, "Period is not open"); 
+  );
+  if (!p.length) throw new AppError(400, "Invalid periodId");
+  if (p[0].status !== "open") throw new AppError(409, "Period is not open");
 
-  const asOfDate = asOfDateOverride || ymd(parseYMD(p[0].end_date)); 
+  const asOfDate = asOfDateOverride || ymd(parseYMD(p[0].end_date));
 
   const { rows: rules } = await pool.query(
     `
@@ -904,9 +904,9 @@ async function runPeriodEndAccruals({
     ORDER BY created_at ASC
     `,
     [orgId]
-  ); 
+  );
 
-  const results = []; 
+  const results = [];
   for (const r of rules) {
     results.push(
       await runOne({
@@ -916,25 +916,25 @@ async function runPeriodEndAccruals({
         asOfDate,
         periodIdOverride: periodId,
       })
-    ); 
+    );
   }
   // After running PERIOD_END recurring rules:
-  await runDeferralRecognitions({ orgId, actorUserId, periodId }); 
-  return results; 
+  await runDeferralRecognitions({ orgId, actorUserId, periodId });
+  return results;
 }
 
 async function runReversals({ orgId, actorUserId, periodId }) {
   // Reverse posted accrual runs requiring reversal, posting into provided open period.
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
     const { rows: pRows } = await client.query(
       `SELECT id, status, start_date FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
       [orgId, periodId]
-    ); 
-    if (!pRows.length) throw new AppError(400, "Invalid periodId"); 
-    const targetPeriod = pRows[0]; 
+    );
+    if (!pRows.length) throw new AppError(400, "Invalid periodId");
+    const targetPeriod = pRows[0];
     if (targetPeriod.status !== "open")
-      throw new AppError(409, "Period is not open"); 
+      throw new AppError(409, "Period is not open");
 
     const { rows } = await client.query(
       `
@@ -957,13 +957,13 @@ async function runReversals({ orgId, actorUserId, periodId }) {
       ORDER BY ar.as_of_date ASC
       `,
       [orgId]
-    ); 
+    );
 
-    let reversedCount = 0; 
-    let failedCount = 0; 
+    let reversedCount = 0;
+    let failedCount = 0;
 
     for (const x of rows) {
-      const idempotencyKey = `accrual:reverse:${x.run_id}:${periodId}`; 
+      const idempotencyKey = `accrual:reverse:${x.run_id}:${periodId}`;
 
       try {
         // Post reversal journal into TARGET period at period start date
@@ -975,9 +975,9 @@ async function runReversals({ orgId, actorUserId, periodId }) {
           entryDate: targetPeriod.start_date,
           reason: `Auto-reversal for accrual ${x.code}`,
           idempotencyKey,
-        }); 
+        });
 
-        await client.query("BEGIN"); 
+        await client.query("BEGIN");
 
         // Set reversal linkage (idempotent)
         const { rowCount } = await client.query(
@@ -990,7 +990,7 @@ async function runReversals({ orgId, actorUserId, periodId }) {
             AND reversal_journal_entry_id IS NULL
           `,
           [x.run_id, out.reversalJournalId]
-        ); 
+        );
 
         if (rowCount > 0) {
           await client.query(
@@ -1002,16 +1002,16 @@ async function runReversals({ orgId, actorUserId, periodId }) {
               AND status='posted'
             `,
             [x.run_id, orgId]
-          ); 
-          reversedCount += 1; 
+          );
+          reversedCount += 1;
         }
 
-        await client.query("COMMIT"); 
+        await client.query("COMMIT");
       } catch (e) {
         try {
-          await client.query("ROLLBACK"); 
+          await client.query("ROLLBACK");
         } catch (_) {}
-        failedCount += 1; 
+        failedCount += 1;
 
         // Persist reversal failure on posting record (do NOT change run from 'posted')
         await client.query(
@@ -1023,13 +1023,13 @@ async function runReversals({ orgId, actorUserId, periodId }) {
           WHERE accrual_run_id=$1
           `,
           [x.run_id, String(e?.message || e)]
-        ); 
+        );
       }
     }
 
-    return { reversedCount, failedCount }; 
+    return { reversedCount, failedCount };
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -1037,34 +1037,34 @@ async function runReversals({ orgId, actorUserId, periodId }) {
  * Monitoring
  */
 async function listRuns({ orgId, query }) {
-  const params = [orgId]; 
-  const where = ["ar.organization_id=$1"]; 
-  let i = 2; 
+  const params = [orgId];
+  const where = ["ar.organization_id=$1"];
+  let i = 2;
 
   if (query?.ruleId) {
-    where.push(`ar.accrual_rule_id=$${i++}`); 
-    params.push(query.ruleId); 
+    where.push(`ar.accrual_rule_id=$${i++}`);
+    params.push(query.ruleId);
   }
   if (query?.periodId) {
-    where.push(`ar.period_id=$${i++}`); 
-    params.push(query.periodId); 
+    where.push(`ar.period_id=$${i++}`);
+    params.push(query.periodId);
   }
   if (query?.status) {
-    where.push(`ar.status=$${i++}`); 
-    params.push(query.status); 
+    where.push(`ar.status=$${i++}`);
+    params.push(query.status);
   }
   if (query?.from) {
-    where.push(`ar.as_of_date >= $${i++}`); 
-    params.push(query.from); 
+    where.push(`ar.as_of_date >= $${i++}`);
+    params.push(query.from);
   }
   if (query?.to) {
-    where.push(`ar.as_of_date <= $${i++}`); 
-    params.push(query.to); 
+    where.push(`ar.as_of_date <= $${i++}`);
+    params.push(query.to);
   }
 
-  const limit = Math.min(Number(query?.limit || 50), 200); 
-  const offset = Math.max(Number(query?.offset || 0), 0); 
-  params.push(limit, offset); 
+  const limit = Math.min(Number(query?.limit || 50), 200);
+  const offset = Math.max(Number(query?.offset || 0), 0);
+  params.push(limit, offset);
 
   const { rows } = await pool.query(
     `
@@ -1084,9 +1084,9 @@ async function listRuns({ orgId, query }) {
     LIMIT $${i++} OFFSET $${i++}
     `,
     params
-  ); 
+  );
 
-  return rows; 
+  return rows;
 }
 
 async function getRun({ orgId, runId }) {
@@ -1106,9 +1106,9 @@ async function getRun({ orgId, runId }) {
     WHERE ar.organization_id=$1 AND ar.id=$2
     `,
     [orgId, runId]
-  ); 
-  if (!rows.length) throw new AppError(404, "Accrual run not found"); 
-  return rows[0]; 
+  );
+  if (!rows.length) throw new AppError(404, "Accrual run not found");
+  return rows[0];
 }
 
 module.exports = {
@@ -1122,4 +1122,4 @@ module.exports = {
   listRuns,
   getRun,
   runDeferralRecognitions,
-}; 
+};

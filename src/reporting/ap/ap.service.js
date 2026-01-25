@@ -1,15 +1,15 @@
-const { AppError } = require("../../shared/errors/AppError"); 
-const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError");
+const { pool } = require("../../db/pool");
 
 function assertDate(value, fieldName) {
-  if (!value) throw new AppError(400, `${fieldName} is required`); 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`); 
+  if (!value) throw new AppError(400, `${fieldName} is required`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`);
 }
 
 async function getAgingBuckets({ orgId, bucketSetId }) {
   const set = bucketSetId
     ? (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND id=$2`, [orgId, bucketSetId])).rows[0]
-    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]; 
+    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0];
 
   if (!set) {
     return {
@@ -22,7 +22,7 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
         { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
         { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
       ]
-    }; 
+    };
   }
 
   const { rows: buckets } = await pool.query(
@@ -31,24 +31,24 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
       WHERE organization_id=$1 AND bucket_set_id=$2
       ORDER BY sort_order ASC, id ASC`,
     [orgId, set.id]
-  ); 
-  return { bucketSet: set, buckets }; 
+  );
+  return { bucketSet: set, buckets };
 }
 
 function assignBucketLabel(buckets, daysPastDue) {
-  const dpd = Number(daysPastDue || 0); 
+  const dpd = Number(daysPastDue || 0);
   for (const b of buckets) {
-    const start = Number(b.start_days); 
-    const end = b.end_days === null || b.end_days === undefined ? null : Number(b.end_days); 
-    if (dpd >= start && (end === null || dpd <= end)) return b.label; 
+    const start = Number(b.start_days);
+    const end = b.end_days === null || b.end_days === undefined ? null : Number(b.end_days);
+    if (dpd >= start && (end === null || dpd <= end)) return b.label;
   }
-  return buckets[buckets.length - 1]?.label || 'CURRENT'; 
+  return buckets[buckets.length - 1]?.label || 'CURRENT';
 }
 
 async function agedPayables({ orgId, asOfDate, bucketSetId }) {
-  assertDate(asOfDate, "asOfDate"); 
+  assertDate(asOfDate, "asOfDate");
 
-  const { buckets } = await getAgingBuckets({ orgId, bucketSetId }); 
+  const { buckets } = await getAgingBuckets({ orgId, bucketSetId });
 
   const { rows } = await pool.query(
     `SELECT
@@ -70,28 +70,28 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
      WHERE oi.organization_id=$1 AND oi.outstanding > 0
      ORDER BY bp.name, oi.due_date NULLS LAST, oi.bill_no`,
     [orgId, asOfDate]
-  ); 
+  );
 
-  const byVendor = new Map(); 
-  const totals = { total: 0 }; 
-  for (const b of buckets) totals[b.label] = 0; 
+  const byVendor = new Map();
+  const totals = { total: 0 };
+  for (const b of buckets) totals[b.label] = 0;
 
   for (const r of rows) {
-    const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0)); 
-    const outstanding = Number(r.outstanding || 0); 
+    const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0));
+    const outstanding = Number(r.outstanding || 0);
     if (!byVendor.has(r.vendor_id)) {
       byVendor.set(r.vendor_id, {
         vendor_id: r.vendor_id,
         vendor_name: r.vendor_name,
         buckets: Object.assign({ total: 0 }, Object.fromEntries(buckets.map(b => [b.label, 0]))),
         bills: []
-      }); 
+      });
     }
-    const v = byVendor.get(r.vendor_id); 
-    v.buckets[bucket] += outstanding; 
-    v.buckets.total += outstanding; 
-    totals[bucket] += outstanding; 
-    totals.total += outstanding; 
+    const v = byVendor.get(r.vendor_id);
+    v.buckets[bucket] += outstanding;
+    v.buckets.total += outstanding;
+    totals[bucket] += outstanding;
+    totals.total += outstanding;
     v.bills.push({
       bill_id: r.bill_id,
       bill_no: r.bill_no,
@@ -105,22 +105,22 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
       outstanding,
       days_past_due: Number(r.days_past_due || 0),
       bucket
-    }); 
+    });
   }
 
-  return { as_of_date: asOfDate, totals, vendors: Array.from(byVendor.values()) }; 
+  return { as_of_date: asOfDate, totals, vendors: Array.from(byVendor.values()) };
 }
 
 async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
-  if (!vendorId) throw new AppError(400, "vendorId is required"); 
-  assertDate(fromDate, "from"); 
-  assertDate(toDate, "to"); 
+  if (!vendorId) throw new AppError(400, "vendorId is required");
+  assertDate(fromDate, "from");
+  assertDate(toDate, "to");
 
   const { rows: vendorRows } = await pool.query(
     `SELECT id, name FROM business_partners WHERE id=$1`,
     [vendorId]
-  ); 
-  if (!vendorRows.length) throw new AppError(404, "Vendor not found"); 
+  );
+  if (!vendorRows.length) throw new AppError(404, "Vendor not found");
 
   const { rows: openingRows } = await pool.query(
     `
@@ -145,8 +145,8 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
       AND b.bill_date < $3::date
     `,
     [orgId, vendorId, fromDate]
-  ); 
-  const opening = Number(openingRows[0]?.opening || 0); 
+  );
+  const opening = Number(openingRows[0]?.opening || 0);
 
   const { rows: bills } = await pool.query(
     `
@@ -158,7 +158,7 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     ORDER BY bill_date, bill_no
     `,
     [orgId, vendorId, fromDate, toDate]
-  ); 
+  );
 
   const { rows: payments } = await pool.query(
     `
@@ -177,11 +177,11 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     ORDER BY vp.payment_date, vp.payment_no
     `,
     [orgId, vendorId, fromDate, toDate]
-  ); 
+  );
 
-  const entries = []; 
+  const entries = [];
   for (const b of bills) {
-    // Bills increase AP;  show as debit to expense, credit AP. Statement perspective: bill increases payable.
+    // Bills increase AP;show as debit to expense, credit AP. Statement perspective: bill increases payable.
     entries.push({
       date: b.bill_date,
       type: "bill",
@@ -189,10 +189,10 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
       description: b.memo || null,
       debit: Number(b.total || 0),
       credit: 0
-    }); 
+    });
   }
   for (const p of payments) {
-    // Payments reduce AP;  show as credit.
+    // Payments reduce AP;show as credit.
     entries.push({
       date: p.payment_date,
       type: "payment",
@@ -200,11 +200,11 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
       description: null,
       debit: 0,
       credit: Number(p.allocated_total || p.amount_total || 0)
-    }); 
+    });
   }
-  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference))); 
+  entries.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference)));
 
-  let running = opening; 
+  let running = opening;
   const lines = [{
     date: fromDate,
     type: "opening_balance",
@@ -213,10 +213,10 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     debit: 0,
     credit: 0,
     balance: running
-  }]; 
+  }];
   for (const e of entries) {
-    running += Number(e.debit || 0) - Number(e.credit || 0); 
-    lines.push({ ...e, balance: running }); 
+    running += Number(e.debit || 0) - Number(e.credit || 0);
+    lines.push({ ...e, balance: running });
   }
 
   return {
@@ -226,10 +226,10 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     opening_balance: opening,
     closing_balance: running,
     lines
-  }; 
+  };
 }
 
 module.exports = {
   agedPayables,
   vendorStatement
-}; 
+};

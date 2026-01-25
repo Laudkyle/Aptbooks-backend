@@ -1,7 +1,7 @@
 -- 004_tier2_business_ops.sql
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; 
-CREATE EXTENSION IF NOT EXISTS citext; 
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS citext;
 
 -- Payment terms
 CREATE TABLE IF NOT EXISTS payment_terms (
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS payment_terms (
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, name)
-); 
+);
 
 -- Payment methods
 CREATE TABLE IF NOT EXISTS payment_methods (
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code),
   UNIQUE (organization_id, name)
-); 
+);
 
 -- Business partners
 CREATE TABLE IF NOT EXISTS business_partners (
@@ -52,10 +52,10 @@ CREATE TABLE IF NOT EXISTS business_partners (
 
   UNIQUE (organization_id, type, name),
   UNIQUE (organization_id, type, code)
-); 
+);
 
-CREATE INDEX IF NOT EXISTS idx_bp_org_type ON business_partners(organization_id, type); 
-CREATE INDEX IF NOT EXISTS idx_bp_org_status ON business_partners(organization_id, status); 
+CREATE INDEX IF NOT EXISTS idx_bp_org_type ON business_partners(organization_id, type);
+CREATE INDEX IF NOT EXISTS idx_bp_org_status ON business_partners(organization_id, status);
 
 -- Contacts
 CREATE TABLE IF NOT EXISTS business_partner_contacts (
@@ -71,10 +71,10 @@ CREATE TABLE IF NOT EXISTS business_partner_contacts (
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-); 
+);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bp_one_primary_contact
-  ON business_partner_contacts(partner_id) WHERE is_primary = TRUE; 
+  ON business_partner_contacts(partner_id) WHERE is_primary = TRUE;
 
 -- Addresses
 CREATE TABLE IF NOT EXISTS business_partner_addresses (
@@ -93,24 +93,24 @@ CREATE TABLE IF NOT EXISTS business_partner_addresses (
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-); 
+);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_bp_one_primary_address
-  ON business_partner_addresses(partner_id) WHERE is_primary = TRUE; 
+  ON business_partner_addresses(partner_id) WHERE is_primary = TRUE;
 
 -- Defaults (safe)
 INSERT INTO payment_terms(organization_id, name, net_days, is_default, status)
 SELECT o.id, 'Due on Receipt', 0, TRUE, 'active' FROM organizations o
-ON CONFLICT (organization_id, name) DO NOTHING; 
+ON CONFLICT (organization_id, name) DO NOTHING;
 
 INSERT INTO payment_methods(organization_id, code, name, status)
 SELECT o.id, 'CASH', 'Cash', 'active' FROM organizations o
-ON CONFLICT (organization_id, code) DO NOTHING; 
+ON CONFLICT (organization_id, code) DO NOTHING;
 
 INSERT INTO payment_methods(organization_id, code, name, status)
 SELECT o.id, 'BANK_TRANSFER', 'Bank Transfer', 'active' FROM organizations o
-ON CONFLICT (organization_id, code) DO NOTHING; 
+ON CONFLICT (organization_id, code) DO NOTHING;
 
 INSERT INTO payment_methods(organization_id, code, name, status)
 SELECT o.id, 'MOMO', 'Mobile Money', 'active' FROM organizations o
-ON CONFLICT (organization_id, code) DO NOTHING; 
+ON CONFLICT (organization_id, code) DO NOTHING;

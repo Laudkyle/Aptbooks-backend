@@ -1,47 +1,47 @@
-const { pool } = require("../../../db/pool"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
+const { pool } = require("../../../db/pool");
+const { AppError } = require("../../../shared/errors/AppError");
 
 async function assertAccountBelongsToOrg({ orgId, accountId, fieldName }) {
   const { rows } = await pool.query(
     `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, accountId]
-  ); 
-  if (!rows.length) throw new AppError(400, `${fieldName} is invalid for this organization`); 
+  );
+  if (!rows.length) throw new AppError(400, `${fieldName} is invalid for this organization`);
 }
 
 async function assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId }) {
   const { rows } = await pool.query(
     `SELECT id FROM payment_terms WHERE organization_id=$1 AND id=$2`,
     [orgId, paymentTermsId]
-  ); 
-  if (!rows.length) throw new AppError(400, "paymentTermsId is invalid for this organization"); 
+  );
+  if (!rows.length) throw new AppError(400, "paymentTermsId is invalid for this organization");
 }
 
 async function getPartnerForOrg({ orgId, partnerId }) {
   const { rows } = await pool.query(
     `SELECT * FROM business_partners WHERE organization_id=$1 AND id=$2`,
     [orgId, partnerId]
-  ); 
-  if (!rows.length) throw new AppError(404, "Partner not found"); 
-  return rows[0]; 
+  );
+  if (!rows.length) throw new AppError(404, "Partner not found");
+  return rows[0];
 }
 
 async function createPartner({ orgId, payload }) {
   if (payload.type === "customer" && payload.defaultPayableAccountId) {
-    throw new AppError(400, "Customers cannot set defaultPayableAccountId"); 
+    throw new AppError(400, "Customers cannot set defaultPayableAccountId");
   }
   if (payload.type === "vendor" && payload.defaultReceivableAccountId) {
-    throw new AppError(400, "Vendors cannot set defaultReceivableAccountId"); 
+    throw new AppError(400, "Vendors cannot set defaultReceivableAccountId");
   }
 
   if (payload.defaultReceivableAccountId) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.defaultReceivableAccountId, fieldName: "defaultReceivableAccountId" }); 
+    await assertAccountBelongsToOrg({ orgId, accountId: payload.defaultReceivableAccountId, fieldName: "defaultReceivableAccountId" });
   }
   if (payload.defaultPayableAccountId) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.defaultPayableAccountId, fieldName: "defaultPayableAccountId" }); 
+    await assertAccountBelongsToOrg({ orgId, accountId: payload.defaultPayableAccountId, fieldName: "defaultPayableAccountId" });
   }
   if (payload.paymentTermsId) {
-    await assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId: payload.paymentTermsId }); 
+    await assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId: payload.paymentTermsId });
   }
 
   const { rows } = await pool.query(
@@ -66,65 +66,65 @@ async function createPartner({ orgId, payload }) {
       payload.paymentTermsId || null,
       payload.notes || null
     ]
-  ); 
+  );
 
-  return rows[0]; 
+  return rows[0];
 }
 
 async function listPartners({ orgId, query }) {
-  const params = [orgId]; 
-  const where = ["organization_id=$1"]; 
-  let i = 2; 
+  const params = [orgId];
+  const where = ["organization_id=$1"];
+  let i = 2;
 
-  if (query?.type) { where.push(`type=$${i++}`);  params.push(query.type);  }
-  if (query?.status) { where.push(`status=$${i++}`);  params.push(query.status);  }
+  if (query?.type) { where.push(`type=$${i++}`);params.push(query.type);}
+  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
 
   const { rows } = await pool.query(
     `SELECT * FROM business_partners WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
     params
-  ); 
+  );
 
-  return rows; 
+  return rows;
 }
 
 async function getPartnerDetails({ orgId, partnerId }) {
-  const partner = await getPartnerForOrg({ orgId, partnerId }); 
+  const partner = await getPartnerForOrg({ orgId, partnerId });
 
   const { rows: contacts } = await pool.query(
     `SELECT * FROM business_partner_contacts
      WHERE organization_id=$1 AND partner_id=$2
      ORDER BY is_primary DESC, created_at ASC`,
     [orgId, partnerId]
-  ); 
+  );
 
   const { rows: addresses } = await pool.query(
     `SELECT * FROM business_partner_addresses
      WHERE organization_id=$1 AND partner_id=$2
      ORDER BY is_primary DESC, created_at ASC`,
     [orgId, partnerId]
-  ); 
+  );
 
-  return { partner, contacts, addresses }; 
+  return { partner, contacts, addresses };
 }
 
 async function updatePartner({ orgId, partnerId, payload }) {
-  const before = await getPartnerForOrg({ orgId, partnerId }); 
+  const before = await getPartnerForOrg({ orgId, partnerId });
 
-  const effectiveType = payload.type ?? before.type; 
-  const dr = payload.defaultReceivableAccountId ?? before.default_receivable_account_id; 
-  const dp = payload.defaultPayableAccountId ?? before.default_payable_account_id; 
-  const pt = payload.paymentTermsId ?? before.payment_terms_id; 
+  const effectiveType = payload.type ?? before.type;
+  const dr = payload.defaultReceivableAccountId ?? before.default_receivable_account_id;
+  const dp = payload.defaultPayableAccountId ?? before.default_payable_account_id;
+  const pt = payload.paymentTermsId ?? before.payment_terms_id;
 
-  if (effectiveType === "customer" && dp) throw new AppError(400, "Customers cannot set defaultPayableAccountId"); 
-  if (effectiveType === "vendor" && dr) throw new AppError(400, "Vendors cannot set defaultReceivableAccountId"); 
+  if (effectiveType === "customer" && dp) throw new AppError(400, "Customers cannot set defaultPayableAccountId");
+  if (effectiveType === "vendor" && dr) throw new AppError(400, "Vendors cannot set defaultReceivableAccountId");
 
-  if (dr) await assertAccountBelongsToOrg({ orgId, accountId: dr, fieldName: "defaultReceivableAccountId" }); 
-  if (dp) await assertAccountBelongsToOrg({ orgId, accountId: dp, fieldName: "defaultPayableAccountId" }); 
-  if (pt) await assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId: pt }); 
+  if (dr) await assertAccountBelongsToOrg({ orgId, accountId: dr, fieldName: "defaultReceivableAccountId" });
+  if (dp) await assertAccountBelongsToOrg({ orgId, accountId: dp, fieldName: "defaultPayableAccountId" });
+  if (pt) await assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId: pt });
 
-  const columns = []; 
-  const params = [orgId, partnerId]; 
-  let i = 3; 
+  const columns = [];
+  const params = [orgId, partnerId];
+  let i = 3;
 
   const map = {
     type: "type",
@@ -137,16 +137,16 @@ async function updatePartner({ orgId, partnerId, payload }) {
     defaultPayableAccountId: "default_payable_account_id",
     paymentTermsId: "payment_terms_id",
     notes: "notes"
-  }; 
+  };
 
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
-      columns.push(`${col}=$${i++}`); 
-      params.push(payload[k] === "" ? null : payload[k]); 
+      columns.push(`${col}=$${i++}`);
+      params.push(payload[k] === "" ? null : payload[k]);
     }
   }
 
-  if (!columns.length) return { before, after: before }; 
+  if (!columns.length) return { before, after: before };
 
   const { rows } = await pool.query(
     `
@@ -156,20 +156,20 @@ async function updatePartner({ orgId, partnerId, payload }) {
     RETURNING *
     `,
     params
-  ); 
+  );
 
-  return { before, after: rows[0] }; 
+  return { before, after: rows[0] };
 }
 
 /**
  * CONTACTS
  */
 async function addContact({ orgId, partnerId, payload }) {
-  await getPartnerForOrg({ orgId, partnerId }); 
+  await getPartnerForOrg({ orgId, partnerId });
 
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     if (payload.isPrimary === true) {
       await client.query(
@@ -179,7 +179,7 @@ async function addContact({ orgId, partnerId, payload }) {
         WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
         `,
         [orgId, partnerId]
-      ); 
+      );
     }
 
     const { rows } = await client.query(
@@ -199,26 +199,26 @@ async function addContact({ orgId, partnerId, payload }) {
         payload.role || null,
         payload.isPrimary === true
       ]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return rows[0]; 
+    await client.query("COMMIT");
+    return rows[0];
   } catch (e) {
-    await client.query("ROLLBACK"); 
+    await client.query("ROLLBACK");
     // If two requests race to set primary, surface a clean 409
-    if (e?.code === "23505") throw new AppError(409, "Primary contact already exists"); 
-    throw e; 
+    if (e?.code === "23505") throw new AppError(409, "Primary contact already exists");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function updateContact({ orgId, partnerId, contactId, payload }) {
-  await getPartnerForOrg({ orgId, partnerId }); 
+  await getPartnerForOrg({ orgId, partnerId });
 
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     const { rows: beforeRows } = await client.query(
       `
@@ -226,9 +226,9 @@ async function updateContact({ orgId, partnerId, contactId, payload }) {
       WHERE organization_id=$1 AND partner_id=$2 AND id=$3
       `,
       [orgId, partnerId, contactId]
-    ); 
-    if (!beforeRows.length) throw new AppError(404, "Contact not found"); 
-    const before = beforeRows[0]; 
+    );
+    if (!beforeRows.length) throw new AppError(404, "Contact not found");
+    const before = beforeRows[0];
 
     if (payload.isPrimary === true) {
       await client.query(
@@ -238,7 +238,7 @@ async function updateContact({ orgId, partnerId, contactId, payload }) {
         WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
         `,
         [orgId, partnerId]
-      ); 
+      );
     }
 
     const map = {
@@ -247,22 +247,22 @@ async function updateContact({ orgId, partnerId, contactId, payload }) {
       phone: "phone",
       role: "role",
       isPrimary: "is_primary"
-    }; 
+    };
 
-    const columns = []; 
-    const params = [orgId, partnerId, contactId]; 
-    let i = 4; 
+    const columns = [];
+    const params = [orgId, partnerId, contactId];
+    let i = 4;
 
     for (const [k, col] of Object.entries(map)) {
       if (payload[k] !== undefined) {
-        columns.push(`${col}=$${i++}`); 
-        params.push(payload[k] === "" ? null : payload[k]); 
+        columns.push(`${col}=$${i++}`);
+        params.push(payload[k] === "" ? null : payload[k]);
       }
     }
 
     if (!columns.length) {
-      await client.query("COMMIT"); 
-      return { before, after: before }; 
+      await client.query("COMMIT");
+      return { before, after: before };
     }
 
     const { rows: afterRows } = await client.query(
@@ -273,16 +273,16 @@ async function updateContact({ orgId, partnerId, contactId, payload }) {
       RETURNING *
       `,
       params
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { before, after: afterRows[0] }; 
+    await client.query("COMMIT");
+    return { before, after: afterRows[0] };
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    if (e?.code === "23505") throw new AppError(409, "Primary contact already exists"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    if (e?.code === "23505") throw new AppError(409, "Primary contact already exists");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -290,11 +290,11 @@ async function updateContact({ orgId, partnerId, contactId, payload }) {
  * ADDRESSES
  */
 async function addAddress({ orgId, partnerId, payload }) {
-  await getPartnerForOrg({ orgId, partnerId }); 
+  await getPartnerForOrg({ orgId, partnerId });
 
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     if (payload.isPrimary === true) {
       await client.query(
@@ -304,7 +304,7 @@ async function addAddress({ orgId, partnerId, payload }) {
         WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
         `,
         [orgId, partnerId]
-      ); 
+      );
     }
 
     const { rows } = await client.query(
@@ -327,25 +327,25 @@ async function addAddress({ orgId, partnerId, payload }) {
         payload.country || null,
         payload.isPrimary === true
       ]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return rows[0]; 
+    await client.query("COMMIT");
+    return rows[0];
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    if (e?.code === "23505") throw new AppError(409, "Primary address already exists"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    if (e?.code === "23505") throw new AppError(409, "Primary address already exists");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function updateAddress({ orgId, partnerId, addressId, payload }) {
-  await getPartnerForOrg({ orgId, partnerId }); 
+  await getPartnerForOrg({ orgId, partnerId });
 
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     const { rows: beforeRows } = await client.query(
       `
@@ -353,9 +353,9 @@ async function updateAddress({ orgId, partnerId, addressId, payload }) {
       WHERE organization_id=$1 AND partner_id=$2 AND id=$3
       `,
       [orgId, partnerId, addressId]
-    ); 
-    if (!beforeRows.length) throw new AppError(404, "Address not found"); 
-    const before = beforeRows[0]; 
+    );
+    if (!beforeRows.length) throw new AppError(404, "Address not found");
+    const before = beforeRows[0];
 
     if (payload.isPrimary === true) {
       await client.query(
@@ -365,7 +365,7 @@ async function updateAddress({ orgId, partnerId, addressId, payload }) {
         WHERE organization_id=$1 AND partner_id=$2 AND is_primary=TRUE
         `,
         [orgId, partnerId]
-      ); 
+      );
     }
 
     const map = {
@@ -377,22 +377,22 @@ async function updateAddress({ orgId, partnerId, addressId, payload }) {
       postalCode: "postal_code",
       country: "country",
       isPrimary: "is_primary"
-    }; 
+    };
 
-    const columns = []; 
-    const params = [orgId, partnerId, addressId]; 
-    let i = 4; 
+    const columns = [];
+    const params = [orgId, partnerId, addressId];
+    let i = 4;
 
     for (const [k, col] of Object.entries(map)) {
       if (payload[k] !== undefined) {
-        columns.push(`${col}=$${i++}`); 
-        params.push(payload[k] === "" ? null : payload[k]); 
+        columns.push(`${col}=$${i++}`);
+        params.push(payload[k] === "" ? null : payload[k]);
       }
     }
 
     if (!columns.length) {
-      await client.query("COMMIT"); 
-      return { before, after: before }; 
+      await client.query("COMMIT");
+      return { before, after: before };
     }
 
     const { rows: afterRows } = await client.query(
@@ -403,16 +403,16 @@ async function updateAddress({ orgId, partnerId, addressId, payload }) {
       RETURNING *
       `,
       params
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { before, after: afterRows[0] }; 
+    await client.query("COMMIT");
+    return { before, after: afterRows[0] };
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    if (e?.code === "23505") throw new AppError(409, "Primary address already exists"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    if (e?.code === "23505") throw new AppError(409, "Primary address already exists");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -426,17 +426,17 @@ module.exports = {
   updateContact,
   addAddress,
   updateAddress
-}; 
+};
 
 /**
  * CREDIT POLICY (AR)
  */
 async function getCreditPolicy({ orgId, partnerId }) {
-  await getPartnerForOrg({ orgId, partnerId }); 
+  await getPartnerForOrg({ orgId, partnerId });
   const { rows } = await pool.query(
     `SELECT * FROM business_partner_credit_policies WHERE organization_id=$1 AND business_partner_id=$2`,
     [orgId, partnerId]
-  ); 
+  );
   if (!rows.length) {
     // lazily create (backwards-compatible)
     const { rows: created } = await pool.query(
@@ -445,27 +445,27 @@ async function getCreditPolicy({ orgId, partnerId }) {
        ON CONFLICT (organization_id, business_partner_id) DO NOTHING
        RETURNING *`,
       [orgId, partnerId]
-    ); 
-    if (created.length) return created[0]; 
+    );
+    if (created.length) return created[0];
     const { rows: again } = await pool.query(
       `SELECT * FROM business_partner_credit_policies WHERE organization_id=$1 AND business_partner_id=$2`,
       [orgId, partnerId]
-    ); 
-    return again[0]; 
+    );
+    return again[0];
   }
-  return rows[0]; 
+  return rows[0];
 }
 
 async function setCreditPolicy({ orgId, partnerId, payload }) {
-  await getPartnerForOrg({ orgId, partnerId }); 
-  const current = await getCreditPolicy({ orgId, partnerId }); 
+  await getPartnerForOrg({ orgId, partnerId });
+  const current = await getCreditPolicy({ orgId, partnerId });
 
   const next = {
     credit_limit: payload.creditLimit ?? current.credit_limit,
     credit_days: payload.creditDays ?? current.credit_days,
     hold_if_over: payload.holdIfOver ?? current.hold_if_over,
     notes: payload.notes === undefined ? current.notes : payload.notes
-  }; 
+  };
 
   const { rows } = await pool.query(
     `UPDATE business_partner_credit_policies
@@ -473,10 +473,10 @@ async function setCreditPolicy({ orgId, partnerId, payload }) {
      WHERE organization_id=$1 AND business_partner_id=$2
      RETURNING *`,
     [orgId, partnerId, next.credit_limit, next.credit_days, next.hold_if_over, next.notes]
-  ); 
+  );
 
-  return { before: current, after: rows[0] }; 
+  return { before: current, after: rows[0] };
 }
 
-module.exports.getCreditPolicy = getCreditPolicy; 
-module.exports.setCreditPolicy = setCreditPolicy; 
+module.exports.getCreditPolicy = getCreditPolicy;
+module.exports.setCreditPolicy = setCreditPolicy;

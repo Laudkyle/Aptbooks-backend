@@ -1,8 +1,8 @@
-const express = require("express"); 
+const express = require("express");
 
-const { authRequired } = require("../../middleware/auth.middleware"); 
-const { requirePermission } = require("../../middleware/permission.middleware"); 
-const { schedulerHealthSummary } = require("../../health/health.routes"); 
+const { authRequired } = require("../../middleware/auth.middleware");
+const { requirePermission } = require("../../middleware/permission.middleware");
+const { schedulerHealthSummary } = require("../../health/health.routes");
 
 /**
  * Tier 6: Reporting - System observability
@@ -11,9 +11,9 @@ const { schedulerHealthSummary } = require("../../health/health.routes");
  * - Scheduler task health (run status, failure counts, durations)
  */
 
-const router = express.Router(); 
+const router = express.Router();
 
-router.use(authRequired); 
+router.use(authRequired);
 
 // Expose scheduler job health KPIs as part of Reporting (Tier 6)
 router.get(
@@ -21,14 +21,14 @@ router.get(
   requirePermission("reporting.audit.read"),
   async (req, res, next) => {
     try {
-      const windowDays = req.query.windowDays ?? 7; 
-      const limit = req.query.limit ?? 200; 
-      const data = await schedulerHealthSummary({ windowDays, limit }); 
-      res.json({ ok: true, data }); 
+      const windowDays = req.query.windowDays ?? 7;
+      const limit = req.query.limit ?? 200;
+      const data = await schedulerHealthSummary({ windowDays, limit });
+      res.json({ ok: true, data });
     } catch (e) {
-      next(e); 
+      next(e);
     }
   }
-); 
+);
 
-module.exports = router; 
+module.exports = router;

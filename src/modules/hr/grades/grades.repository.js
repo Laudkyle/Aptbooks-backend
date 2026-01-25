@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 async function createGrade(orgId, payload) {
   const { rows } = await pool.query(
@@ -8,12 +8,12 @@ async function createGrade(orgId, payload) {
       RETURNING *
     `,
     [orgId, payload.code, payload.name, payload.currency || "GHS", payload.min_amount ?? null, payload.max_amount ?? null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listGrades(orgId, query = {}) {
-  const status = query.status || null; 
+  const status = query.status || null;
   const { rows } = await pool.query(
     `
       SELECT *
@@ -23,37 +23,37 @@ async function listGrades(orgId, query = {}) {
       ORDER BY code
     `,
     [orgId, status]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getGrade(orgId, id) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_grades WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getGradeByCode(orgId, code) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_grades WHERE organization_id=$1 AND code=$2`,
     [orgId, code]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateGrade(orgId, id, payload) {
-  const fields = []; 
-  const vals = [orgId, id]; 
-  let i = 3; 
+  const fields = [];
+  const vals = [orgId, id];
+  let i = 3;
   for (const k of ["code", "name", "currency", "min_amount", "max_amount", "status"]) {
     if (payload[k] !== undefined) {
-      fields.push(`${k}=$${i++}`); 
-      vals.push(payload[k]); 
+      fields.push(`${k}=$${i++}`);
+      vals.push(payload[k]);
     }
   }
-  if (!fields.length) return getGrade(orgId, id); 
+  if (!fields.length) return getGrade(orgId, id);
   const { rows } = await pool.query(
     `
       UPDATE hr_grades
@@ -62,8 +62,8 @@ async function updateGrade(orgId, id, payload) {
       RETURNING *
     `,
     vals
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function deactivateGrade(orgId, id) {
@@ -75,8 +75,8 @@ async function deactivateGrade(orgId, id) {
       RETURNING *
     `,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
-module.exports = { createGrade, listGrades, getGrade, getGradeByCode, updateGrade, deactivateGrade }; 
+module.exports = { createGrade, listGrades, getGrade, getGradeByCode, updateGrade, deactivateGrade };

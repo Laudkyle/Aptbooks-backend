@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 async function createUnit(orgId, { code, name }) {
   const { rows } = await pool.query(
@@ -6,16 +6,16 @@ async function createUnit(orgId, { code, name }) {
      VALUES ($1,$2,$3)
      RETURNING *`,
     [orgId, code, name]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listUnits(orgId) {
   const { rows } = await pool.query(
     `SELECT * FROM item_units WHERE organization_id=$1 ORDER BY code`,
     [orgId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
-module.exports = { createUnit, listUnits }; 
+module.exports = { createUnit, listUnits };

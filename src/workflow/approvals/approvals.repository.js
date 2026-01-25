@@ -1,18 +1,18 @@
-const { pool } = require("../../db/pool"); 
+const { pool } = require("../../db/pool");
 
 async function listInbox({ orgId, limit = 50, offset = 0, documentTypeId = null, state = null }) {
-  const params = [orgId]; 
-  let where = "WHERE d.organization_id=$1 AND da.status='PENDING'"; 
+  const params = [orgId];
+  let where = "WHERE d.organization_id=$1 AND da.status='PENDING'";
   if (documentTypeId) {
-    params.push(documentTypeId); 
-    where += ` AND d.document_type_id=$${params.length}`; 
+    params.push(documentTypeId);
+    where += ` AND d.document_type_id=$${params.length}`;
   }
   if (state) {
-    params.push(state); 
-    where += ` AND d.workflow_state_code=$${params.length}`; 
+    params.push(state);
+    where += ` AND d.workflow_state_code=$${params.length}`;
   }
-  params.push(limit); 
-  params.push(offset); 
+  params.push(limit);
+  params.push(offset);
 
   const { rows } = await pool.query(
     `
@@ -43,9 +43,9 @@ async function listInbox({ orgId, limit = 50, offset = 0, documentTypeId = null,
     LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params
-  ); 
+  );
 
-  return rows; 
+  return rows;
 }
 
-module.exports = { listInbox }; 
+module.exports = { listInbox };

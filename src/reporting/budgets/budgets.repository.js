@@ -1,4 +1,4 @@
-const { pool } = require("../../db/pool"); 
+const { pool } = require("../../db/pool");
 
 async function listBudgets({ orgId }) {
   const { rows } = await pool.query(
@@ -9,8 +9,8 @@ async function listBudgets({ orgId }) {
     ORDER BY created_at DESC
     `,
     [orgId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function createBudget({ orgId, name, fiscalYear, currencyCode, status }) {
@@ -21,16 +21,16 @@ async function createBudget({ orgId, name, fiscalYear, currencyCode, status }) {
     RETURNING id, name, fiscal_year, currency_code, status, created_at, updated_at
     `,
     [orgId, name, fiscalYear || null, currencyCode, status || "draft"]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function getBudget({ orgId, id }) {
   const { rows } = await pool.query(
     `SELECT * FROM budgets WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function updateBudget({ orgId, id, name, fiscalYear, currencyCode, status }) {
@@ -46,8 +46,8 @@ async function updateBudget({ orgId, id, name, fiscalYear, currencyCode, status 
     RETURNING id, name, fiscal_year, currency_code, status, created_at, updated_at
     `,
     [orgId, id, name || null, fiscalYear || null, currencyCode || null, status || null]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function createVersion({ orgId, budgetId, versionNo, name, status, createdByUserId }) {
@@ -58,8 +58,8 @@ async function createVersion({ orgId, budgetId, versionNo, name, status, created
     RETURNING id, budget_id, version_no, name, status, created_at
     `,
     [orgId, budgetId, versionNo, name || null, status || "draft", createdByUserId || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function getVersion({ orgId, budgetId, versionId }) {
@@ -70,8 +70,8 @@ async function getVersion({ orgId, budgetId, versionId }) {
     LIMIT 1
     `,
     [orgId, budgetId, versionId]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function upsertLine({ orgId, versionId, accountId, periodId, amount, dimensionJson }) {
@@ -88,8 +88,8 @@ async function upsertLine({ orgId, versionId, accountId, periodId, amount, dimen
     RETURNING id, account_id, period_id, amount, dimension_json, created_at, updated_at
     `,
     [orgId, versionId, accountId, periodId || null, amount, dimensionJson || {}]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateVersionWorkflow({ orgId, budgetId, versionId, patch }) {
@@ -104,7 +104,7 @@ async function updateVersionWorkflow({ orgId, budgetId, versionId, patch }) {
     rejectionReason,
     scenarioKey,
     templateSourceVersionId,
-  } = patch || {}; 
+  } = patch || {};
 
   const { rows } = await pool.query(
     `
@@ -138,8 +138,8 @@ async function updateVersionWorkflow({ orgId, budgetId, versionId, patch }) {
       scenarioKey || null,
       templateSourceVersionId || null,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function copyVersion({ orgId, budgetId, sourceVersionId, newVersionNo, name, scenarioKey, createdByUserId }) {
@@ -153,9 +153,9 @@ async function copyVersion({ orgId, budgetId, sourceVersionId, newVersionNo, nam
     RETURNING *
     `,
     [orgId, budgetId, sourceVersionId, newVersionNo, name || null, createdByUserId || null, scenarioKey || null]
-  ); 
-  const created = vrows[0]; 
-  if (!created) return null; 
+  );
+  const created = vrows[0];
+  if (!created) return null;
 
   // Copy lines
   await pool.query(
@@ -166,29 +166,29 @@ async function copyVersion({ orgId, budgetId, sourceVersionId, newVersionNo, nam
     WHERE organization_id=$1 AND budget_version_id=$3
     `,
     [orgId, created.id, sourceVersionId]
-  ); 
+  );
 
-  return created; 
+  return created;
 }
 
 async function massAdjustLines({ orgId, versionId, pct, accountId, periodId, dimensionJson }) {
-  const multiplier = 1 + Number(pct) / 100; 
-  if (!Number.isFinite(multiplier)) throw new Error("Invalid pct"); 
+  const multiplier = 1 + Number(pct) / 100;
+  if (!Number.isFinite(multiplier)) throw new Error("Invalid pct");
 
-  const params = [orgId, versionId, multiplier]; 
-  let where = "WHERE organization_id=$1 AND budget_version_id=$2"; 
-  let idx = 4; 
+  const params = [orgId, versionId, multiplier];
+  let where = "WHERE organization_id=$1 AND budget_version_id=$2";
+  let idx = 4;
   if (accountId) {
-    params.push(accountId); 
-    where += ` AND account_id=$${idx++}`; 
+    params.push(accountId);
+    where += ` AND account_id=$${idx++}`;
   }
   if (periodId) {
-    params.push(periodId); 
-    where += ` AND period_id=$${idx++}`; 
+    params.push(periodId);
+    where += ` AND period_id=$${idx++}`;
   }
   if (dimensionJson) {
-    params.push(JSON.stringify(dimensionJson)); 
-    where += ` AND dimension_json @> $${idx++}::jsonb`; 
+    params.push(JSON.stringify(dimensionJson));
+    where += ` AND dimension_json @> $${idx++}::jsonb`;
   }
   const { rowCount } = await pool.query(
     `
@@ -198,8 +198,8 @@ async function massAdjustLines({ orgId, versionId, pct, accountId, periodId, dim
     ${where}
     `,
     params
-  ); 
-  return { affected: rowCount }; 
+  );
+  return { affected: rowCount };
 }
 
 async function listAlertRules({ orgId, budgetId }) {
@@ -211,8 +211,8 @@ async function listAlertRules({ orgId, budgetId }) {
     ORDER BY created_at DESC
     `,
     [orgId, budgetId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function createAlertRule({ orgId, budgetId, name, thresholdPct, accountId, dimensionJson, isEnabled }) {
@@ -223,20 +223,20 @@ async function createAlertRule({ orgId, budgetId, name, thresholdPct, accountId,
     RETURNING *
     `,
     [orgId, budgetId, name, thresholdPct, accountId || null, dimensionJson || {}, isEnabled === undefined ? true : !!isEnabled]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function getAlertRule({ orgId, budgetId, ruleId }) {
   const { rows } = await pool.query(
     `SELECT * FROM budget_alert_rules WHERE organization_id=$1 AND budget_id=$2 AND id=$3 LIMIT 1`,
     [orgId, budgetId, ruleId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateAlertRule({ orgId, budgetId, ruleId, patch }) {
-  const { name, thresholdPct, accountId, dimensionJson, isEnabled } = patch || {}; 
+  const { name, thresholdPct, accountId, dimensionJson, isEnabled } = patch || {};
   const { rows } = await pool.query(
     `
     UPDATE budget_alert_rules
@@ -259,8 +259,8 @@ async function updateAlertRule({ orgId, budgetId, ruleId, patch }) {
       dimensionJson === undefined ? null : dimensionJson,
       isEnabled === undefined ? null : !!isEnabled,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 
@@ -268,8 +268,8 @@ async function getAccountingPeriod({ orgId, periodId }) {
   const { rows } = await pool.query(
     `SELECT id, organization_id, start_date, end_date, status FROM accounting_periods WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, periodId]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function listPeriodsByStartYear({ orgId, year }) {
@@ -282,8 +282,8 @@ async function listPeriodsByStartYear({ orgId, year }) {
     ORDER BY start_date ASC
     `,
     [orgId, year]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 module.exports = {
@@ -304,7 +304,7 @@ module.exports = {
   getVariance,
   getAccountingPeriod,
   listPeriodsByStartYear,
-}; 
+};
 
 // Variance: Budget vs Actual (uses GL balances for speed/consistency)
 async function getVariance({ orgId, budgetVersionId, periodId }) {
@@ -354,6 +354,6 @@ async function getVariance({ orgId, budgetVersionId, periodId }) {
     ORDER BY coa.code
     `,
     [orgId, budgetVersionId, periodId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }

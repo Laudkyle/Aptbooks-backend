@@ -1,5 +1,5 @@
-const { pool } = require("../../../db/pool"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
+const { pool } = require("../../../db/pool");
+const { AppError } = require("../../../shared/errors/AppError");
 
 /**
  * Option A schedule fields:
@@ -11,12 +11,12 @@ const { AppError } = require("../../../shared/errors/AppError");
  * - If effectiveStartDate not provided, fall back to depreciationStartDate
  */
 async function createSchedule({ orgId, payload }) {
-  const effectiveStartDate = payload.effectiveStartDate || payload.depreciationStartDate; 
-  const effectiveEndDate = payload.effectiveEndDate || null; 
-  const componentCode = payload.componentCode || null; 
+  const effectiveStartDate = payload.effectiveStartDate || payload.depreciationStartDate;
+  const effectiveEndDate = payload.effectiveEndDate || null;
+  const componentCode = payload.componentCode || null;
 
   if (!effectiveStartDate) {
-    throw new AppError(400, "effectiveStartDate (or depreciationStartDate) is required"); 
+    throw new AppError(400, "effectiveStartDate (or depreciationStartDate) is required");
   }
 
  
@@ -32,10 +32,10 @@ async function createSchedule({ orgId, payload }) {
     LIMIT 1
     `,
     [orgId, payload.assetId, effectiveStartDate, effectiveEndDate]
-  ); 
+  );
 
   if (overlap.length) {
-    throw new AppError(409, "Overlapping active depreciation schedule exists for asset"); 
+    throw new AppError(409, "Overlapping active depreciation schedule exists for asset");
   }
 
   const { rows } = await pool.query(
@@ -64,43 +64,43 @@ async function createSchedule({ orgId, payload }) {
       effectiveEndDate,
       componentCode
     ]
-  ); 
+  );
 
-  return rows[0]; 
+  return rows[0];
 }
 
 async function listSchedules({ orgId, query }) {
-  const params = [orgId]; 
-  const where = ["s.organization_id=$1"]; 
-  let i = 2; 
+  const params = [orgId];
+  const where = ["s.organization_id=$1"];
+  let i = 2;
 
   if (query?.status) {
-    where.push(`s.status=$${i++}`); 
-    params.push(query.status); 
+    where.push(`s.status=$${i++}`);
+    params.push(query.status);
   }
 
   if (query?.activeOnly === "true") {
-    where.push(`s.status='active'`); 
+    where.push(`s.status='active'`);
   }
 
   if (query?.assetId) {
-    where.push(`s.asset_id=$${i++}`); 
-    params.push(query.assetId); 
+    where.push(`s.asset_id=$${i++}`);
+    params.push(query.assetId);
   }
 
   if (query?.componentCode) {
-    where.push(`s.component_code=$${i++}`); 
-    params.push(query.componentCode); 
+    where.push(`s.component_code=$${i++}`);
+    params.push(query.componentCode);
   }
 
   // Useful to query “what schedules are effective as of date X”
   // Includes open-ended schedules
   if (query?.effectiveOnDate) {
-    where.push(`s.effective_start_date <= $${i++}::date`); 
-    params.push(query.effectiveOnDate); 
+    where.push(`s.effective_start_date <= $${i++}::date`);
+    params.push(query.effectiveOnDate);
 
-    where.push(`(s.effective_end_date IS NULL OR s.effective_end_date >= $${i++}::date)`); 
-    params.push(query.effectiveOnDate); 
+    where.push(`(s.effective_end_date IS NULL OR s.effective_end_date >= $${i++}::date)`);
+    params.push(query.effectiveOnDate);
   }
 
   const { rows } = await pool.query(
@@ -123,17 +123,17 @@ async function listSchedules({ orgId, query }) {
     ORDER BY a.code ASC, COALESCE(s.component_code,'') ASC, s.effective_start_date DESC, s.created_at DESC
     `,
     params
-  ); 
+  );
 
-  return rows; 
+  return rows;
 }
 
 async function getSchedule({ orgId, scheduleId }) {
   const { rows } = await pool.query(
     `SELECT * FROM asset_depreciation_schedules WHERE organization_id=$1 AND id=$2`,
     [orgId, scheduleId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateSchedule({ orgId, scheduleId, payload }) {
@@ -158,23 +158,23 @@ async function updateSchedule({ orgId, scheduleId, payload }) {
       payload.effectiveEndDate ?? null,
       payload.status ?? null,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function deleteScheduleIfNoPostings({ orgId, scheduleId }) {
   const { rows: txRows } = await pool.query(
     `SELECT 1 FROM asset_depreciation_transactions WHERE organization_id=$1 AND schedule_id=$2 LIMIT 1`,
     [orgId, scheduleId]
-  ); 
+  );
   if (txRows.length) {
-    throw new AppError(409, "Cannot delete schedule with posted depreciation transactions"); 
+    throw new AppError(409, "Cannot delete schedule with posted depreciation transactions");
   }
   const { rows } = await pool.query(
     `DELETE FROM asset_depreciation_schedules WHERE organization_id=$1 AND id=$2 RETURNING id`,
     [orgId, scheduleId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 module.exports = {
@@ -183,4 +183,4 @@ module.exports = {
   getSchedule,
   updateSchedule,
   deleteScheduleIfNoPostings,
-}; 
+};

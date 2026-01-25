@@ -1,4 +1,4 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 async function createBand(orgId, payload) {
   const { rows } = await pool.query(
@@ -9,12 +9,12 @@ async function createBand(orgId, payload) {
       RETURNING *
     `,
     [orgId, payload.code, payload.name, payload.currency || "GHS", payload.min_amount, payload.max_amount, payload.pay_frequency || "monthly"]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listBands(orgId, query = {}) {
-  const status = query.status || null; 
+  const status = query.status || null;
   const { rows } = await pool.query(
     `
       SELECT *
@@ -24,37 +24,37 @@ async function listBands(orgId, query = {}) {
       ORDER BY code
     `,
     [orgId, status]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getBand(orgId, id) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_compensation_bands WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getBandByCode(orgId, code) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_compensation_bands WHERE organization_id=$1 AND code=$2`,
     [orgId, code]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateBand(orgId, id, payload) {
-  const fields = []; 
-  const vals = [orgId, id]; 
-  let i = 3; 
+  const fields = [];
+  const vals = [orgId, id];
+  let i = 3;
   for (const k of ["code", "name", "currency", "min_amount", "max_amount", "pay_frequency", "status"]) {
     if (payload[k] !== undefined) {
-      fields.push(`${k}=$${i++}`); 
-      vals.push(payload[k]); 
+      fields.push(`${k}=$${i++}`);
+      vals.push(payload[k]);
     }
   }
-  if (!fields.length) return getBand(orgId, id); 
+  if (!fields.length) return getBand(orgId, id);
   const { rows } = await pool.query(
     `
       UPDATE hr_compensation_bands
@@ -63,8 +63,8 @@ async function updateBand(orgId, id, payload) {
       RETURNING *
     `,
     vals
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function deactivateBand(orgId, id) {
@@ -76,8 +76,8 @@ async function deactivateBand(orgId, id) {
       RETURNING *
     `,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
-module.exports = { createBand, listBands, getBand, getBandByCode, updateBand, deactivateBand }; 
+module.exports = { createBand, listBands, getBand, getBandByCode, updateBand, deactivateBand };

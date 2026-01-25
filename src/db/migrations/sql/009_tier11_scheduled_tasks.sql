@@ -1,7 +1,7 @@
 -- 008_tier11_scheduled_tasks.sql
 -- Tier 11: DB-backed scheduler (free, restart-safe)
 
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; 
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-); 
+);
 
 CREATE TABLE IF NOT EXISTS scheduled_task_runs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS scheduled_task_runs (
   status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','success','failed','skipped')),
   message TEXT,
   error TEXT
-); 
+);
 
-CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_run ON scheduled_tasks(is_enabled, next_run_at); 
-CREATE INDEX IF NOT EXISTS idx_task_runs_code ON scheduled_task_runs(task_code, started_at DESC); 
+CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_run ON scheduled_tasks(is_enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_task_runs_code ON scheduled_task_runs(task_code, started_at DESC);

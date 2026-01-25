@@ -1,144 +1,144 @@
-const { pool } = require("../../../db/pool"); 
-const { AppError } = require("../../../shared/errors/AppError"); 
-const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money"); 
-const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service"); 
+const { pool } = require("../../../db/pool");
+const { AppError } = require("../../../shared/errors/AppError");
+const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
+const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
     `SELECT base_currency_code FROM organizations WHERE id=$1`,
     [orgId]
-  ); 
-  if (!rows.length) throw new AppError(400, "Invalid organization"); 
-  return rows[0].base_currency_code; 
+  );
+  if (!rows.length) throw new AppError(400, "Invalid organization");
+  return rows[0].base_currency_code;
 }
 
 function parseRateToMicro(rate) {
   // 6dp rate precision
-  return parseDecimalToBigInt(rate || 1, 6); 
+  return parseDecimalToBigInt(rate || 1, 6);
 }
 
 function computeBaseCents({ amountCents, rateMicro }) {
   // baseCents = (amountCents * rateMicro) / 1e6
-  return (amountCents * rateMicro) / 1000000n; 
+  return (amountCents * rateMicro) / 1000000n;
 }
 
 async function lookupFxRateMicro(client, { orgId, rateTypeCode = "SPOT", fromCurrency, toCurrency, asOfDate }) {
-  if (!asOfDate) throw new AppError(400, "entryDate required for FX lookup"); 
-  if (!fromCurrency || !toCurrency) throw new AppError(400, "currency required for FX lookup"); 
-  const from = String(fromCurrency).toUpperCase(); 
-  const to = String(toCurrency).toUpperCase(); 
-  if (from === to) return 1000000n; 
+  if (!asOfDate) throw new AppError(400, "entryDate required for FX lookup");
+  if (!fromCurrency || !toCurrency) throw new AppError(400, "currency required for FX lookup");
+  const from = String(fromCurrency).toUpperCase();
+  const to = String(toCurrency).toUpperCase();
+  if (from === to) return 1000000n;
 
-  const { rows: rt } = await client.query("SELECT id FROM exchange_rate_types WHERE code=$1", [String(rateTypeCode).toUpperCase()]); 
-  if (!rt.length) throw new AppError(400, `Unknown FX rate type: ${rateTypeCode}`); 
-  const rateTypeId = rt[0].id; 
+  const { rows: rt } = await client.query("SELECT id FROM exchange_rate_types WHERE code=$1", [String(rateTypeCode).toUpperCase()]);
+  if (!rt.length) throw new AppError(400, `Unknown FX rate type: ${rateTypeCode}`);
+  const rateTypeId = rt[0].id;
 
   const direct = await client.query(
     "SELECT rate FROM exchange_rates WHERE organization_id=$1 AND rate_type_id=$2 AND from_currency=$3 AND to_currency=$4 AND effective_date <= $5 ORDER BY effective_date DESC LIMIT 1",
     [orgId, rateTypeId, from, to, asOfDate]
-  ); 
-  if (direct.rows.length) return parseRateToMicro(direct.rows[0].rate); 
+  );
+  if (direct.rows.length) return parseRateToMicro(direct.rows[0].rate);
 
   const inv = await client.query(
     "SELECT rate FROM exchange_rates WHERE organization_id=$1 AND rate_type_id=$2 AND from_currency=$3 AND to_currency=$4 AND effective_date <= $5 ORDER BY effective_date DESC LIMIT 1",
     [orgId, rateTypeId, to, from, asOfDate]
-  ); 
+  );
   if (inv.rows.length) {
-    const baseMicro = parseRateToMicro(inv.rows[0].rate); 
-    if (baseMicro <= 0n) throw new AppError(400, "Invalid stored FX rate"); 
+    const baseMicro = parseRateToMicro(inv.rows[0].rate);
+    if (baseMicro <= 0n) throw new AppError(400, "Invalid stored FX rate");
     // invert: 1 / r. keep micro precision: (1e12 / baseMicro) gives micro
-    return (1000000n * 1000000n) / baseMicro; 
+    return (1000000n * 1000000n) / baseMicro;
   }
 
-  throw new AppError(404, `No FX rate found for ${from}/${to} as of ${asOfDate}`); 
+  throw new AppError(404, `No FX rate found for ${from}/${to} as of ${asOfDate}`);
 }
 
 function sumBaseCents(lines) {
   return lines.reduce(
     (acc, l) => {
-      const debitCents = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditCents = parseDecimalToBigInt(l.credit || 0, 2); 
-      const baseCents = parseDecimalToBigInt(l.amount_base || 0, 2); 
-      if (debitCents > 0n) acc.debit += baseCents; 
-      if (creditCents > 0n) acc.credit += baseCents; 
-      return acc; 
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const baseCents = parseDecimalToBigInt(l.amount_base || 0, 2);
+      if (debitCents > 0n) acc.debit += baseCents;
+      if (creditCents > 0n) acc.credit += baseCents;
+      return acc;
     },
     { debit: 0n, credit: 0n }
-  ); 
+  );
 }
 
 function sum2(lines) {
   // Sums using amount_base when available (base currency equivalent).
   return lines.reduce((acc, l) => {
-    const debitC = parseDecimalToBigInt(l.debit || 0, 2); 
-    const creditC = parseDecimalToBigInt(l.credit || 0, 2); 
-    const base = ('amount_base' in l && l.amount_base != null) ? parseDecimalToBigInt(l.amount_base || 0, 2) : (debitC>0n?debitC:creditC); 
-    if (debitC > 0n) acc.debit += base; 
-    if (creditC > 0n) acc.credit += base; 
-    return acc; 
-  }, { debit: 0n, credit: 0n }); 
+    const debitC = parseDecimalToBigInt(l.debit || 0, 2);
+    const creditC = parseDecimalToBigInt(l.credit || 0, 2);
+    const base = ('amount_base' in l && l.amount_base != null) ? parseDecimalToBigInt(l.amount_base || 0, 2) : (debitC>0n?debitC:creditC);
+    if (debitC > 0n) acc.debit += base;
+    if (creditC > 0n) acc.credit += base;
+    return acc;
+  }, { debit: 0n, credit: 0n });
 }
 
 async function getPeriodForUpdate(client, orgId, periodId) {
   const { rows } = await client.query(
     `SELECT id, status, start_date, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2 FOR SHARE`,
     [orgId, periodId]
-  ); 
-  if (!rows.length) throw new AppError(400, "Invalid period"); 
-  return rows[0]; 
+  );
+  if (!rows.length) throw new AppError(400, "Invalid period");
+  return rows[0];
 }
 
 function assertEntryDateWithinPeriod(entryDate, period) {
-  const d = new Date(entryDate + "T00:00:00Z").getTime(); 
-  const s = new Date(period.start_date + "T00:00:00Z").getTime(); 
-  const e = new Date(period.end_date + "T00:00:00Z").getTime(); 
-  if (d < s || d > e) throw new AppError(409, "entryDate must be within the selected period"); 
+  const d = new Date(entryDate + "T00:00:00Z").getTime();
+  const s = new Date(period.start_date + "T00:00:00Z").getTime();
+  const e = new Date(period.end_date + "T00:00:00Z").getTime();
+  if (d < s || d > e) throw new AppError(409, "entryDate must be within the selected period");
 }
 
 async function createDraftJournal({ orgId, actorUserId, payload, client: existingClient = null }) {
-  const client = existingClient || (await pool.connect()); 
-  const managesTx = !existingClient; 
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    if (managesTx) await client.query("BEGIN"); 
+    if (managesTx) await client.query("BEGIN");
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId); 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     // idempotency
     if (payload.idempotencyKey) {
       const { rows: existing } = await client.query(
         `SELECT id, status FROM journal_entries WHERE organization_id=$1 AND idempotency_key=$2`,
         [orgId, payload.idempotencyKey]
-      ); 
+      );
       if (existing.length) {
-        if (managesTx) await client.query("COMMIT"); 
-        return { journalId: existing[0].id, status: existing[0].status, idempotent: true }; 
+        if (managesTx) await client.query("COMMIT");
+        return { journalId: existing[0].id, status: existing[0].status, idempotent: true };
       }
     }
 
-    const period = await getPeriodForUpdate(client, orgId, payload.periodId); 
-    if (period.status !== "open") throw new AppError(409, "Period not open"); 
-    assertEntryDateWithinPeriod(payload.entryDate, period); 
+    const period = await getPeriodForUpdate(client, orgId, payload.periodId);
+    if (period.status !== "open") throw new AppError(409, "Period not open");
+    assertEntryDateWithinPeriod(payload.entryDate, period);
 
     const { rows: tRows } = await client.query(
       `SELECT id FROM journal_entry_types WHERE code=$1`,
       [payload.typeCode || "GENERAL"]
-    ); 
-    if (!tRows.length) throw new AppError(400, "Invalid journal entry type"); 
-    const typeId = tRows[0].id; 
+    );
+    if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
+    const typeId = tRows[0].id;
 
     // Compute & validate base-equivalent totals. For non-base currencies we either use a provided fxRate
     // or look up a rate effective on entryDate.
-    const preparedLines = []; 
+    const preparedLines = [];
     for (const l of payload.lines || []) {
-      const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase(); 
-      const debitCents = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditCents = parseDecimalToBigInt(l.credit || 0, 2); 
-      const amountCents = debitCents > 0n ? debitCents : creditCents; 
+      const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase();
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountCents = debitCents > 0n ? debitCents : creditCents;
 
-      let rateMicro = 1000000n; 
+      let rateMicro = 1000000n;
       if (currencyCode !== baseCurrency) {
         if (l.fxRate != null) {
-          rateMicro = parseRateToMicro(l.fxRate); 
+          rateMicro = parseRateToMicro(l.fxRate);
         } else {
           rateMicro = await lookupFxRateMicro(client, {
             orgId,
@@ -146,35 +146,35 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
             fromCurrency: currencyCode,
             toCurrency: baseCurrency,
             asOfDate: payload.entryDate,
-          }); 
+          });
         }
       }
 
-      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro }); 
-      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents }); 
+      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
     }
 
     const totals = preparedLines.reduce(
       (acc, l) => {
-        const debitCents = parseDecimalToBigInt(l.debit || 0, 2); 
-        const creditCents = parseDecimalToBigInt(l.credit || 0, 2); 
-        if (debitCents > 0n) acc.debit += l.amountBaseCents; 
-        if (creditCents > 0n) acc.credit += l.amountBaseCents; 
-        return acc; 
+        const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+        const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+        if (debitCents > 0n) acc.debit += l.amountBaseCents;
+        if (creditCents > 0n) acc.credit += l.amountBaseCents;
+        return acc;
       },
       { debit: 0n, credit: 0n }
-    ); 
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced in base currency"); 
+    );
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced in base currency");
 
     // Validate accounts exist and are postable+active up front
     for (const l of payload.lines) {
       const { rows: aRows } = await client.query(
         `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
         [orgId, l.accountId]
-      ); 
-      if (!aRows.length) throw new AppError(400, "Invalid accountId"); 
-      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used"); 
-      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used"); 
+      );
+      if (!aRows.length) throw new AppError(400, "Invalid accountId");
+      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used");
+      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
     }
 
     const { rows: jRows } = await client.query(
@@ -185,18 +185,18 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
       RETURNING id, status
       `,
       [orgId, typeId, payload.periodId, payload.entryDate, payload.memo || null, payload.idempotencyKey || null, actorUserId]
-    ); 
-    const journalId = jRows[0].id; 
+    );
+    const journalId = jRows[0].id;
 
-    for (let i = 0;  i < preparedLines.length;  i++) {
-      const l = preparedLines[i]; 
-      const debitBI = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditBI = parseDecimalToBigInt(l.credit || 0, 2); 
-      const amountBaseBI = l.amountBaseCents; 
+    for (let i = 0;i < preparedLines.length;i++) {
+      const l = preparedLines[i];
+      const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountBaseBI = l.amountBaseCents;
 
-      const debit = bigIntToDecimalString(debitBI, 2); 
-      const credit = bigIntToDecimalString(creditBI, 2); 
-      const amountBase = bigIntToDecimalString(amountBaseBI, 2); 
+      const debit = bigIntToDecimalString(debitBI, 2);
+      const credit = bigIntToDecimalString(creditBI, 2);
+      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
 
       await client.query(
         `
@@ -205,28 +205,28 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
         [journalId, i + 1, l.accountId, l.description || null, debit, credit, l.currencyCode, bigIntToDecimalString(l.fxRateMicro, 6), amountBase]
-      ); 
+      );
     }
 
-    if (managesTx) await client.query("COMMIT"); 
-    return { journalId, status: "draft" }; 
+    if (managesTx) await client.query("COMMIT");
+    return { journalId, status: "draft" };
   } catch (e) {
     if (managesTx) {
-      try { await client.query("ROLLBACK");  } catch (_) {}
+      try { await client.query("ROLLBACK");} catch (_) {}
     }
-    throw e; 
+    throw e;
   } finally {
-    if (managesTx) client.release(); 
+    if (managesTx) client.release();
   }
 }
 
 async function postDraftJournal({ orgId, journalId, actorUserId, client: existingClient = null }) {
-  const client = existingClient || (await pool.connect()); 
-  const managesTx = !existingClient; 
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    if (managesTx) await client.query('BEGIN'); 
+    if (managesTx) await client.query('BEGIN');
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId); 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const { rows: jRows } = await client.query(
       `
@@ -236,19 +236,19 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       FOR UPDATE
       `,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, 'Journal not found'); 
-    const journal = jRows[0]; 
+    );
+    if (!jRows.length) throw new AppError(404, 'Journal not found');
+    const journal = jRows[0];
     if (!['draft','approved'].includes(journal.status)) {
-      throw new AppError(409, 'Journal must be in draft or approved status to post'); 
+      throw new AppError(409, 'Journal must be in draft or approved status to post');
     }
     if (journal.created_by && String(journal.created_by) === String(actorUserId)) {
-      throw new AppError(403, 'Segregation of duties: creator cannot post this journal'); 
+      throw new AppError(403, 'Segregation of duties: creator cannot post this journal');
     }
 
-    const period = await getPeriodForUpdate(client, orgId, journal.period_id); 
-    if (period.status !== 'open') throw new AppError(409, 'Period not open'); 
-    assertEntryDateWithinPeriod(journal.entry_date, period); 
+    const period = await getPeriodForUpdate(client, orgId, journal.period_id);
+    if (period.status !== 'open') throw new AppError(409, 'Period not open');
+    assertEntryDateWithinPeriod(journal.entry_date, period);
 
     const { rows: lines } = await client.query(
       `
@@ -262,23 +262,23 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       ORDER BY jel.line_no
       `,
       [orgId, journalId]
-    ); 
-    if (!lines.length) throw new AppError(400, 'Journal has no lines'); 
+    );
+    if (!lines.length) throw new AppError(400, 'Journal has no lines');
 
     // Validate accounts and ensure amount_base/fx_rate are present and correct.
     for (const l of lines) {
-      if (!l.is_postable) throw new AppError(400, 'Non-postable account used'); 
-      if (l.account_status !== 'active') throw new AppError(400, 'Inactive account used'); 
+      if (!l.is_postable) throw new AppError(400, 'Non-postable account used');
+      if (l.account_status !== 'active') throw new AppError(400, 'Inactive account used');
 
-      const currencyCode = String(l.currency_code || baseCurrency).toUpperCase(); 
-      const debitCents = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditCents = parseDecimalToBigInt(l.credit || 0, 2); 
-      const amountCents = debitCents > 0n ? debitCents : creditCents; 
+      const currencyCode = String(l.currency_code || baseCurrency).toUpperCase();
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountCents = debitCents > 0n ? debitCents : creditCents;
 
-      let rateMicro = 1000000n; 
+      let rateMicro = 1000000n;
       if (currencyCode !== baseCurrency) {
         if (l.fx_rate != null && String(l.fx_rate).trim() !== '') {
-          rateMicro = parseRateToMicro(l.fx_rate); 
+          rateMicro = parseRateToMicro(l.fx_rate);
         } else {
           rateMicro = await lookupFxRateMicro(client, {
             orgId,
@@ -286,12 +286,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
             fromCurrency: currencyCode,
             toCurrency: baseCurrency,
             asOfDate: journal.entry_date,
-          }); 
+          });
         }
       }
 
-      const computedBaseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro }); 
-      const storedBaseCents = parseDecimalToBigInt(l.amount_base || 0, 2); 
+      const computedBaseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      const storedBaseCents = parseDecimalToBigInt(l.amount_base || 0, 2);
 
       // If missing/incorrect, update line.
       if (storedBaseCents !== computedBaseCents || String(l.fx_rate || '').trim() === '') {
@@ -300,20 +300,20 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
            SET currency_code=$2, fx_rate=$3, amount_base=$4
            WHERE id=$1`,
           [l.line_id, currencyCode, bigIntToDecimalString(rateMicro, 6), bigIntToDecimalString(computedBaseCents, 2)]
-        ); 
-        l.currency_code = currencyCode; 
-        l.fx_rate = bigIntToDecimalString(rateMicro, 6); 
-        l.amount_base = bigIntToDecimalString(computedBaseCents, 2); 
+        );
+        l.currency_code = currencyCode;
+        l.fx_rate = bigIntToDecimalString(rateMicro, 6);
+        l.amount_base = bigIntToDecimalString(computedBaseCents, 2);
       }
     }
 
-    const totals = sum2(lines); 
-    if (totals.debit !== totals.credit) throw new AppError(400, 'Journal not balanced in base currency'); 
+    const totals = sum2(lines);
+    if (totals.debit !== totals.credit) throw new AppError(400, 'Journal not balanced in base currency');
 
     for (const l of lines) {
-      const isDebit = parseDecimalToBigInt(l.debit || 0, 2) > 0n; 
-      const isCredit = parseDecimalToBigInt(l.credit || 0, 2) > 0n; 
-      const baseAmt = l.amount_base || '0'; 
+      const isDebit = parseDecimalToBigInt(l.debit || 0, 2) > 0n;
+      const isCredit = parseDecimalToBigInt(l.credit || 0, 2) > 0n;
+      const baseAmt = l.amount_base || '0';
       await client.query(
         `
         INSERT INTO general_ledger_balances
@@ -325,7 +325,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
         [orgId, journal.period_id, l.account_id, isDebit ? baseAmt : '0', isCredit ? baseAmt : '0']
-      ); 
+      );
     }
 
     await client.query(
@@ -335,19 +335,19 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, journalId, actorUserId]
-    ); 
+    );
 
-    await enqueueEvent({ orgId, eventType: 'accounting.journal.posted', payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date } }); 
+    await enqueueEvent({ orgId, eventType: 'accounting.journal.posted', payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date } });
 
-    if (managesTx) await client.query('COMMIT'); 
-    return { journalId, status: 'posted' }; 
+    if (managesTx) await client.query('COMMIT');
+    return { journalId, status: 'posted' };
   } catch (e) {
     if (managesTx) {
-      try { await client.query('ROLLBACK');  } catch (_) {}
+      try { await client.query('ROLLBACK');} catch (_) {}
     }
-    throw e; 
+    throw e;
   } finally {
-    if (managesTx) client.release(); 
+    if (managesTx) client.release();
   }
 }
 
@@ -359,12 +359,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
  * - Original journal is marked voided with link via memo and void_reason.
  */
 async function voidByReversal({ orgId, journalId, actorUserId, reason, client: existingClient = null }) {
-  const client = existingClient || (await pool.connect()); 
-  const managesTx = !existingClient; 
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    if (managesTx) await client.query("BEGIN"); 
+    if (managesTx) await client.query("BEGIN");
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId); 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const { rows: jRows } = await client.query(
       `
@@ -374,13 +374,13 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       FOR UPDATE
       `,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, "Journal not found"); 
-    const orig = jRows[0]; 
-    if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be voided"); 
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const orig = jRows[0];
+    if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be voided");
 
-    const period = await getPeriodForUpdate(client, orgId, orig.period_id); 
-    if (period.status !== "open") throw new AppError(409, "Period not open;  cannot create reversal in this period"); 
+    const period = await getPeriodForUpdate(client, orgId, orig.period_id);
+    if (period.status !== "open") throw new AppError(409, "Period not open;cannot create reversal in this period");
 
     const { rows: lines } = await client.query(
       `
@@ -390,11 +390,11 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       ORDER BY line_no
       `,
       [journalId]
-    ); 
-    if (!lines.length) throw new AppError(400, "Journal has no lines"); 
+    );
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
 
     // Create reversal journal (draft)
-    const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason}`; 
+    const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason}`;
     const { rows: revRows } = await client.query(
       `
       INSERT INTO journal_entries
@@ -403,20 +403,20 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       RETURNING id
       `,
       [orgId, orig.journal_entry_type_id, orig.period_id, orig.entry_date, reversalMemo]
-    ); 
-    const reversalId = revRows[0].id; 
+    );
+    const reversalId = revRows[0].id;
 
     // Reverse lines: swap debit/credit
     for (const l of lines) {
-      const debitBI = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditBI = parseDecimalToBigInt(l.credit || 0, 2); 
-      const newDebitBI = creditBI; 
-      const newCreditBI = debitBI; 
-      const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI; 
+      const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
+      const newDebitBI = creditBI;
+      const newCreditBI = debitBI;
+      const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI;
 
-      const newDebit = bigIntToDecimalString(newDebitBI, 2); 
-      const newCredit = bigIntToDecimalString(newCreditBI, 2); 
-      const amountBase = bigIntToDecimalString(amountBaseBI, 2); 
+      const newDebit = bigIntToDecimalString(newDebitBI, 2);
+      const newCredit = bigIntToDecimalString(newCreditBI, 2);
+      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
 
       await client.query(
         `
@@ -425,7 +425,7 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
         [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
-      ); 
+      );
     }
 
     // Post reversal (update GL)
@@ -438,10 +438,10 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       ORDER BY line_no
       `,
       [reversalId]
-    ); 
+    );
 
-    const totals = sum2(revLines); 
-    if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced (unexpected)"); 
+    const totals = sum2(revLines);
+    if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced (unexpected)");
 
     for (const l of revLines) {
       await client.query(
@@ -455,7 +455,7 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
         [orgId, orig.period_id, l.account_id, (parseDecimalToBigInt(l.debit||0,2)>0n?l.amount_base:'0'), (parseDecimalToBigInt(l.credit||0,2)>0n?l.amount_base:'0')]
-      ); 
+      );
     }
 
     await client.query(
@@ -465,10 +465,10 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       WHERE organization_id=$1 AND id=$3
       `,
       [orgId, actorUserId, reversalId]
-    ); 
+    );
 
-    // Mark original voided (for UX/reporting;  GL is corrected by reversal)
-    // Mark original voided (for UX/reporting;  GL is corrected by reversal)
+    // Mark original voided (for UX/reporting;GL is corrected by reversal)
+    // Mark original voided (for UX/reporting;GL is corrected by reversal)
 // IMPORTANT: Do NOT modify memo or any other non-void field (immutability trigger)
 await client.query(
   `
@@ -483,28 +483,28 @@ await client.query(
     AND status='posted'
   `,
   [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
-); 
+);
 
-    await enqueueEvent({ orgId, eventType: "accounting.journal.voided", payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id } }); 
+    await enqueueEvent({ orgId, eventType: "accounting.journal.voided", payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id } });
 
-    if (managesTx) await client.query("COMMIT"); 
-    return { journalId, status: "voided", reversalJournalId: reversalId }; 
+    if (managesTx) await client.query("COMMIT");
+    return { journalId, status: "voided", reversalJournalId: reversalId };
   } catch (e) {
     if (managesTx) {
-      try { await client.query("ROLLBACK");  } catch (_) {}
+      try { await client.query("ROLLBACK");} catch (_) {}
     }
-    throw e; 
+    throw e;
   } finally {
-    if (managesTx) client.release(); 
+    if (managesTx) client.release();
   }
 }
 async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey, client: existingClient = null }) {
-  const client = existingClient || (await pool.connect()); 
-  const managesTx = !existingClient; 
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
   try {
-    if (managesTx) await client.query("BEGIN"); 
+    if (managesTx) await client.query("BEGIN");
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId); 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     // 1) Load original (lock)
     const { rows: jRows } = await client.query(
@@ -515,14 +515,14 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
       FOR UPDATE
       `,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, "Journal not found"); 
-    const orig = jRows[0]; 
-    if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be reversed"); 
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const orig = jRows[0];
+    if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be reversed");
 
     // 2) Target period must be open (reversal posts there)
-    const targetPeriod = await getPeriodForUpdate(client, orgId, targetPeriodId); 
-    if (targetPeriod.status !== "open") throw new AppError(409, "Target period not open;  cannot post reversal"); 
+    const targetPeriod = await getPeriodForUpdate(client, orgId, targetPeriodId);
+    if (targetPeriod.status !== "open") throw new AppError(409, "Target period not open;cannot post reversal");
 
     // 3) Idempotency: if reversal already exists, return it
     if (idempotencyKey) {
@@ -534,10 +534,10 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
         LIMIT 1
         `,
         [orgId, idempotencyKey]
-      ); 
+      );
       if (existing.length) {
-        if (managesTx) await client.query("COMMIT"); 
-        return { reversalJournalId: existing[0].id, alreadyExisted: true }; 
+        if (managesTx) await client.query("COMMIT");
+        return { reversalJournalId: existing[0].id, alreadyExisted: true };
       }
     }
 
@@ -550,11 +550,11 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
       ORDER BY line_no
       `,
       [journalId]
-    ); 
-    if (!lines.length) throw new AppError(400, "Journal has no lines"); 
+    );
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
 
     // 5) Create reversal journal in TARGET period/date
-    const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason || "n/a"}`; 
+    const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason || "n/a"}`;
     const { rows: revRows } = await client.query(
       `
       INSERT INTO journal_entries
@@ -563,20 +563,20 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
       RETURNING id
       `,
       [orgId, orig.journal_entry_type_id, targetPeriodId, entryDate, reversalMemo, idempotencyKey || null]
-    ); 
-    const reversalId = revRows[0].id; 
+    );
+    const reversalId = revRows[0].id;
 
     // 6) Insert reversed lines
     for (const l of lines) {
-      const debitBI = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditBI = parseDecimalToBigInt(l.credit || 0, 2); 
-      const newDebitBI = creditBI; 
-      const newCreditBI = debitBI; 
-      const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI; 
+      const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
+      const newDebitBI = creditBI;
+      const newCreditBI = debitBI;
+      const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI;
 
-      const newDebit = bigIntToDecimalString(newDebitBI, 2); 
-      const newCredit = bigIntToDecimalString(newCreditBI, 2); 
-      const amountBase = bigIntToDecimalString(amountBaseBI, 2); 
+      const newDebit = bigIntToDecimalString(newDebitBI, 2);
+      const newCredit = bigIntToDecimalString(newCreditBI, 2);
+      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
 
       await client.query(
         `
@@ -585,16 +585,16 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
         [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
-      ); 
+      );
     }
 
     // 7) Post reversal into GL balances for TARGET period
     const { rows: revLines } = await client.query(
       `SELECT account_id, debit, credit FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
       [reversalId]
-    ); 
-    const totals = sum2(revLines); 
-    if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced (unexpected)"); 
+    );
+    const totals = sum2(revLines);
+    if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced (unexpected)");
 
     for (const l of revLines) {
       await client.query(
@@ -608,7 +608,7 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
         [orgId, targetPeriodId, l.account_id, l.debit || "0", l.credit || "0"]
-      ); 
+      );
     }
 
     await client.query(
@@ -618,19 +618,19 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
       WHERE organization_id=$1 AND id=$3
       `,
       [orgId, actorUserId, reversalId]
-    ); 
+    );
 
     // 8) IMPORTANT: Do NOT modify original journal status
-    await enqueueEvent({ orgId, eventType: 'accounting.journal.reversed', payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate } }); 
-    if (managesTx) await client.query("COMMIT"); 
-    return { reversalJournalId: reversalId, alreadyExisted: false }; 
+    await enqueueEvent({ orgId, eventType: 'accounting.journal.reversed', payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate } });
+    if (managesTx) await client.query("COMMIT");
+    return { reversalJournalId: reversalId, alreadyExisted: false };
   } catch (e) {
     if (managesTx) {
-      try { await client.query("ROLLBACK");  } catch (_) {}
+      try { await client.query("ROLLBACK");} catch (_) {}
     }
-    throw e; 
+    throw e;
   } finally {
-    if (managesTx) client.release(); 
+    if (managesTx) client.release();
   }
 }
 
@@ -642,59 +642,59 @@ async function getJournalWithLines({ orgId, journalId }) {
   const { rows: j } = await pool.query(
     `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
     [orgId, journalId]
-  ); 
-  if (!j.length) throw new AppError(404, "Journal not found"); 
+  );
+  if (!j.length) throw new AppError(404, "Journal not found");
   const { rows: lines } = await pool.query(
     `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
     [journalId]
-  ); 
-  return { journal: j[0], lines }; 
+  );
+  return { journal: j[0], lines };
 }
 
 async function assertEditableJournal(client, { orgId, journalId }) {
   const { rows: jRows } = await client.query(
     `SELECT id, status, period_id, entry_date, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
     [orgId, journalId]
-  ); 
-  if (!jRows.length) throw new AppError(404, "Journal not found"); 
-  const j = jRows[0]; 
+  );
+  if (!jRows.length) throw new AppError(404, "Journal not found");
+  const j = jRows[0];
   if (!["draft", "rejected"].includes(j.status)) {
-    throw new AppError(409, "Only draft/rejected journals can be edited"); 
+    throw new AppError(409, "Only draft/rejected journals can be edited");
   }
-  const period = await getPeriodForUpdate(client, orgId, j.period_id); 
-  if (period.status !== "open") throw new AppError(409, "Period not open"); 
-  return { journal: j, period }; 
+  const period = await getPeriodForUpdate(client, orgId, j.period_id);
+  if (period.status !== "open") throw new AppError(409, "Period not open");
+  return { journal: j, period };
 }
 
 async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
-    const { journal } = await assertEditableJournal(client, { orgId, journalId }); 
+    await client.query("BEGIN");
+    const { journal } = await assertEditableJournal(client, { orgId, journalId });
     if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
       // Allow only creator to edit draft by default
-      throw new AppError(403, "Only the creator can edit this draft journal"); 
+      throw new AppError(403, "Only the creator can edit this draft journal");
     }
 
     // Resolve type id if typeCode provided
-    let typeId = null; 
+    let typeId = null;
     if (payload.typeCode) {
-      const { rows: tRows } = await client.query(`SELECT id FROM journal_entry_types WHERE code=$1`, [payload.typeCode]); 
-      if (!tRows.length) throw new AppError(400, "Invalid journal entry type"); 
-      typeId = tRows[0].id; 
+      const { rows: tRows } = await client.query(`SELECT id FROM journal_entry_types WHERE code=$1`, [payload.typeCode]);
+      if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
+      typeId = tRows[0].id;
     }
 
-    let periodId = payload.periodId || journal.period_id; 
+    let periodId = payload.periodId || journal.period_id;
     if (payload.periodId) {
-      const p = await getPeriodForUpdate(client, orgId, payload.periodId); 
-      if (p.status !== "open") throw new AppError(409, "Target period not open"); 
-      periodId = p.id; 
-      if (payload.entryDate) assertEntryDateWithinPeriod(payload.entryDate, p); 
+      const p = await getPeriodForUpdate(client, orgId, payload.periodId);
+      if (p.status !== "open") throw new AppError(409, "Target period not open");
+      periodId = p.id;
+      if (payload.entryDate) assertEntryDateWithinPeriod(payload.entryDate, p);
     }
 
     if (payload.entryDate && !payload.periodId) {
-      const p = await getPeriodForUpdate(client, orgId, journal.period_id); 
-      assertEntryDateWithinPeriod(payload.entryDate, p); 
+      const p = await getPeriodForUpdate(client, orgId, journal.period_id);
+      assertEntryDateWithinPeriod(payload.entryDate, p);
     }
 
     await client.query(
@@ -710,41 +710,41 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
            updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, periodId, payload.entryDate || null, payload.memo === undefined ? null : payload.memo, typeId]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { journalId, status: "draft" }; 
+    await client.query("COMMIT");
+    return { journalId, status: "draft" };
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
-    const { journal } = await assertEditableJournal(client, { orgId, journalId }); 
+    await client.query("BEGIN");
+    const { journal } = await assertEditableJournal(client, { orgId, journalId });
     if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
-      throw new AppError(403, "Only the creator can edit this draft journal"); 
+      throw new AppError(403, "Only the creator can edit this draft journal");
     }
 
-    const baseCurrency = await getOrgBaseCurrency(client, orgId); 
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     // Prepare lines with proper FX rates and base amounts
-    const preparedLines = []; 
+    const preparedLines = [];
     for (const l of lines) {
-      const currencyCode = String(l.currencyCode || baseCurrency).toUpperCase(); 
-      const debitCents = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditCents = parseDecimalToBigInt(l.credit || 0, 2); 
-      const amountCents = debitCents > 0n ? debitCents : creditCents; 
+      const currencyCode = String(l.currencyCode || baseCurrency).toUpperCase();
+      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+      const amountCents = debitCents > 0n ? debitCents : creditCents;
 
-      let rateMicro = 1000000n; 
+      let rateMicro = 1000000n;
       if (currencyCode !== baseCurrency) {
         if (l.fxRate != null) {
-          rateMicro = parseRateToMicro(l.fxRate); 
+          rateMicro = parseRateToMicro(l.fxRate);
         } else {
           // Look up FX rate for the journal's entry date
           rateMicro = await lookupFxRateMicro(client, {
@@ -753,54 +753,54 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
             fromCurrency: currencyCode,
             toCurrency: baseCurrency,
             asOfDate: journal.entry_date,
-          }); 
+          });
         }
       }
 
-      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro }); 
-      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents }); 
+      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
     }
 
     // Validate totals are balanced
     const totals = preparedLines.reduce(
       (acc, l) => {
-        const debitCents = parseDecimalToBigInt(l.debit || 0, 2); 
-        const creditCents = parseDecimalToBigInt(l.credit || 0, 2); 
-        if (debitCents > 0n) acc.debit += l.amountBaseCents; 
-        if (creditCents > 0n) acc.credit += l.amountBaseCents; 
-        return acc; 
+        const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+        const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+        if (debitCents > 0n) acc.debit += l.amountBaseCents;
+        if (creditCents > 0n) acc.credit += l.amountBaseCents;
+        return acc;
       },
       { debit: 0n, credit: 0n }
-    ); 
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced"); 
+    );
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
     // Validate accounts
     for (const l of preparedLines) {
       const { rows: aRows } = await client.query(
         `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
         [orgId, l.accountId]
-      ); 
-      if (!aRows.length) throw new AppError(400, "Invalid accountId"); 
-      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used"); 
-      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used"); 
+      );
+      if (!aRows.length) throw new AppError(400, "Invalid accountId");
+      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used");
+      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
     }
 
     // IMPORTANT: Check if there are existing lines first
     const { rows: existingLines } = await client.query(
       `SELECT COUNT(*) as count FROM journal_entry_lines WHERE journal_entry_id = $1`,
       [journalId]
-    ); 
+    );
     
     // Delete existing lines if they exist
     if (parseInt(existingLines[0].count) > 0) {
-      await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [journalId]); 
+      await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [journalId]);
     }
 
     // Insert new lines with ALL required fields including fx_rate
-    for (let i = 0;  i < preparedLines.length;  i++) {
-      const l = preparedLines[i]; 
-      const debitBI = parseDecimalToBigInt(l.debit || 0, 2); 
-      const creditBI = parseDecimalToBigInt(l.credit || 0, 2); 
+    for (let i = 0;i < preparedLines.length;i++) {
+      const l = preparedLines[i];
+      const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
       
       await client.query(
         `INSERT INTO journal_entry_lines
@@ -817,7 +817,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
           bigIntToDecimalString(l.fxRateMicro, 6),
           bigIntToDecimalString(l.amountBaseCents, 2)
         ]
-      ); 
+      );
     }
 
     // If journal was rejected, revert back to draft
@@ -826,187 +826,187 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
        SET status = 'draft', rejected_at = NULL, rejected_by = NULL, rejection_reason = NULL, updated_at = NOW()
        WHERE organization_id = $1 AND id = $2`,
       [orgId, journalId]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { journalId, status: "draft" }; 
+    await client.query("COMMIT");
+    return { journalId, status: "draft" };
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 async function submitDraftJournal({ orgId, journalId, actorUserId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by, period_id, entry_date FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, "Journal not found"); 
-    const j = jRows[0]; 
-    if (j.status !== "draft") throw new AppError(409, "Only draft journals can be submitted"); 
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "draft") throw new AppError(409, "Only draft journals can be submitted");
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
-      throw new AppError(403, "Only the creator can submit this journal"); 
+      throw new AppError(403, "Only the creator can submit this journal");
     }
 
-    const period = await getPeriodForUpdate(client, orgId, j.period_id); 
-    if (period.status !== "open") throw new AppError(409, "Period not open"); 
-    assertEntryDateWithinPeriod(j.entry_date, period); 
+    const period = await getPeriodForUpdate(client, orgId, j.period_id);
+    if (period.status !== "open") throw new AppError(409, "Period not open");
+    assertEntryDateWithinPeriod(j.entry_date, period);
 
     const { rows: lines } = await client.query(
       `SELECT debit, credit FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
       [journalId]
-    ); 
-    if (!lines.length) throw new AppError(400, "Journal has no lines"); 
-    const totals = sum2(lines); 
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced"); 
+    );
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
+    const totals = sum2(lines);
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
     await client.query(
       `UPDATE journal_entries
        SET status='submitted', submitted_at=NOW(), submitted_by=$3, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { journalId, status: "submitted" }; 
+    await client.query("COMMIT");
+    return { journalId, status: "submitted" };
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, "Journal not found"); 
-    const j = jRows[0]; 
-    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be approved"); 
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be approved");
     if (j.created_by && String(j.created_by) === String(actorUserId)) {
-      throw new AppError(403, "Segregation of duties: creator cannot approve this journal"); 
+      throw new AppError(403, "Segregation of duties: creator cannot approve this journal");
     }
     await client.query(
       `UPDATE journal_entries
        SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId]
-    ); 
-    await client.query("COMMIT"); 
-    return { journalId, status: "approved" }; 
+    );
+    await client.query("COMMIT");
+    return { journalId, status: "approved" };
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, "Journal not found"); 
-    const j = jRows[0]; 
-    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be rejected"); 
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
+    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be rejected");
     if (j.created_by && String(j.created_by) === String(actorUserId)) {
-      throw new AppError(403, "Segregation of duties: creator cannot reject this journal"); 
+      throw new AppError(403, "Segregation of duties: creator cannot reject this journal");
     }
     await client.query(
       `UPDATE journal_entries
        SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId, reason]
-    ); 
-    await client.query("COMMIT"); 
-    return { journalId, status: "rejected" }; 
+    );
+    await client.query("COMMIT");
+    return { journalId, status: "rejected" };
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
-    ); 
-    if (!jRows.length) throw new AppError(404, "Journal not found"); 
-    const j = jRows[0]; 
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const j = jRows[0];
     if (j.status !== "draft" && j.status !== "rejected") {
-      throw new AppError(409, "Only draft/rejected journals can be canceled"); 
+      throw new AppError(409, "Only draft/rejected journals can be canceled");
     }
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
-      throw new AppError(403, "Only the creator can cancel this journal"); 
+      throw new AppError(403, "Only the creator can cancel this journal");
     }
     await client.query(
       `UPDATE journal_entries
        SET status='canceled', canceled_at=NOW(), canceled_by=$3, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId]
-    ); 
-    await client.query("COMMIT"); 
-    return { journalId, status: "canceled" }; 
+    );
+    await client.query("COMMIT");
+    return { journalId, status: "canceled" };
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function batchPostJournals({ orgId, actorUserId, journalIds, client: existingClient = null }) {
-  // Best-effort batch: posts sequentially;  each post is transactional.
-  const results = []; 
+  // Best-effort batch: posts sequentially;each post is transactional.
+  const results = [];
   for (const id of journalIds) {
-    const r = await postDraftJournal({ orgId, journalId: id, actorUserId, client: existingClient }); 
-    results.push(r); 
+    const r = await postDraftJournal({ orgId, journalId: id, actorUserId, client: existingClient });
+    results.push(r);
   }
-  return { count: results.length, results }; 
+  return { count: results.length, results };
 }
 
 async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
-  const where = ["organization_id=$1"]; 
-  const params = [orgId]; 
-  let i = 2; 
+  const where = ["organization_id=$1"];
+  const params = [orgId];
+  let i = 2;
 
   if (filters.periodId) {
-    where.push(`period_id=$${i++}`); 
-    params.push(filters.periodId); 
+    where.push(`period_id=$${i++}`);
+    params.push(filters.periodId);
   }
   if (filters.status) {
-    where.push(`status=$${i++}`); 
-    params.push(filters.status); 
+    where.push(`status=$${i++}`);
+    params.push(filters.status);
   }
   if (filters.from) {
-    where.push(`entry_date >= $${i++}::date`); 
-    params.push(filters.from); 
+    where.push(`entry_date >= $${i++}::date`);
+    params.push(filters.from);
   }
   if (filters.to) {
-    where.push(`entry_date <= $${i++}::date`); 
-    params.push(filters.to); 
+    where.push(`entry_date <= $${i++}::date`);
+    params.push(filters.to);
   }
 
-  params.push(limit); 
-  params.push(offset); 
+  params.push(limit);
+  params.push(offset);
 
   const { rows } = await pool.query(
     `
@@ -1038,8 +1038,8 @@ ORDER BY je.entry_no DESC, je.created_at DESC
 LIMIT $${i++} OFFSET $${i++}
     `,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 
@@ -1057,4 +1057,4 @@ module.exports = {
   rejectSubmittedJournal,
   cancelDraftJournal,
   batchPostJournals
-}; 
+};

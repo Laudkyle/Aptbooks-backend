@@ -1,13 +1,13 @@
-const { z } = require("zod"); 
+const { z } = require("zod");
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/); 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const lineSchema = z.object({
   description: z.string().min(2).max(500),
   quantity: z.coerce.number().positive().default(1),
   unitPrice: z.coerce.number().min(0),
   revenueAccountId: z.string().uuid()
-}); 
+});
 
 const createInvoiceSchema = z.object({
   customerId: z.string().uuid(),
@@ -22,21 +22,21 @@ const createInvoiceSchema = z.object({
       code: "custom",
       path: ["dueDate"],
       message: "dueDate must be on or after invoiceDate"
-    }); 
+    });
   }
-}); 
+});
 
 const listInvoicesQuerySchema = z.object({
   status: z.enum(["draft", "issued", "paid", "voided"]).optional(),
   customerId: z.string().uuid().optional()
-}); 
+});
 
 const voidInvoiceSchema = z.object({
   reason: z.string().min(2).max(500)
-}); 
+});
 
 module.exports = {
   createInvoiceSchema,
   listInvoicesQuerySchema,
   voidInvoiceSchema
-}; 
+};

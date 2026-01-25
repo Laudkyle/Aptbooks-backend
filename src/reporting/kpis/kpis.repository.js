@@ -1,27 +1,27 @@
-const { pool } = require("../../db/pool"); 
+const { pool } = require("../../db/pool");
 
 async function listDefinitions({ orgId, status = null, limit = 100, offset = 0 }) {
-  const params = [orgId]; 
-  let where = "WHERE organization_id=$1"; 
+  const params = [orgId];
+  let where = "WHERE organization_id=$1";
   if (status) {
-    params.push(status); 
-    where += ` AND status=$${params.length}`; 
+    params.push(status);
+    where += ` AND status=$${params.length}`;
   }
-  params.push(limit); 
-  params.push(offset); 
+  params.push(limit);
+  params.push(offset);
   const { rows } = await pool.query(
     `SELECT * FROM kpi_definitions ${where} ORDER BY code LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getDefinition({ orgId, id }) {
   const { rows } = await pool.query(
     `SELECT * FROM kpi_definitions WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 
@@ -30,8 +30,8 @@ async function getDefinitionByCode({ orgId, code }) {
   const { rows } = await pool.query(
     `SELECT * FROM kpi_definitions WHERE organization_id=$1 AND code=$2 LIMIT 1`,
     [orgId, code]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 async function createDefinition({
   orgId,
@@ -55,13 +55,13 @@ async function createDefinition({
     RETURNING *
     `,
     [orgId, code, name, kpiType, status, accountId || null, expressionJson, category || null, ownerUserId || null, documentation || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateDefinition({ orgId, id, patch }) {
-  const fields = []; 
-  const values = [orgId, id]; 
+  const fields = [];
+  const values = [orgId, id];
   const allowed = {
     code: "code",
     name: "name",
@@ -72,42 +72,42 @@ async function updateDefinition({ orgId, id, patch }) {
     category: "category",
     ownerUserId: "owner_user_id",
     documentation: "documentation",
-  }; 
+  };
 
   for (const [k, col] of Object.entries(allowed)) {
     if (Object.prototype.hasOwnProperty.call(patch, k)) {
-      values.push(patch[k]); 
-      fields.push(`${col}=$${values.length}`); 
+      values.push(patch[k]);
+      fields.push(`${col}=$${values.length}`);
     }
   }
-  if (!fields.length) return getDefinition({ orgId, id }); 
+  if (!fields.length) return getDefinition({ orgId, id });
   const { rows } = await pool.query(
     `UPDATE kpi_definitions SET ${fields.join(", ")}, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     values
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 // KPI Targets
 async function listTargets({ orgId, kpiDefinitionId, includeArchived = false }) {
-  const params = [orgId, kpiDefinitionId]; 
-  let where = "WHERE organization_id=$1 AND kpi_definition_id=$2"; 
+  const params = [orgId, kpiDefinitionId];
+  let where = "WHERE organization_id=$1 AND kpi_definition_id=$2";
   if (!includeArchived) {
-    where += " AND is_archived = false"; 
+    where += " AND is_archived = false";
   }
   const { rows } = await pool.query(
     `SELECT * FROM kpi_targets ${where} ORDER BY period_id NULLS LAST, created_at DESC`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getTarget({ orgId, id }) {
   const { rows } = await pool.query(
     `SELECT * FROM kpi_targets WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function upsertTarget({ orgId, kpiDefinitionId, periodId, direction, targetValue, amberThreshold, redThreshold }) {
@@ -118,12 +118,12 @@ async function upsertTarget({ orgId, kpiDefinitionId, periodId, direction, targe
     RETURNING *
     `,
     [orgId, kpiDefinitionId, periodId || null, direction, targetValue, amberThreshold === undefined ? null : amberThreshold, redThreshold === undefined ? null : redThreshold]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateTarget({ orgId, id, patch }) {
-  const { direction, targetValue, amberThreshold, redThreshold, periodId, isArchived } = patch || {}; 
+  const { direction, targetValue, amberThreshold, redThreshold, periodId, isArchived } = patch || {};
   const { rows } = await pool.query(
     `
     UPDATE kpi_targets
@@ -147,16 +147,16 @@ async function updateTarget({ orgId, id, patch }) {
       redThreshold === undefined ? null : redThreshold,
       isArchived === undefined ? null : !!isArchived,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function archiveDefinition({ orgId, id }) {
   const { rows } = await pool.query(
     `UPDATE kpi_definitions SET status='archived', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, id]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function upsertValue({ orgId, kpiDefinitionId, periodId, asOfDate, value, metaJson }) {
@@ -169,26 +169,26 @@ async function upsertValue({ orgId, kpiDefinitionId, periodId, asOfDate, value, 
     RETURNING *
     `,
     [orgId, kpiDefinitionId, periodId, asOfDate, value, metaJson || {}]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listValues({ orgId, periodId, limit = 200, offset = 0 }) {
-  const params = [orgId]; 
-  let where = "WHERE organization_id=$1"; 
+  const params = [orgId];
+  let where = "WHERE organization_id=$1";
   if (periodId) {
-    params.push(periodId); 
-    where += ` AND period_id=$${params.length}`; 
+    params.push(periodId);
+    where += ` AND period_id=$${params.length}`;
   }
-  params.push(limit); 
-  params.push(offset); 
+  params.push(limit);
+  params.push(offset);
   const { rows } = await pool.query(
     `SELECT * FROM kpi_values ${where} ORDER BY as_of_date DESC, created_at DESC LIMIT $${
       params.length - 1
     } OFFSET $${params.length}`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getNormalisedAccountActual({ orgId, periodId, accountId }) {
@@ -208,8 +208,8 @@ async function getNormalisedAccountActual({ orgId, periodId, accountId }) {
     LIMIT 1
     `,
     [orgId, periodId, accountId]
-  ); 
-  return rows.length ? Number(rows[0].actual_normal || 0) : 0; 
+  );
+  return rows.length ? Number(rows[0].actual_normal || 0) : 0;
 }
 
 async function getApplicableTarget({ orgId, kpiDefinitionId, periodId }) {
@@ -224,8 +224,8 @@ async function getApplicableTarget({ orgId, kpiDefinitionId, periodId }) {
     LIMIT 1
     `,
     [orgId, kpiDefinitionId, periodId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 module.exports = {
@@ -243,4 +243,4 @@ module.exports = {
   upsertTarget,
   updateTarget,
   getApplicableTarget,
-}; 
+};

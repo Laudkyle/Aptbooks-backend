@@ -1,20 +1,20 @@
-const { pool } = require("../../../../db/pool"); 
+const { pool } = require("../../../../db/pool");
 
 async function nextPaymentNo(client, orgId) {
   await client.query(
     `INSERT INTO vendor_payment_sequences(organization_id, next_no)
      VALUES ($1, 1) ON CONFLICT (organization_id) DO NOTHING`,
     [orgId]
-  ); 
+  );
 
   const { rows } = await client.query(
     `UPDATE vendor_payment_sequences SET next_no = next_no + 1, updated_at=NOW()
      WHERE organization_id=$1 RETURNING next_no`,
     [orgId]
-  ); 
+  );
 
-  const no = BigInt(rows[0].next_no) - 1n; 
-  return `VPAY-${String(no).padStart(6, "0")}`; 
+  const no = BigInt(rows[0].next_no) - 1n;
+  return `VPAY-${String(no).padStart(6, "0")}`;
 }
 
 async function insertVendorPayment(client, { orgId, vendorId, paymentNo, paymentDate, paymentMethodId, cashAccountId, amountTotal, currencyCode }) {
@@ -29,8 +29,8 @@ async function insertVendorPayment(client, { orgId, vendorId, paymentNo, payment
     RETURNING *
     `,
     [orgId, vendorId, paymentNo, paymentDate, currencyCode, paymentMethodId || null, cashAccountId, amountTotal]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function upsertAllocation(client, { vendorPaymentId, billId, amountApplied, discountTaken }) {
@@ -42,38 +42,38 @@ async function upsertAllocation(client, { vendorPaymentId, billId, amountApplied
     DO UPDATE SET amount_applied=EXCLUDED.amount_applied, discount_taken=EXCLUDED.discount_taken
     `,
     [vendorPaymentId, billId, amountApplied, discountTaken || "0.00"]
-  ); 
+  );
 }
 
 async function getVendorPaymentById(orgId, id) {
   const { rows } = await pool.query(
     `SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2`,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getAllocations(vendorPaymentId) {
   const { rows } = await pool.query(
     `SELECT * FROM vendor_payment_allocations WHERE vendor_payment_id=$1 ORDER BY created_at ASC`,
     [vendorPaymentId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function listVendorPayments({ orgId, query }) {
-  const params = [orgId]; 
-  const where = ["organization_id=$1"]; 
-  let i = 2; 
+  const params = [orgId];
+  const where = ["organization_id=$1"];
+  let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);  params.push(query.status);  }
-  if (query?.vendorId) { where.push(`vendor_id=$${i++}`);  params.push(query.vendorId);  }
+  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
+  if (query?.vendorId) { where.push(`vendor_id=$${i++}`);params.push(query.vendorId);}
 
   const { rows } = await pool.query(
     `SELECT * FROM vendor_payments WHERE ${where.join(" AND ")} ORDER BY payment_date DESC, created_at DESC`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 
@@ -82,7 +82,7 @@ async function deleteAllocations(client, vendorPaymentId) {
   await client.query(
     `DELETE FROM vendor_payment_allocations WHERE vendor_payment_id=$1`,
     [vendorPaymentId]
-  ); 
+  );
 }
 
 async function recordAllocationEvent(client, { orgId, vendorPaymentId, actorUserId, action, before, after }) {
@@ -94,7 +94,7 @@ async function recordAllocationEvent(client, { orgId, vendorPaymentId, actorUser
     VALUES ($1,$2,$3,$4,$5,$6)
     `,
     [orgId, vendorPaymentId, actorUserId || null, action, before || null, after || null]
-  ); 
+  );
 }
 
 module.exports = {
@@ -106,4 +106,4 @@ module.exports = {
   getVendorPaymentById,
   getAllocations,
   listVendorPayments
-}; 
+};

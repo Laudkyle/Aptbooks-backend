@@ -1,20 +1,20 @@
-const { AppError } = require("../../shared/errors/AppError"); 
-const { pool } = require("../../db/pool"); 
+const { AppError } = require("../../shared/errors/AppError");
+const { pool } = require("../../db/pool");
 
 function assertDate(value, fieldName) {
-  if (!value) throw new AppError(400, `${fieldName} is required`); 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`); 
+  if (!value) throw new AppError(400, `${fieldName} is required`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) throw new AppError(400, `${fieldName} must be YYYY-MM-DD`);
 }
 
 async function statementStatus({ orgId, fromDate, toDate, bankAccountId }) {
-  assertDate(fromDate, "from"); 
-  assertDate(toDate, "to"); 
+  assertDate(fromDate, "from");
+  assertDate(toDate, "to");
 
-  const params = [orgId, fromDate, toDate]; 
-  let filter = ""; 
+  const params = [orgId, fromDate, toDate];
+  let filter = "";
   if (bankAccountId) {
-    params.push(bankAccountId); 
-    filter = "AND bs.bank_account_id=$4"; 
+    params.push(bankAccountId);
+    filter = "AND bs.bank_account_id=$4";
   }
 
   const { rows } = await pool.query(
@@ -42,7 +42,7 @@ async function statementStatus({ orgId, fromDate, toDate, bankAccountId }) {
     ORDER BY ba.code, bs.statement_date
     `,
     params
-  ); 
+  );
 
   return {
     from: fromDate,
@@ -60,7 +60,7 @@ async function statementStatus({ orgId, fromDate, toDate, bankAccountId }) {
       matched_amount: Number(r.matched_amount || 0),
       unmatched_amount: Number(r.unmatched_amount || 0)
     }))
-  }; 
+  };
 }
 
-module.exports = { statementStatus }; 
+module.exports = { statementStatus };

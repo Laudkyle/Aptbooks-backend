@@ -1,4 +1,4 @@
-const { pool } = require("../../db/pool"); 
+const { pool } = require("../../db/pool");
 
 async function assertAccountWritable({ orgId, accountId }) {
   const { rows } = await pool.query(
@@ -9,32 +9,32 @@ async function assertAccountWritable({ orgId, accountId }) {
       LIMIT 1
     `,
     [orgId, accountId]
-  ); 
-  if (!rows.length) return { ok: false, reason: "not_found" }; 
-  const r = rows[0]; 
-  if (!r.is_postable) return { ok: false, reason: "not_postable" }; 
-  if ((r.status || "active") !== "active") return { ok: false, reason: "inactive" }; 
-  return { ok: true }; 
+  );
+  if (!rows.length) return { ok: false, reason: "not_found" };
+  const r = rows[0];
+  if (!r.is_postable) return { ok: false, reason: "not_postable" };
+  if ((r.status || "active") !== "active") return { ok: false, reason: "inactive" };
+  return { ok: true };
 }
 
 async function assertPeriodExists({ orgId, periodId }) {
   const { rows } = await pool.query(
     `SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, periodId]
-  ); 
-  if (!rows.length) return { ok: false, reason: "not_found" }; 
-  return { ok: true, status: rows[0].status }; 
+  );
+  if (!rows.length) return { ok: false, reason: "not_found" };
+  return { ok: true, status: rows[0].status };
 }
 
 async function listForecasts({ orgId, limit = 100, offset = 0, status }) {
-  const params = [orgId]; 
-  let where = "WHERE organization_id=$1"; 
+  const params = [orgId];
+  let where = "WHERE organization_id=$1";
   if (status) {
-    params.push(status); 
-    where += ` AND status=$${params.length}`; 
+    params.push(status);
+    where += ` AND status=$${params.length}`;
   }
-  params.push(limit); 
-  params.push(offset); 
+  params.push(limit);
+  params.push(offset);
 
   const { rows } = await pool.query(
     `
@@ -45,14 +45,14 @@ async function listForecasts({ orgId, limit = 100, offset = 0, status }) {
     LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function createForecastWithDefaultVersion({ orgId, name, currencyCode, status, createdByUserId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
     const { rows: fr } = await client.query(
       `
@@ -61,8 +61,8 @@ async function createForecastWithDefaultVersion({ orgId, name, currencyCode, sta
       RETURNING id, name, currency_code, status, created_at, updated_at
       `,
       [orgId, name, currencyCode, status, createdByUserId || null]
-    ); 
-    const forecast = fr[0]; 
+    );
+    const forecast = fr[0];
 
     const { rows: vr } = await client.query(
       `
@@ -71,16 +71,16 @@ async function createForecastWithDefaultVersion({ orgId, name, currencyCode, sta
       RETURNING id, forecast_id, version_no, name, status, created_at, updated_at
       `,
       [orgId, forecast.id, "Version 1", createdByUserId || null]
-    ); 
-    const version = vr[0]; 
+    );
+    const version = vr[0];
 
-    await client.query("COMMIT"); 
-    return { forecast, version }; 
+    await client.query("COMMIT");
+    return { forecast, version };
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -88,8 +88,8 @@ async function getForecast({ orgId, id }) {
   const { rows } = await pool.query(
     `SELECT * FROM forecasts WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function listVersions({ orgId, forecastId }) {
@@ -101,29 +101,29 @@ async function listVersions({ orgId, forecastId }) {
     ORDER BY version_no DESC
     `,
     [orgId, forecastId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getVersion({ orgId, versionId }) {
   const { rows } = await pool.query(
     `SELECT * FROM forecast_versions WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, versionId]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 // Compatibility helper: some call-sites pass { id } and optionally { forecastId }
 async function getVersionById({ orgId, id, forecastId }) {
-  const params = [orgId, id]; 
-  let sql = `SELECT * FROM forecast_versions WHERE organization_id=$1 AND id=$2`; 
+  const params = [orgId, id];
+  let sql = `SELECT * FROM forecast_versions WHERE organization_id=$1 AND id=$2`;
   if (forecastId) {
-    params.push(forecastId); 
-    sql += ` AND forecast_id=$3`; 
+    params.push(forecastId);
+    sql += ` AND forecast_id=$3`;
   }
-  sql += ` LIMIT 1`; 
-  const { rows } = await pool.query(sql, params); 
-  return rows[0] || null; 
+  sql += ` LIMIT 1`;
+  const { rows } = await pool.query(sql, params);
+  return rows[0] || null;
 }
 
 async function getLatestDraftVersion({ orgId, forecastId }) {
@@ -136,8 +136,8 @@ async function getLatestDraftVersion({ orgId, forecastId }) {
     LIMIT 1
     `,
     [orgId, forecastId]
-  ); 
-  return rows.length ? rows[0] : null; 
+  );
+  return rows.length ? rows[0] : null;
 }
 
 async function getLatestActiveOrDraftVersion({ orgId, forecastId }) {
@@ -150,18 +150,18 @@ async function getLatestActiveOrDraftVersion({ orgId, forecastId }) {
       LIMIT 1
     `,
     [orgId, forecastId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function activateForecast({ orgId, forecastId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     await client.query(
       `UPDATE forecasts SET status='active', updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
       [orgId, forecastId]
-    ); 
+    );
     // Ensure at least one version is active.
     const { rows: v } = await client.query(
       `
@@ -178,35 +178,35 @@ async function activateForecast({ orgId, forecastId }) {
         RETURNING *
       `,
       [orgId, forecastId]
-    ); 
-    await client.query("COMMIT"); 
-    return v[0] || null; 
+    );
+    await client.query("COMMIT");
+    return v[0] || null;
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function archiveForecast({ orgId, forecastId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     await client.query(
       `UPDATE forecasts SET status='archived', updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
       [orgId, forecastId]
-    ); 
+    );
     await client.query(
       `UPDATE forecast_versions SET status='archived', updated_at=NOW() WHERE organization_id=$1 AND forecast_id=$2`,
       [orgId, forecastId]
-    ); 
-    await client.query("COMMIT"); 
+    );
+    await client.query("COMMIT");
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -219,8 +219,8 @@ async function finalizeVersion({ orgId, forecastId, versionId }) {
       RETURNING *
     `,
     [orgId, forecastId, versionId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function createVersion({ orgId, forecastId, versionNo, name, status, createdByUserId }) {
@@ -231,8 +231,8 @@ async function createVersion({ orgId, forecastId, versionNo, name, status, creat
     RETURNING id, forecast_id, version_no, name, status, created_at, updated_at
     `,
     [orgId, forecastId, versionNo, name, status, createdByUserId || null]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function updateVersionWorkflow({ orgId, forecastId, versionId, patch }) {
@@ -248,7 +248,7 @@ async function updateVersionWorkflow({ orgId, forecastId, versionId, patch }) {
     scenarioKey,
     probabilityWeight,
     templateSourceVersionId,
-  } = patch || {}; 
+  } = patch || {};
 
   const { rows } = await pool.query(
     `
@@ -284,14 +284,14 @@ async function updateVersionWorkflow({ orgId, forecastId, versionId, patch }) {
       probabilityWeight === undefined ? null : probabilityWeight,
       templateSourceVersionId || null,
     ]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, name, scenarioKey, probabilityWeight, createdByUserId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows: vrows } = await client.query(
       `
       INSERT INTO forecast_versions(organization_id, forecast_id, version_no, name, status, created_by_user_id, workflow_status, scenario_key, probability_weight, template_source_version_id)
@@ -301,11 +301,11 @@ async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, n
       RETURNING *
       `,
       [orgId, forecastId, sourceVersionId, newVersionNo, name || null, scenarioKey || null, probabilityWeight === undefined ? null : probabilityWeight, createdByUserId || null]
-    ); 
-    const created = vrows[0]; 
+    );
+    const created = vrows[0];
     if (!created) {
-      await client.query("ROLLBACK"); 
-      return null; 
+      await client.query("ROLLBACK");
+      return null;
     }
     await client.query(
       `
@@ -315,23 +315,23 @@ async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, n
       WHERE organization_id=$1 AND forecast_version_id=$3
       `,
       [orgId, created.id, sourceVersionId]
-    ); 
-    await client.query("COMMIT"); 
-    return created; 
+    );
+    await client.query("COMMIT");
+    return created;
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function compareVersions({ orgId, forecastId, baseVersionId, compareVersionId, periodId }) {
-  const params = [orgId, forecastId, baseVersionId, compareVersionId]; 
-  let periodFilter = ""; 
+  const params = [orgId, forecastId, baseVersionId, compareVersionId];
+  let periodFilter = "";
   if (periodId) {
-    params.push(periodId); 
-    periodFilter = ` AND period_id=$${params.length}`; 
+    params.push(periodId);
+    periodFilter = ` AND period_id=$${params.length}`;
   }
   const { rows } = await pool.query(
     `
@@ -360,8 +360,8 @@ async function compareVersions({ orgId, forecastId, baseVersionId, compareVersio
     ORDER BY coa.code
     `,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, periodId }) {
@@ -390,8 +390,8 @@ async function forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, per
     ORDER BY coa.code
     `,
     [orgId, forecastVersionId, budgetVersionId, periodId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function upsertLine({ orgId, forecastId, forecastVersionId, accountId, periodId, amount, dimensionJson }) {
@@ -406,8 +406,8 @@ async function upsertLine({ orgId, forecastId, forecastVersionId, accountId, per
     RETURNING id, account_id, period_id, amount, dimension_json, created_at, updated_at
     `,
     [orgId, forecastId, forecastVersionId, accountId, periodId || null, amount, dimensionJson || {}]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 async function getVariance({ orgId, forecastId, forecastVersionId, periodId }) {
   try {
@@ -490,22 +490,22 @@ async function getVariance({ orgId, forecastId, forecastVersionId, periodId }) {
         END AS variance_direction
       FROM combined
       ORDER BY account_code
-    `; 
+    `;
     
     const { rows } = await pool.query(query, [
       orgId, 
       forecastId, 
       forecastVersionId, 
       periodId
-    ]); 
+    ]);
     
-    console.log(`Found ${rows.length} variance records`); 
-    return rows; 
+    console.log(`Found ${rows.length} variance records`);
+    return rows;
     
   } catch (error) {
-    console.error('Error in getVariance:', error.message); 
-    console.error('Query parameters:', { orgId, forecastId, forecastVersionId, periodId }); 
-    throw error; 
+    console.error('Error in getVariance:', error.message);
+    console.error('Query parameters:', { orgId, forecastId, forecastVersionId, periodId });
+    throw error;
   }
 }
 module.exports = {
@@ -529,4 +529,4 @@ module.exports = {
   finalizeVersion,
   upsertLine,
   getVariance,
-}; 
+};

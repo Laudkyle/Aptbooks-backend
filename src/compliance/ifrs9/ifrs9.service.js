@@ -1,10 +1,10 @@
-const { pool } = require("../../db/pool"); 
-const { AppError } = require("../../shared/errors/AppError"); 
-const Decimal = require("decimal.js"); 
-const crypto = require("crypto"); 
-const logger = require("../../config/logger"); 
+const { pool } = require("../../db/pool");
+const { AppError } = require("../../shared/errors/AppError");
+const Decimal = require("decimal.js");
+const crypto = require("crypto");
+const logger = require("../../config/logger");
 
-const journalPosting = require("../../interfaces/journalPosting.interface"); 
+const journalPosting = require("../../interfaces/journalPosting.interface");
 
 // --------------------------------------
 // Helpers
@@ -16,62 +16,62 @@ async function getPeriodOrThrow(client, orgId, periodId) {
      FROM accounting_periods
      WHERE organization_id=$1 AND id=$2`,
     [orgId, periodId]
-  ); 
-  if (!rows.length) throw new AppError(400, "Invalid period_id"); 
-  return rows[0]; 
+  );
+  if (!rows.length) throw new AppError(400, "Invalid period_id");
+  return rows[0];
 }
 
 async function getSettings(client, orgId) {
   const { rows } = await client.query(
     `SELECT * FROM ifrs9_settings WHERE organization_id=$1`,
     [orgId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getSettingsOrThrow(client, orgId) {
-  const s = await getSettings(client, orgId); 
-  if (!s) throw new AppError(409, "IFRS9 settings not configured"); 
+  const s = await getSettings(client, orgId);
+  if (!s) throw new AppError(409, "IFRS9 settings not configured");
   if (!s.impairment_expense_account_id || !s.loss_allowance_account_id) {
-    throw new AppError(409, "IFRS9 settings missing posting accounts"); 
+    throw new AppError(409, "IFRS9 settings missing posting accounts");
   }
-  return s; 
+  return s;
 }
 
 async function assertPostableAccount(client, orgId, accountId, label) {
   const { rows } = await client.query(
     `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, accountId]
-  ); 
-  if (!rows.length) throw new AppError(400, `Invalid ${label}`); 
-  if (!rows[0].is_postable) throw new AppError(400, `${label} is not postable`); 
-  if (rows[0].status !== "active") throw new AppError(400, `${label} is inactive`); 
+  );
+  if (!rows.length) throw new AppError(400, `Invalid ${label}`);
+  if (!rows[0].is_postable) throw new AppError(400, `${label} is not postable`);
+  if (rows[0].status !== "active") throw new AppError(400, `${label} is inactive`);
 }
 
 function parseAsOfDate(period, asOfDate) {
   if (asOfDate) {
-    const d = new Date(asOfDate); 
-    if (Number.isNaN(d.getTime())) throw new AppError(400, "Invalid as_of_date"); 
-    return asOfDate; 
+    const d = new Date(asOfDate);
+    if (Number.isNaN(d.getTime())) throw new AppError(400, "Invalid as_of_date");
+    return asOfDate;
   }
-  return period.end_date; 
+  return period.end_date;
 }
 
 function daysBetween(dateA, dateB) {
-  const a = new Date(dateA); 
-  const b = new Date(dateB); 
-  const ms = b.getTime() - a.getTime(); 
-  return Math.floor(ms / (1000 * 60 * 60 * 24)); 
+  const a = new Date(dateA);
+  const b = new Date(dateB);
+  const ms = b.getTime() - a.getTime();
+  return Math.floor(ms / (1000 * 60 * 60 * 24));
 }
 
 async function getActiveModelOrThrow(client, orgId, modelId) {
   const { rows } = await client.query(
     `SELECT id, code, name, model_type, status FROM ifrs9_ecl_models WHERE organization_id=$1 AND id=$2`,
     [orgId, modelId]
-  ); 
-  if (!rows.length) throw new AppError(400, "Invalid model_id"); 
-  if (rows[0].status !== "active") throw new AppError(409, "ECL model is inactive"); 
-  return rows[0]; 
+  );
+  if (!rows.length) throw new AppError(400, "Invalid model_id");
+  if (rows[0].status !== "active") throw new AppError(409, "ECL model is inactive");
+  return rows[0];
 }
 
 async function listModelBuckets(client, modelId) {
@@ -81,8 +81,8 @@ async function listModelBuckets(client, modelId) {
      WHERE model_id=$1
      ORDER BY days_past_due_from ASC`,
     [modelId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function listModelParameters(client, orgId, modelId) {
@@ -94,27 +94,27 @@ async function listModelParameters(client, orgId, modelId) {
      ORDER BY stage ASC, days_past_due_from ASC
      `,
     [orgId, modelId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 function pickBucket(buckets, daysPastDue) {
   for (const b of buckets) {
-    const from = Number(b.days_past_due_from); 
-    const to = b.days_past_due_to === null || b.days_past_due_to === undefined ? null : Number(b.days_past_due_to); 
-    if (daysPastDue >= from && (to === null || daysPastDue <= to)) return b; 
+    const from = Number(b.days_past_due_from);
+    const to = b.days_past_due_to === null || b.days_past_due_to === undefined ? null : Number(b.days_past_due_to);
+    if (daysPastDue >= from && (to === null || daysPastDue <= to)) return b;
   }
-  return null; 
+  return null;
 }
 
 function pickParameter(params, stage, daysPastDue) {
   for (const p of params) {
-    if (Number(p.stage) !== Number(stage)) continue; 
-    const from = Number(p.days_past_due_from); 
-    const to = p.days_past_due_to === null || p.days_past_due_to === undefined ? null : Number(p.days_past_due_to); 
-    if (daysPastDue >= from && (to === null || daysPastDue <= to)) return p; 
+    if (Number(p.stage) !== Number(stage)) continue;
+    const from = Number(p.days_past_due_from);
+    const to = p.days_past_due_to === null || p.days_past_due_to === undefined ? null : Number(p.days_past_due_to);
+    if (daysPastDue >= from && (to === null || daysPastDue <= to)) return p;
   }
-  return null; 
+  return null;
 }
 
 async function getCounterpartyStage(client, orgId, businessPartnerId, daysPastDue, settings) {
@@ -123,20 +123,20 @@ async function getCounterpartyStage(client, orgId, businessPartnerId, daysPastDu
      FROM ifrs9_counterparty_profiles
      WHERE organization_id=$1 AND business_partner_id=$2`,
     [orgId, businessPartnerId]
-  ); 
+  );
   if (rows.length && rows[0].status === 'active' && rows[0].stage_override) {
-    return Number(rows[0].stage_override); 
+    return Number(rows[0].stage_override);
   }
 
-  const t2 = Number(settings.stage2_threshold_days ?? 30); 
-  const t3 = Number(settings.stage3_threshold_days ?? 90); 
-  if (daysPastDue > t3) return 3; 
-  if (daysPastDue > t2) return 2; 
-  return 1; 
+  const t2 = Number(settings.stage2_threshold_days ?? 30);
+  const t3 = Number(settings.stage3_threshold_days ?? 90);
+  if (daysPastDue > t3) return 3;
+  if (daysPastDue > t2) return 2;
+  return 1;
 }
 
 function roundMoney(dec, decimals) {
-  return new Decimal(dec).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP); 
+  return new Decimal(dec).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP);
 }
 
 async function sumPriorPostedEcl(client, orgId, periodEndDate) {
@@ -152,9 +152,9 @@ async function sumPriorPostedEcl(client, orgId, periodEndDate) {
     LIMIT 1
     `,
     [orgId, periodEndDate]
-  ); 
-  if (!rows.length) return new Decimal(0); 
-  return new Decimal(rows[0].total_ecl || 0); 
+  );
+  if (!rows.length) return new Decimal(0);
+  return new Decimal(rows[0].total_ecl || 0);
 }
 
 // --------------------------------------
@@ -162,32 +162,32 @@ async function sumPriorPostedEcl(client, orgId, periodEndDate) {
 // --------------------------------------
 
 async function getIfrs9Settings({ orgId }) {
-  const { rows } = await pool.query(`SELECT * FROM ifrs9_settings WHERE organization_id=$1`, [orgId]); 
-  return rows[0] || null; 
+  const { rows } = await pool.query(`SELECT * FROM ifrs9_settings WHERE organization_id=$1`, [orgId]);
+  return rows[0] || null;
 }
 
 async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
-  const client = await pool.connect(); 
-  logger.debug({ keys: Object.keys(payload || {}) }, "IFRS9: received payload");   try {
-    await client.query("BEGIN"); 
+  const client = await pool.connect();
+  logger.debug({ keys: Object.keys(payload || {}) }, "IFRS9: received payload"); try {
+    await client.query("BEGIN");
 
     // Validate accounts if provided
     if (payload.impairment_expense_account_id) {
-      await assertPostableAccount(client, orgId, payload.impairment_expense_account_id, "impairment_expense_account_id"); 
+      await assertPostableAccount(client, orgId, payload.impairment_expense_account_id, "impairment_expense_account_id");
     }
     if (payload.loss_allowance_account_id) {
-      await assertPostableAccount(client, orgId, payload.loss_allowance_account_id, "loss_allowance_account_id"); 
+      await assertPostableAccount(client, orgId, payload.loss_allowance_account_id, "loss_allowance_account_id");
     }
 
     if (payload.default_model_id) {
-      await getActiveModelOrThrow(client, orgId, payload.default_model_id); 
+      await getActiveModelOrThrow(client, orgId, payload.default_model_id);
     }
 
-    const rounding = payload.rounding_decimals ?? 2; 
-    const stage2ThresholdDays = payload.stage2_threshold_days ?? null; 
-    const stage3ThresholdDays = payload.stage3_threshold_days ?? null; 
-    const defaultLgd = payload.default_lgd ?? null; 
-    const annualDiscountRate = payload.annual_discount_rate ?? null; 
+    const rounding = payload.rounding_decimals ?? 2;
+    const stage2ThresholdDays = payload.stage2_threshold_days ?? null;
+    const stage3ThresholdDays = payload.stage3_threshold_days ?? null;
+    const defaultLgd = payload.default_lgd ?? null;
+    const annualDiscountRate = payload.annual_discount_rate ?? null;
 
     const { rows } = await client.query(
       `
@@ -232,15 +232,15 @@ async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
         annualDiscountRate,
         actorUserId
       ]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return rows[0]; 
+    await client.query("COMMIT");
+    return rows[0];
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -255,8 +255,8 @@ async function listEclModels({ orgId }) {
      WHERE organization_id=$1
      ORDER BY code ASC`,
     [orgId]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function createEclModel({ orgId, actorUserId, payload }) {
@@ -269,28 +269,28 @@ async function createEclModel({ orgId, actorUserId, payload }) {
     RETURNING *
     `,
     [orgId, payload.code, payload.name, payload.description || null, payload.model_type || 'SIMPLIFIED', payload.status || "active", actorUserId]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function addEclParameter({ orgId, actorUserId, modelId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query('BEGIN'); 
-    const model = await getActiveModelOrThrow(client, orgId, modelId); 
+    await client.query('BEGIN');
+    const model = await getActiveModelOrThrow(client, orgId, modelId);
     // Enforce model type
     const { rows: mrows } = await client.query(
       `SELECT model_type FROM ifrs9_ecl_models WHERE organization_id=$1 AND id=$2`,
       [orgId, modelId]
-    ); 
-    if (!mrows.length) throw new AppError(400, 'Invalid model_id'); 
+    );
+    if (!mrows.length) throw new AppError(400, 'Invalid model_id');
     if (mrows[0].model_type !== 'GENERAL') {
-      throw new AppError(409, 'Parameters can only be added to GENERAL models'); 
+      throw new AppError(409, 'Parameters can only be added to GENERAL models');
     }
 
     if (payload.days_past_due_to !== null && payload.days_past_due_to !== undefined) {
       if (payload.days_past_due_to < payload.days_past_due_from) {
-        throw new AppError(400, 'days_past_due_to must be >= days_past_due_from'); 
+        throw new AppError(400, 'days_past_due_to must be >= days_past_due_from');
       }
     }
 
@@ -317,14 +317,14 @@ async function addEclParameter({ orgId, actorUserId, modelId, payload }) {
         payload.lgd ?? null,
         actorUserId
       ]
-    ); 
-    await client.query('COMMIT'); 
-    return rows[0]; 
+    );
+    await client.query('COMMIT');
+    return rows[0];
   } catch (e) {
-    await client.query('ROLLBACK'); 
-    throw e; 
+    await client.query('ROLLBACK');
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -332,21 +332,21 @@ async function getCounterpartyProfile({ orgId, businessPartnerId }) {
   const { rows } = await pool.query(
     `SELECT * FROM ifrs9_counterparty_profiles WHERE organization_id=$1 AND business_partner_id=$2`,
     [orgId, businessPartnerId]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function upsertCounterpartyProfile({ orgId, actorUserId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query('BEGIN'); 
+    await client.query('BEGIN');
 
     // ensure business partner exists in org
     const { rows: bpRows } = await client.query(
       `SELECT id FROM business_partners WHERE organization_id=$1 AND id=$2`,
       [orgId, payload.business_partner_id]
-    ); 
-    if (!bpRows.length) throw new AppError(400, 'Invalid business_partner_id'); 
+    );
+    if (!bpRows.length) throw new AppError(400, 'Invalid business_partner_id');
 
     const { rows } = await client.query(
       `
@@ -374,30 +374,30 @@ async function upsertCounterpartyProfile({ orgId, actorUserId, payload }) {
         payload.status || 'active',
         actorUserId
       ]
-    ); 
+    );
 
-    await client.query('COMMIT'); 
-    return rows[0]; 
+    await client.query('COMMIT');
+    return rows[0];
   } catch (e) {
-    await client.query('ROLLBACK'); 
-    throw e; 
+    await client.query('ROLLBACK');
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function addEclBucket({ orgId, actorUserId, modelId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
-    const model = await getActiveModelOrThrow(client, orgId, modelId); 
+    await client.query("BEGIN");
+    const model = await getActiveModelOrThrow(client, orgId, modelId);
     if ((model.model_type || 'SIMPLIFIED') !== 'SIMPLIFIED') {
-      throw new AppError(409, "Buckets can only be added to SIMPLIFIED models"); 
+      throw new AppError(409, "Buckets can only be added to SIMPLIFIED models");
     }
 
     if (payload.days_past_due_to !== null && payload.days_past_due_to !== undefined) {
       if (payload.days_past_due_to < payload.days_past_due_from) {
-        throw new AppError(400, "days_past_due_to must be >= days_past_due_from"); 
+        throw new AppError(400, "days_past_due_to must be >= days_past_due_from");
       }
     }
 
@@ -410,14 +410,14 @@ async function addEclBucket({ orgId, actorUserId, modelId, payload }) {
       RETURNING *
       `,
       [modelId, payload.label, payload.days_past_due_from, payload.days_past_due_to ?? null, payload.loss_rate, actorUserId]
-    ); 
-    await client.query("COMMIT"); 
-    return rows[0]; 
+    );
+    await client.query("COMMIT");
+    return rows[0];
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -426,36 +426,36 @@ async function addEclBucket({ orgId, actorUserId, modelId, payload }) {
 // --------------------------------------
 
 async function computeEcl({ orgId, actorUserId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
 
-    const period = await getPeriodOrThrow(client, orgId, payload.period_id); 
-    if (period.status !== "open") throw new AppError(409, "Period is not open"); 
+    const period = await getPeriodOrThrow(client, orgId, payload.period_id);
+    if (period.status !== "open") throw new AppError(409, "Period is not open");
 
-    const settings = await getSettingsOrThrow(client, orgId); 
-    const modelId = payload.model_id || settings.default_model_id; 
-    if (!modelId) throw new AppError(409, "No default ECL model configured"); 
-    const model = await getActiveModelOrThrow(client, orgId, modelId); 
+    const settings = await getSettingsOrThrow(client, orgId);
+    const modelId = payload.model_id || settings.default_model_id;
+    if (!modelId) throw new AppError(409, "No default ECL model configured");
+    const model = await getActiveModelOrThrow(client, orgId, modelId);
 
-    const approach = payload.approach || model.model_type || 'SIMPLIFIED'; 
+    const approach = payload.approach || model.model_type || 'SIMPLIFIED';
 
-    let buckets = []; 
-    let params = []; 
+    let buckets = [];
+    let params = [];
     if (approach === 'SIMPLIFIED') {
-      buckets = await listModelBuckets(client, modelId); 
-      if (!buckets.length) throw new AppError(409, "ECL model has no buckets"); 
+      buckets = await listModelBuckets(client, modelId);
+      if (!buckets.length) throw new AppError(409, "ECL model has no buckets");
     } else {
       // GENERAL
-      const { rows: mrows } = await client.query(`SELECT model_type FROM ifrs9_ecl_models WHERE organization_id=$1 AND id=$2`, [orgId, modelId]); 
+      const { rows: mrows } = await client.query(`SELECT model_type FROM ifrs9_ecl_models WHERE organization_id=$1 AND id=$2`, [orgId, modelId]);
       if (mrows.length && mrows[0].model_type !== 'GENERAL') {
-        throw new AppError(409, 'Selected model is not GENERAL'); 
+        throw new AppError(409, 'Selected model is not GENERAL');
       }
-      params = await listModelParameters(client, orgId, modelId); 
-      if (!params.length) throw new AppError(409, 'GENERAL model has no parameters'); 
+      params = await listModelParameters(client, orgId, modelId);
+      if (!params.length) throw new AppError(409, 'GENERAL model has no parameters');
     }
 
-    const asOfDate = parseAsOfDate(period, payload.as_of_date); 
+    const asOfDate = parseAsOfDate(period, payload.as_of_date);
 
     // Build exposures from:
     //  (1) Trade receivables (invoices) net of posted customer receipt allocations
@@ -497,7 +497,7 @@ async function computeEcl({ orgId, actorUserId, payload }) {
         ) > 0
       `,
       [orgId, asOfDate]
-    ); 
+    );
 
     const { rows: caRows } = await client.query(
       `
@@ -519,25 +519,25 @@ async function computeEcl({ orgId, actorUserId, payload }) {
         AND c.billing_policy IN ('AS_RECOGNIZED','NONE')
       `,
       [orgId, asOfDate]
-    ); 
+    );
 
-    const exposureRows = [...invRows, ...caRows]; 
+    const exposureRows = [...invRows, ...caRows];
 
     // Aggregate per customer + bucket
-    const rounding = settings.rounding_decimals ?? 2; 
-    const lines = new Map();  // key customer|bucketOrParam|stage
-    const stageCache = new Map();  // customer_id -> stage (GENERAL)
+    const rounding = settings.rounding_decimals ?? 2;
+    const lines = new Map();// key customer|bucketOrParam|stage
+    const stageCache = new Map();// customer_id -> stage (GENERAL)
 
     for (const ex of exposureRows) {
       // Defensive: skip exposure rows without a counterparty
-      if (!ex.customer_id) continue; 
+      if (!ex.customer_id) continue;
 
-      const daysPastDue = Math.max(0, daysBetween(ex.due_date, asOfDate)); 
+      const daysPastDue = Math.max(0, daysBetween(ex.due_date, asOfDate));
 
       if (approach === 'SIMPLIFIED') {
-        const bucket = pickBucket(buckets, daysPastDue); 
-        if (!bucket) continue; 
-        const key = `${ex.customer_id}:${bucket.id}:S`; 
+        const bucket = pickBucket(buckets, daysPastDue);
+        if (!bucket) continue;
+        const key = `${ex.customer_id}:${bucket.id}:S`;
         if (!lines.has(key)) {
           lines.set(key, {
             customer_id: ex.customer_id,
@@ -552,21 +552,21 @@ async function computeEcl({ orgId, actorUserId, payload }) {
             invoice_count: 0,
             contract_asset_count: 0,
             exposure: new Decimal(0)
-          }); 
+          });
         }
-        const agg = lines.get(key); 
-        if (ex.source_type === 'INVOICE') agg.invoice_count += 1; 
-        if (ex.source_type === 'CONTRACT_ASSET') agg.contract_asset_count += 1; 
-        agg.exposure = agg.exposure.plus(new Decimal(ex.amount || 0)); 
+        const agg = lines.get(key);
+        if (ex.source_type === 'INVOICE') agg.invoice_count += 1;
+        if (ex.source_type === 'CONTRACT_ASSET') agg.contract_asset_count += 1;
+        agg.exposure = agg.exposure.plus(new Decimal(ex.amount || 0));
       } else {
-        let stage = stageCache.get(ex.customer_id); 
+        let stage = stageCache.get(ex.customer_id);
         if (!stage) {
-          stage = await getCounterpartyStage(client, orgId, ex.customer_id, daysPastDue, settings); 
-          stageCache.set(ex.customer_id, stage); 
+          stage = await getCounterpartyStage(client, orgId, ex.customer_id, daysPastDue, settings);
+          stageCache.set(ex.customer_id, stage);
         }
-        const p = pickParameter(params, stage, daysPastDue); 
-        if (!p) continue; 
-        const key = `${ex.customer_id}:${p.id}:${stage}`; 
+        const p = pickParameter(params, stage, daysPastDue);
+        if (!p) continue;
+        const key = `${ex.customer_id}:${p.id}:${stage}`;
         if (!lines.has(key)) {
           lines.set(key, {
             customer_id: ex.customer_id,
@@ -582,45 +582,45 @@ async function computeEcl({ orgId, actorUserId, payload }) {
             invoice_count: 0,
             contract_asset_count: 0,
             exposure: new Decimal(0)
-          }); 
+          });
         }
-        const agg = lines.get(key); 
-        if (ex.source_type === 'INVOICE') agg.invoice_count += 1; 
-        if (ex.source_type === 'CONTRACT_ASSET') agg.contract_asset_count += 1; 
-        agg.exposure = agg.exposure.plus(new Decimal(ex.amount || 0)); 
+        const agg = lines.get(key);
+        if (ex.source_type === 'INVOICE') agg.invoice_count += 1;
+        if (ex.source_type === 'CONTRACT_ASSET') agg.contract_asset_count += 1;
+        agg.exposure = agg.exposure.plus(new Decimal(ex.amount || 0));
       }
     }
 
     // Create run
-    const runId = crypto.randomUUID(); 
+    const runId = crypto.randomUUID();
 
-    let totalExposure = new Decimal(0); 
-    let totalEcl = new Decimal(0); 
+    let totalExposure = new Decimal(0);
+    let totalEcl = new Decimal(0);
 
-    const priorEcl = await sumPriorPostedEcl(client, orgId, period.end_date); 
+    const priorEcl = await sumPriorPostedEcl(client, orgId, period.end_date);
 
     const computedLines = Array.from(lines.values()).map((l) => {
-      const exposure = roundMoney(l.exposure, rounding); 
-      let ecl; 
-      let pdUsed = null; 
-      let lgdUsed = null; 
-      let ead = null; 
+      const exposure = roundMoney(l.exposure, rounding);
+      let ecl;
+      let pdUsed = null;
+      let lgdUsed = null;
+      let ead = null;
 
       if (approach === 'SIMPLIFIED') {
-        ecl = roundMoney(exposure.mul(new Decimal(l.loss_rate)), rounding); 
+        ecl = roundMoney(exposure.mul(new Decimal(l.loss_rate)), rounding);
       } else {
-        const p = params.find((x) => x.id === l.param_id); 
-        const stage = Number(l.stage); 
-        const pd = stage === 1 ? new Decimal(p.pd_12m) : new Decimal(p.pd_lifetime); 
-        const lgd = p.lgd === null || p.lgd === undefined ? new Decimal(settings.default_lgd ?? 0.45) : new Decimal(p.lgd); 
-        const eclRaw = exposure.mul(pd).mul(lgd); 
-        ecl = roundMoney(eclRaw, rounding); 
-        pdUsed = pd.toNumber(); 
-        lgdUsed = lgd.toNumber(); 
-        ead = exposure.toNumber(); 
+        const p = params.find((x) => x.id === l.param_id);
+        const stage = Number(l.stage);
+        const pd = stage === 1 ? new Decimal(p.pd_12m) : new Decimal(p.pd_lifetime);
+        const lgd = p.lgd === null || p.lgd === undefined ? new Decimal(settings.default_lgd ?? 0.45) : new Decimal(p.lgd);
+        const eclRaw = exposure.mul(pd).mul(lgd);
+        ecl = roundMoney(eclRaw, rounding);
+        pdUsed = pd.toNumber();
+        lgdUsed = lgd.toNumber();
+        ead = exposure.toNumber();
       }
-      totalExposure = totalExposure.plus(exposure); 
-      totalEcl = totalEcl.plus(ecl); 
+      totalExposure = totalExposure.plus(exposure);
+      totalEcl = totalEcl.plus(ecl);
       return {
         ...l,
         exposure_amount: exposure,
@@ -628,12 +628,12 @@ async function computeEcl({ orgId, actorUserId, payload }) {
         pd_used: pdUsed,
         lgd_used: lgdUsed,
         ead_amount: ead
-      }; 
-    }); 
+      };
+    });
 
-    totalExposure = roundMoney(totalExposure, rounding); 
-    totalEcl = roundMoney(totalEcl, rounding); 
-    const deltaAllowance = roundMoney(totalEcl.minus(priorEcl), rounding); 
+    totalExposure = roundMoney(totalExposure, rounding);
+    totalEcl = roundMoney(totalEcl, rounding);
+    const deltaAllowance = roundMoney(totalEcl.minus(priorEcl), rounding);
 
     await client.query(
       `
@@ -659,7 +659,7 @@ async function computeEcl({ orgId, actorUserId, payload }) {
         payload.memo || null,
         actorUserId
       ]
-    ); 
+    );
 
     for (const l of computedLines) {
       await client.query(
@@ -689,16 +689,16 @@ async function computeEcl({ orgId, actorUserId, payload }) {
           l.lgd_used,
           l.ead_amount
         ]
-      ); 
+      );
     }
 
-    await client.query("COMMIT"); 
-    return await getRunDetails({ orgId, runId }); 
+    await client.query("COMMIT");
+    return await getRunDetails({ orgId, runId });
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -706,9 +706,9 @@ async function getRunDetails({ orgId, runId }) {
   const { rows } = await pool.query(
     `SELECT * FROM ifrs9_ecl_runs WHERE organization_id=$1 AND id=$2`,
     [orgId, runId]
-  ); 
-  if (!rows.length) throw new AppError(404, "Run not found"); 
-  const run = rows[0]; 
+  );
+  if (!rows.length) throw new AppError(404, "Run not found");
+  const run = rows[0];
 
   const { rows: lines } = await pool.query(
     `
@@ -719,95 +719,95 @@ async function getRunDetails({ orgId, runId }) {
     ORDER BY l.bucket_label ASC
     `,
     [runId]
-  ); 
+  );
 
-  return { run, lines }; 
+  return { run, lines };
 }
 
 async function listRuns({ orgId, periodId }) {
-  const params = [orgId]; 
-  const where = ["organization_id=$1"]; 
-  let i = 2; 
+  const params = [orgId];
+  const where = ["organization_id=$1"];
+  let i = 2;
   if (periodId) {
-    where.push(`period_id=$${i++}`); 
-    params.push(periodId); 
+    where.push(`period_id=$${i++}`);
+    params.push(periodId);
   }
   const { rows } = await pool.query(
     `SELECT * FROM ifrs9_ecl_runs WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
     params
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function finalizeRun({ orgId, actorUserId, runId }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows } = await client.query(
       `SELECT id, status FROM ifrs9_ecl_runs WHERE organization_id=$1 AND id=$2`,
       [orgId, runId]
-    ); 
-    if (!rows.length) throw new AppError(404, "Run not found"); 
-    if (rows[0].status !== "computed") throw new AppError(409, "Only computed runs can be finalized"); 
+    );
+    if (!rows.length) throw new AppError(404, "Run not found");
+    if (rows[0].status !== "computed") throw new AppError(409, "Only computed runs can be finalized");
 
     const { rows: upd } = await client.query(
       `UPDATE ifrs9_ecl_runs SET status='finalized', finalized_by=$3, finalized_at=NOW(), updated_at=NOW()
        WHERE organization_id=$1 AND id=$2 RETURNING *`,
       [orgId, runId, actorUserId]
-    ); 
-    await client.query("COMMIT"); 
-    return upd[0]; 
+    );
+    await client.query("COMMIT");
+    return upd[0];
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function postEcl({ orgId, actorUserId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
-    const period = await getPeriodOrThrow(client, orgId, payload.period_id); 
-    if (period.status !== "open") throw new AppError(409, "Period is not open"); 
+    await client.query("BEGIN");
+    const period = await getPeriodOrThrow(client, orgId, payload.period_id);
+    if (period.status !== "open") throw new AppError(409, "Period is not open");
 
-    const settings = await getSettingsOrThrow(client, orgId); 
+    const settings = await getSettingsOrThrow(client, orgId);
 
     const { rows: runRows } = await client.query(
       `SELECT * FROM ifrs9_ecl_runs WHERE organization_id=$1 AND id=$2`,
       [orgId, payload.run_id]
-    ); 
-    if (!runRows.length) throw new AppError(404, "Run not found"); 
-    const run = runRows[0]; 
+    );
+    if (!runRows.length) throw new AppError(404, "Run not found");
+    const run = runRows[0];
     if (run.status !== "finalized" && run.status !== "posted") {
-      throw new AppError(409, "Run must be finalized before posting"); 
+      throw new AppError(409, "Run must be finalized before posting");
     }
 
     // If already posted, return idempotently
     if (run.status === "posted") {
-      await client.query("COMMIT"); 
-      return { run_id: run.id, journal_id: run.journal_entry_id, already_posted: true }; 
+      await client.query("COMMIT");
+      return { run_id: run.id, journal_id: run.journal_entry_id, already_posted: true };
     }
 
-    const rounding = settings.rounding_decimals ?? 2; 
-    const delta = roundMoney(new Decimal(run.delta_allowance || 0), rounding); 
+    const rounding = settings.rounding_decimals ?? 2;
+    const delta = roundMoney(new Decimal(run.delta_allowance || 0), rounding);
     if (delta.isZero()) {
       // Still mark posted with no journal
       const { rows: upd } = await client.query(
         `UPDATE ifrs9_ecl_runs SET status='posted', posted_at=NOW(), posted_by=$3, updated_at=NOW()
          WHERE organization_id=$1 AND id=$2 RETURNING *`,
         [orgId, run.id, actorUserId]
-      ); 
-      await client.query("COMMIT"); 
-      return { run_id: upd[0].id, journal_id: null, already_posted: false, no_entry: true }; 
+      );
+      await client.query("COMMIT");
+      return { run_id: upd[0].id, journal_id: null, already_posted: false, no_entry: true };
     }
 
-    const debitExpense = delta.greaterThan(0); 
-    const amt = delta.abs(); 
+    const debitExpense = delta.greaterThan(0);
+    const amt = delta.abs();
 
-    const entryDate = payload.entry_date || period.end_date; 
-    const idempotencyKey = `IFRS9:ECL:RUN:${run.id}:PERIOD:${payload.period_id}:POST`; 
+    const entryDate = payload.entry_date || period.end_date;
+    const idempotencyKey = `IFRS9:ECL:RUN:${run.id}:PERIOD:${payload.period_id}:POST`;
 
     const journalPayload = {
       periodId: payload.period_id,
@@ -829,9 +829,9 @@ async function postEcl({ orgId, actorUserId, payload }) {
           description: "IFRS9 loss allowance (delta)"
         }
       ]
-    }; 
+    };
 
-    const posted = await journalPosting.postJournal({ orgId, actorUserId, payload: journalPayload }); 
+    const posted = await journalPosting.postJournal({ orgId, actorUserId, payload: journalPayload });
 
     await client.query(
       `
@@ -842,7 +842,7 @@ async function postEcl({ orgId, actorUserId, payload }) {
       ON CONFLICT (organization_id, idempotency_key) DO NOTHING
       `,
       [orgId, run.id, payload.period_id, posted.journalId, idempotencyKey, actorUserId]
-    ); 
+    );
 
     const { rows: upd } = await client.query(
       `UPDATE ifrs9_ecl_runs
@@ -850,35 +850,35 @@ async function postEcl({ orgId, actorUserId, payload }) {
        WHERE organization_id=$1 AND id=$2
        RETURNING *`,
       [orgId, run.id, posted.journalId, actorUserId]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { run_id: upd[0].id, journal_id: upd[0].journal_entry_id, already_posted: false }; 
+    await client.query("COMMIT");
+    return { run_id: upd[0].id, journal_id: upd[0].journal_entry_id, already_posted: false };
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function reverseEclPosting({ orgId, actorUserId, payload }) {
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
+    await client.query("BEGIN");
     const { rows: runRows } = await client.query(
       `SELECT * FROM ifrs9_ecl_runs WHERE organization_id=$1 AND id=$2`,
       [orgId, payload.run_id]
-    ); 
-    if (!runRows.length) throw new AppError(404, "Run not found"); 
-    const run = runRows[0]; 
-    if (run.status !== "posted") throw new AppError(409, "Run is not posted"); 
-    if (!run.journal_entry_id) throw new AppError(409, "Run has no journal to reverse"); 
+    );
+    if (!runRows.length) throw new AppError(404, "Run not found");
+    const run = runRows[0];
+    if (run.status !== "posted") throw new AppError(409, "Run is not posted");
+    if (!run.journal_entry_id) throw new AppError(409, "Run has no journal to reverse");
 
-    const targetPeriod = await getPeriodOrThrow(client, orgId, payload.target_period_id); 
-    if (targetPeriod.status !== "open") throw new AppError(409, "Target period is not open"); 
+    const targetPeriod = await getPeriodOrThrow(client, orgId, payload.target_period_id);
+    if (targetPeriod.status !== "open") throw new AppError(409, "Target period is not open");
 
-    const idempotencyKey = `IFRS9:ECL:RUN:${run.id}:REV:${payload.target_period_id}`; 
+    const idempotencyKey = `IFRS9:ECL:RUN:${run.id}:REV:${payload.target_period_id}`;
     const out = await journalPosting.reversePostedJournal({
       orgId,
       journalId: run.journal_entry_id,
@@ -887,29 +887,29 @@ async function reverseEclPosting({ orgId, actorUserId, payload }) {
       entryDate: payload.entry_date,
       reason: payload.reason,
       idempotencyKey
-    }); 
+    });
 
     await client.query(
       `UPDATE ifrs9_ecl_runs
        SET status='reversed', reversal_journal_entry_id=$3, reversed_by=$4, reversed_at=NOW(), updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, run.id, out.reversalJournalId || null, actorUserId]
-    ); 
+    );
 
     await client.query(
       `UPDATE ifrs9_posting_ledger
        SET reversal_journal_entry_id=$4, reversed_by=$5, reversed_at=NOW()
        WHERE organization_id=$1 AND run_id=$2 AND period_id=$3`,
       [orgId, run.id, run.period_id, out.reversalJournalId || null, actorUserId]
-    ); 
+    );
 
-    await client.query("COMMIT"); 
-    return { run_id: run.id, reversal_journal_id: out.reversalJournalId }; 
+    await client.query("COMMIT");
+    return { run_id: run.id, reversal_journal_id: out.reversalJournalId };
   } catch (e) {
-    await client.query("ROLLBACK"); 
-    throw e; 
+    await client.query("ROLLBACK");
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -918,10 +918,10 @@ async function reverseEclPosting({ orgId, actorUserId, payload }) {
 // --------------------------------------
 
 async function getAllowanceMovementReport({ orgId, periodId }) {
-  if (!periodId) throw new AppError(400, "period_id is required"); 
-  const client = await pool.connect(); 
+  if (!periodId) throw new AppError(400, "period_id is required");
+  const client = await pool.connect();
   try {
-    const period = await getPeriodOrThrow(client, orgId, periodId); 
+    const period = await getPeriodOrThrow(client, orgId, periodId);
 
     // Opening allowance: last posted run before this period starts (by posted_at)
     const { rows: openingRows } = await client.query(
@@ -935,8 +935,8 @@ async function getAllowanceMovementReport({ orgId, periodId }) {
       LIMIT 1
       `,
       [orgId, period.start_date]
-    ); 
-    const openingAllowance = openingRows.length ? Number(openingRows[0].total_ecl) : 0; 
+    );
+    const openingAllowance = openingRows.length ? Number(openingRows[0].total_ecl) : 0;
 
     // Posted runs in the target period
     const { rows: runRows } = await client.query(
@@ -952,23 +952,23 @@ async function getAllowanceMovementReport({ orgId, periodId }) {
       ORDER BY posted_at ASC NULLS LAST, created_at ASC
       `,
       [orgId, periodId]
-    ); 
+    );
 
     // Movement should only consider active posted runs (exclude reversed)
-    const effectiveRuns = runRows.filter((r) => r.status === "posted" && !r.reversed_at); 
+    const effectiveRuns = runRows.filter((r) => r.status === "posted" && !r.reversed_at);
 
     const additions = effectiveRuns
       .map((r) => Number(r.delta_allowance))
       .filter((d) => d > 0)
-      .reduce((a, b) => a + b, 0); 
+      .reduce((a, b) => a + b, 0);
 
     const releases = effectiveRuns
       .map((r) => Number(r.delta_allowance))
       .filter((d) => d < 0)
-      .reduce((a, b) => a + Math.abs(b), 0); 
+      .reduce((a, b) => a + Math.abs(b), 0);
 
-    const netMovement = additions - releases; 
-    const closingAllowance = openingAllowance + netMovement; 
+    const netMovement = additions - releases;
+    const closingAllowance = openingAllowance + netMovement;
 
     return {
       period: {
@@ -993,22 +993,22 @@ async function getAllowanceMovementReport({ orgId, periodId }) {
         posted_at: r.posted_at,
         journal_entry_id: r.journal_entry_id
       }))
-    }; 
+    };
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
 async function getDisclosuresReport({ orgId, runId }) {
-  if (!runId) throw new AppError(400, "run_id is required"); 
-  const client = await pool.connect(); 
+  if (!runId) throw new AppError(400, "run_id is required");
+  const client = await pool.connect();
   try {
     const { rows: runRows } = await client.query(
       `SELECT * FROM ifrs9_ecl_runs WHERE organization_id=$1 AND id=$2`,
       [orgId, runId]
-    ); 
-    if (!runRows.length) throw new AppError(404, "Run not found"); 
-    const run = runRows[0]; 
+    );
+    if (!runRows.length) throw new AppError(404, "Run not found");
+    const run = runRows[0];
 
     const { rows: byStage } = await client.query(
       `
@@ -1024,7 +1024,7 @@ async function getDisclosuresReport({ orgId, runId }) {
       ORDER BY stage
       `,
       [runId]
-    ); 
+    );
 
     const { rows: byBucket } = await client.query(
       `
@@ -1040,7 +1040,7 @@ async function getDisclosuresReport({ orgId, runId }) {
       ORDER BY MIN(days_past_due_from) ASC
       `,
       [runId]
-    ); 
+    );
 
     const { rows: topCounterparties } = await client.query(
       `
@@ -1058,7 +1058,7 @@ async function getDisclosuresReport({ orgId, runId }) {
       LIMIT 10
       `,
       [runId]
-    ); 
+    );
 
     return {
       run: {
@@ -1101,9 +1101,9 @@ async function getDisclosuresReport({ orgId, runId }) {
           contract_asset_count: Number(r.contract_asset_count)
         }))
       }
-    }; 
+    };
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
@@ -1124,4 +1124,4 @@ module.exports = {
   reverseEclPosting,
   getAllowanceMovementReport,
   getDisclosuresReport
-}; 
+};

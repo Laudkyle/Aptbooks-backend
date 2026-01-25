@@ -1,4 +1,4 @@
-const { z } = require("zod"); 
+const { z } = require("zod");
 
 const upsertVendorTaxProfileSchema = z.object({
   tin: z.string().optional(),
@@ -12,11 +12,11 @@ const upsertVendorTaxProfileSchema = z.object({
   classification: z.string().optional(),
   isReportable: z.boolean().optional(),
   metadata: z.record(z.any()).optional()
-}); 
+});
 
 const createTaxFormRunSchema = z.object({
   taxYear: z.number().int().min(1900).max(2100),
   formType: z.string().optional()
-}); 
+});
 
-module.exports = { upsertVendorTaxProfileSchema, createTaxFormRunSchema }; 
+module.exports = { upsertVendorTaxProfileSchema, createTaxFormRunSchema };

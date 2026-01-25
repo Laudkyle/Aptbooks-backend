@@ -1,5 +1,5 @@
 function getReleaseInfo() {
-  const env = process.env.NODE_ENV || "development"; 
+  const env = process.env.NODE_ENV || "development";
   return {
     environment: env,
     appVersion: process.env.APP_VERSION || process.env.npm_package_version || null,
@@ -7,7 +7,7 @@ function getReleaseInfo() {
     buildTime: process.env.BUILD_TIME || null,
     nodeVersion: process.version,
     uptimeSeconds: Math.floor(process.uptime()),
-  }; 
+  };
 }
 
-module.exports = { getReleaseInfo }; 
+module.exports = { getReleaseInfo };

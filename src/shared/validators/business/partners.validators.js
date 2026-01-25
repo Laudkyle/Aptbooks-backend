@@ -1,6 +1,6 @@
-const { z } = require("zod"); 
+const { z } = require("zod");
 
-const partnerType = z.enum(["customer", "vendor"]); 
+const partnerType = z.enum(["customer", "vendor"]);
 
 const createPartnerSchema = z.object({
   type: partnerType,
@@ -13,9 +13,9 @@ const createPartnerSchema = z.object({
   defaultPayableAccountId: z.string().uuid().optional(),
   paymentTermsId: z.string().uuid().optional(),
   notes: z.string().max(5000).optional()
-}); 
+});
 
-const updatePartnerSchema = createPartnerSchema.partial(); 
+const updatePartnerSchema = createPartnerSchema.partial();
 
 const createContactSchema = z.object({
   name: z.string().min(2).max(200),
@@ -23,9 +23,9 @@ const createContactSchema = z.object({
   phone: z.string().min(7).max(30).optional(),
   role: z.string().max(120).optional(),
   isPrimary: z.boolean().optional()
-}); 
+});
 
-const updateContactSchema = createContactSchema.partial(); 
+const updateContactSchema = createContactSchema.partial();
 
 const createAddressSchema = z.object({
   label: z.string().max(60).optional(),
@@ -36,14 +36,14 @@ const createAddressSchema = z.object({
   postalCode: z.string().max(40).optional(),
   country: z.string().max(120).optional(),
   isPrimary: z.boolean().optional()
-}); 
+});
 
-const updateAddressSchema = createAddressSchema.partial(); 
+const updateAddressSchema = createAddressSchema.partial();
 
 const listPartnersQuerySchema = z.object({
   type: partnerType.optional(),
   status: z.enum(["active", "inactive"]).optional()
-}); 
+});
 
 module.exports = {
   createPartnerSchema,
@@ -53,4 +53,4 @@ module.exports = {
   createAddressSchema,
   updateAddressSchema,
   listPartnersQuerySchema
-}; 
+};

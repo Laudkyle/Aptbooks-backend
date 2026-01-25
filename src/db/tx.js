@@ -1,4 +1,4 @@
-const { pool } = require("./pool"); 
+const { pool } = require("./pool");
 
 /**
  * Execute a function inside a DB transaction.
@@ -7,20 +7,20 @@ const { pool } = require("./pool");
  * without beginning/committing a nested transaction.
  */
 async function withTransaction(fn, existingClient = null) {
-  if (existingClient) return fn(existingClient); 
+  if (existingClient) return fn(existingClient);
 
-  const client = await pool.connect(); 
+  const client = await pool.connect();
   try {
-    await client.query("BEGIN"); 
-    const out = await fn(client); 
-    await client.query("COMMIT"); 
-    return out; 
+    await client.query("BEGIN");
+    const out = await fn(client);
+    await client.query("COMMIT");
+    return out;
   } catch (e) {
-    try { await client.query("ROLLBACK");  } catch (_) {}
-    throw e; 
+    try { await client.query("ROLLBACK");} catch (_) {}
+    throw e;
   } finally {
-    client.release(); 
+    client.release();
   }
 }
 
-module.exports = { withTransaction }; 
+module.exports = { withTransaction };

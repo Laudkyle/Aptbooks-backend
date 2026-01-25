@@ -1,20 +1,20 @@
-const { pool } = require("../../../db/pool"); 
+const { pool } = require("../../../db/pool");
 
 function normalizeEmployeePayload(payload = {}) {
-  const out = { ...payload }; 
+  const out = { ...payload };
   // Accept common alternative keys without breaking API clients.
-  if (out.departmentId && out.department_id === undefined) out.department_id = out.departmentId; 
-  if (out.positionId && out.position_id === undefined) out.position_id = out.positionId; 
-  if (out.gradeId && out.grade_id === undefined) out.grade_id = out.gradeId; 
-  if (out.costCenterId && out.cost_center_id === undefined) out.cost_center_id = out.costCenterId; 
-  if (out.expenseAccountId && out.expense_account_id === undefined) out.expense_account_id = out.expenseAccountId; 
-  if (out.payableAccountId && out.payable_account_id === undefined) out.payable_account_id = out.payableAccountId; 
-  if (out.compensationBandId && out.compensation_band_id === undefined) out.compensation_band_id = out.compensationBandId; 
-  return out; 
+  if (out.departmentId && out.department_id === undefined) out.department_id = out.departmentId;
+  if (out.positionId && out.position_id === undefined) out.position_id = out.positionId;
+  if (out.gradeId && out.grade_id === undefined) out.grade_id = out.gradeId;
+  if (out.costCenterId && out.cost_center_id === undefined) out.cost_center_id = out.costCenterId;
+  if (out.expenseAccountId && out.expense_account_id === undefined) out.expense_account_id = out.expenseAccountId;
+  if (out.payableAccountId && out.payable_account_id === undefined) out.payable_account_id = out.payableAccountId;
+  if (out.compensationBandId && out.compensation_band_id === undefined) out.compensation_band_id = out.compensationBandId;
+  return out;
 }
 
 async function createEmployee(orgId, payload) {
-  const p = normalizeEmployeePayload(payload); 
+  const p = normalizeEmployeePayload(payload);
   const { rows } = await pool.query(
     `
       INSERT INTO hr_employees (
@@ -62,15 +62,15 @@ async function createEmployee(orgId, payload) {
       p.tax_id || null,
       p.national_id || null,
     ]
-  ); 
-  return rows[0]; 
+  );
+  return rows[0];
 }
 
 async function listEmployees(orgId, query = {}) {
-  const status = query.status || null; 
-  const departmentId = query.department_id || query.departmentId || null; 
-  const costCenterId = query.cost_center_id || query.costCenterId || null; 
-  const search = query.search || null; 
+  const status = query.status || null;
+  const departmentId = query.department_id || query.departmentId || null;
+  const costCenterId = query.cost_center_id || query.costCenterId || null;
+  const search = query.search || null;
   const { rows } = await pool.query(
     `
       SELECT e.*,
@@ -103,8 +103,8 @@ async function listEmployees(orgId, query = {}) {
       ORDER BY e.employee_no
     `,
     [orgId, status, departmentId, costCenterId, search]
-  ); 
-  return rows; 
+  );
+  return rows;
 }
 
 async function getEmployee(orgId, id) {
@@ -129,23 +129,23 @@ async function getEmployee(orgId, id) {
       WHERE e.organization_id=$1 AND e.id=$2
     `,
     [orgId, id]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function getEmployeeByNo(orgId, employeeNo) {
   const { rows } = await pool.query(
     `SELECT * FROM hr_employees WHERE organization_id=$1 AND employee_no=$2`,
     [orgId, employeeNo]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function updateEmployee(orgId, id, payload) {
-  const p = normalizeEmployeePayload(payload); 
-  const fields = []; 
-  const vals = [orgId, id]; 
-  let i = 3; 
+  const p = normalizeEmployeePayload(payload);
+  const fields = [];
+  const vals = [orgId, id];
+  let i = 3;
 
   const map = {
     employee_no: "employee_no",
@@ -171,17 +171,17 @@ async function updateEmployee(orgId, id, payload) {
     bank_branch: "bank_branch",
     tax_id: "tax_id",
     national_id: "national_id",
-  }; 
+  };
 
   for (const [k, col] of Object.entries(map)) {
     if (p[k] !== undefined) {
-      fields.push(`${col}=$${i++}`); 
-      if (k === "hire_date") vals.push(p.hire_date ? new Date(p.hire_date) : null); 
-      else vals.push(p[k]); 
+      fields.push(`${col}=$${i++}`);
+      if (k === "hire_date") vals.push(p.hire_date ? new Date(p.hire_date) : null);
+      else vals.push(p[k]);
     }
   }
 
-  if (!fields.length) return getEmployee(orgId, id); 
+  if (!fields.length) return getEmployee(orgId, id);
 
   const { rows } = await pool.query(
     `
@@ -191,8 +191,8 @@ async function updateEmployee(orgId, id, payload) {
       RETURNING *
     `,
     vals
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 async function setEmployeeStatus(orgId, id, status) {
@@ -204,8 +204,8 @@ async function setEmployeeStatus(orgId, id, status) {
       RETURNING *
     `,
     [orgId, id, status]
-  ); 
-  return rows[0] || null; 
+  );
+  return rows[0] || null;
 }
 
 module.exports = {
@@ -215,4 +215,4 @@ module.exports = {
   getEmployeeByNo,
   updateEmployee,
   setEmployeeStatus,
-}; 
+};
