@@ -10,6 +10,7 @@ async function listRules(orgId) {
   return rows;
 }
 
+
 async function createRule(orgId, userId, payload, client = null) {
   const { rows } = await db(client).query(
     `INSERT INTO bank_matching_rules(

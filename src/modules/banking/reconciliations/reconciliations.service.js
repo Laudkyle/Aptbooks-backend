@@ -8,6 +8,7 @@ async function reconcile(orgId, userId, payload) {
   const req=["bankAccountId","periodId"];
   for (const k of req) if (!payload?.[k]) throw new AppError(400, `${k} is required`);
 
+  
   return withTransaction(async (client) => {
     // Prevent concurrent reconciliations for the same org/account/period
     await client.query(

@@ -14,6 +14,7 @@ router.get("/rules", requirePermission("banking.matching.rules.manage"), async (
   } catch (e) { next(e); }
 });
 
+
 router.post("/rules", idempotency({ required: true }), requirePermission("banking.matching.rules.manage"), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: userId } = req.user;

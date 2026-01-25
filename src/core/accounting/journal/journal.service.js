@@ -1010,15 +1010,32 @@ async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
 
   const { rows } = await pool.query(
     `
-    SELECT id, journal_entry_type_id, period_id, entry_date, memo, status,
-           created_by, submitted_at, submitted_by, approved_at, approved_by,
-           rejected_at, rejected_by, rejection_reason,
-           canceled_at, canceled_by,
-           created_at, updated_at
-    FROM journal_entries
-    WHERE ${where.join(" AND ")}
-    ORDER BY entry_date DESC, created_at DESC
-    LIMIT $${i++} OFFSET $${i++}
+   SELECT 
+    je.id, 
+    je.journal_entry_type_id, 
+    jet.name as journal_entry_type,  
+    je.period_id, 
+    je.entry_date, 
+    je.memo, 
+    je.entry_no, 
+    je.status,
+    je.created_by, 
+    je.submitted_at, 
+    je.submitted_by, 
+    je.approved_at, 
+    je.approved_by,
+    je.rejected_at, 
+    je.rejected_by, 
+    je.rejection_reason,
+    je.canceled_at, 
+    je.canceled_by,
+    je.created_at, 
+    je.updated_at
+FROM journal_entries je
+LEFT JOIN journal_entry_types jet ON je.journal_entry_type_id = jet.id
+WHERE ${where.join(" AND ")}
+ORDER BY je.entry_no DESC, je.created_at DESC
+LIMIT $${i++} OFFSET $${i++}
     `,
     params
   );

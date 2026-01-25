@@ -13,6 +13,7 @@ async function findActive(orgId, bankAccountId, periodId, client = null) {
   return rows[0] || null;
 }
 
+
 async function create(orgId, userId, { bankAccountId, periodId }, client = null) {
   const { rows } = await db(client).query(
     `INSERT INTO bank_reconciliations(organization_id, bank_account_id, period_id, reconciled_by)

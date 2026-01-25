@@ -13,6 +13,7 @@ async function createStatement(orgId, createdBy, payload, client = null) {
   return rows[0];
 }
 
+
 async function getStatement(orgId, statementId, client = null) {
   const { rows } = await db(client).query(
     `SELECT * FROM bank_statements WHERE organization_id=$1 AND id=$2`,

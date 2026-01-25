@@ -11,7 +11,6 @@ router.get("/", requirePermission("banking.statements.read"), async (req, res, n
   try { res.json(await svc.listStatements(req.user.organization_id)); }
   catch (e) { next(e); }
 });
-
 // List statement lines
 router.get("/:statementId/lines", requirePermission("banking.statements.read"), async (req, res, next) => {
   try {

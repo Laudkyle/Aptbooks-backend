@@ -11,6 +11,7 @@ function normalizeText(v) {
   return String(v).trim().replace(/\s+/g, " ");
 }
 
+
 function computeLineHash({ txnDate, amount, description, reference, externalId }) {
   const material = [
     txnDate,

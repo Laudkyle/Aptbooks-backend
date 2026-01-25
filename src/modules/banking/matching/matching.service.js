@@ -7,6 +7,7 @@ function normalize(s) {
     .replace(/[^a-z0-9 ]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+    
 }
 
 function jaccard(a, b) {
