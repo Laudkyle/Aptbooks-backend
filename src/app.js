@@ -140,6 +140,7 @@ app.use("/core/accounting/statements", accountingStatementRoutes);
 app.use("/core/accounting/reconciliation", reconciliationRoutes);
 app.use("/core/accounting/imports", accountingImportRoutes);
 app.use("/core/accounting/exports", accountingExportRoutes);
+app.use("/core/reference", require("./core/foundation/reference/reference.routes"));
 
 
 app.use("/modules/webhooks", webhookRoutes);
