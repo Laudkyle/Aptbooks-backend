@@ -134,9 +134,14 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
 
 async function getInvoiceDetails({ orgId, invoiceId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2`,
-    [orgId, invoiceId]
-  );
+  `SELECT 
+    i.*,
+    bp.name as customer_name
+   FROM invoices i
+   LEFT JOIN business_partners bp ON i.customer_id = bp.id
+   WHERE i.organization_id=$1 AND i.id=$2`,
+  [orgId, invoiceId]
+);
   if (!rows.length) throw new AppError(404, "Invoice not found");
   const invoice = rows[0];
 
@@ -150,20 +155,30 @@ async function getInvoiceDetails({ orgId, invoiceId }) {
 
 async function listInvoices({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["i.organization_id=$1"]; // Added i. prefix
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.customerId) { where.push(`customer_id=$${i++}`);params.push(query.customerId);}
+  if (query?.status) { 
+    where.push(`i.status=$${i++}`);
+    params.push(query.status);
+  }
+  if (query?.customerId) { 
+    where.push(`i.customer_id=$${i++}`);
+    params.push(query.customerId);
+  }
 
   const { rows } = await pool.query(
-    `SELECT * FROM invoices WHERE ${where.join(" AND ")} ORDER BY invoice_date DESC, created_at DESC`,
+    `SELECT 
+      i.*,
+      bp.name as customer_name
+     FROM invoices i
+     LEFT JOIN business_partners bp ON i.customer_id = bp.id
+     WHERE ${where.join(" AND ")} 
+     ORDER BY i.invoice_date DESC, i.created_at DESC`,
     params
   );
   return rows;
 }
-
-
 async function getCustomerOutstandingAR({ orgId, customerId, client }) {
   const db = client || pool;
   const { rows } = await db.query(

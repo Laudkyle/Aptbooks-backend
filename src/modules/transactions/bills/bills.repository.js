@@ -46,7 +46,12 @@ async function insertBillLine(client, { billId, lineNo, description, quantity, u
 
 async function getBillById(orgId, billId) {
   const { rows } = await pool.query(
-    `SELECT * FROM bills WHERE organization_id=$1 AND id=$2`,
+    `SELECT 
+      b.*,
+      bp.name as vendor_name
+     FROM bills b
+     LEFT JOIN business_partners bp ON b.vendor_id = bp.id
+     WHERE b.organization_id=$1 AND b.id=$2`,
     [orgId, billId]
   );
   return rows[0] || null;
@@ -62,14 +67,26 @@ async function getBillLines(billId) {
 
 async function listBills({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["b.organization_id=$1"]; // Added b. prefix
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.vendorId) { where.push(`vendor_id=$${i++}`);params.push(query.vendorId);}
+  if (query?.status) { 
+    where.push(`b.status=$${i++}`);
+    params.push(query.status);
+  }
+  if (query?.vendorId) { 
+    where.push(`b.vendor_id=$${i++}`);
+    params.push(query.vendorId);
+  }
 
   const { rows } = await pool.query(
-    `SELECT * FROM bills WHERE ${where.join(" AND ")} ORDER BY bill_date DESC, created_at DESC`,
+    `SELECT 
+      b.*,
+      bp.name as vendor_name
+     FROM bills b
+     LEFT JOIN business_partners bp ON b.vendor_id = bp.id
+     WHERE ${where.join(" AND ")} 
+     ORDER BY b.bill_date DESC, b.created_at DESC`,
     params
   );
   return rows;

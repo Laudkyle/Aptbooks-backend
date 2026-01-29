@@ -9,7 +9,7 @@ async function getUserRole(client, { orgId, userId }) {
     `SELECT r.name as role_name, r.id as role_id
      FROM user_roles ur
      JOIN roles r ON ur.role_id = r.id
-     WHERE ur.organization_id = $1 AND ur.user_id = $2`,
+     WHERE r.organization_id = $1 AND ur.user_id = $2`,
     [orgId, userId]
   );
   
