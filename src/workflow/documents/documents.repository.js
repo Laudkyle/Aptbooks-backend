@@ -156,7 +156,7 @@ async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client
 }
 
 async function createApprovals({ documentId, ladder, client = null }) {
-  for (let i = 0;i < ladder.length;i += 1) {
+  for (let i = 0; i < ladder.length; i += 1) {
     const level = ladder[i];
     const status = i === 0 ? "PENDING" : "QUEUED";
     await q(client).query(

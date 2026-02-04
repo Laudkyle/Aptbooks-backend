@@ -20,7 +20,7 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
       [orgId]
     );
     res.json({ data: rows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Create API key
@@ -55,7 +55,7 @@ router.post("/", requirePermission("settings.manage"), async (req, res, next) =>
 
     // Return secret only once
     res.status(201).json({ ...rows[0], apiKey });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Revoke API key
@@ -87,7 +87,7 @@ router.post("/:id/revoke", requirePermission("settings.manage"), async (req, res
     });
 
     res.json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

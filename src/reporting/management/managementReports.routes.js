@@ -4,7 +4,7 @@ const svc = require("./managementReports.service");
 
 const router = express.Router();
 
-function orgId(req) { return req.user.organization_id;}
+function orgId(req) { return req.user.organization_id; }
 
 router.get(
   "/departmental-pnl",
@@ -21,7 +21,7 @@ router.get(
         projectId: projectId || null,
       });
       res.json({ data });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -34,7 +34,7 @@ router.get(
       if (!periodId) return res.status(400).json({ error: "periodId is required" });
       const data = await svc.costCenterSummary({ organizationId: orgId(req), periodId });
       res.json({ data });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 

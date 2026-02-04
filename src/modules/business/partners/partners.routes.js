@@ -50,14 +50,14 @@ router.get("/", requirePermission("partners.read"), async (req, res, next) => {
     const orgId = req.user.organization_id;
     const query = validate(listPartnersQuerySchema, req.query);
     res.json(await svc.listPartners({ orgId, query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("partners.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getPartnerDetails({ orgId, partnerId: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.patch("/:id", requirePermission("partners.manage"), async (req, res, next) => {
@@ -91,7 +91,7 @@ router.get("/:id/credit-policy", requirePermission("partners.read"), async (req,
     const orgId = req.user.organization_id;
     const policy = await svc.getCreditPolicy({ orgId, partnerId: req.params.id });
     res.json(policy);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.put("/:id/credit-policy", requirePermission("partners.manage"), async (req, res, next) => {
@@ -113,7 +113,7 @@ router.put("/:id/credit-policy", requirePermission("partners.manage"), async (re
     });
 
     res.json(out.after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // CONTACTS
@@ -135,7 +135,7 @@ router.post("/:id/contacts", requirePermission("partners.manage"), async (req, r
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.patch("/:id/contacts/:contactId", requirePermission("partners.manage"), async (req, res, next) => {
@@ -162,7 +162,7 @@ router.patch("/:id/contacts/:contactId", requirePermission("partners.manage"), a
     });
 
     res.json(out.after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // ADDRESSES
@@ -184,7 +184,7 @@ router.post("/:id/addresses", requirePermission("partners.manage"), async (req, 
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.patch("/:id/addresses/:addressId", requirePermission("partners.manage"), async (req, res, next) => {
@@ -211,7 +211,7 @@ router.patch("/:id/addresses/:addressId", requirePermission("partners.manage"), 
     });
 
     res.json(out.after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

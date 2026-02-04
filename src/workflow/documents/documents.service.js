@@ -7,7 +7,7 @@ const entityResolver = require("../../interfaces/entityResolver.interface");
 const { withTransaction } = require("../../db/tx");
 
 function safeFilename(name) {
-  // prevent path traversal;keep only basename
+  // prevent path traversal; keep only basename
   return path.basename(name || "file");
 }
 
@@ -55,7 +55,7 @@ async function addVersionFromBuffer({ orgId, documentId, userId, originalFilenam
   const versionNo = await repo.getNextVersionNo({ documentId });
 
   // Precreate a version id (so the path is stable)
-  // We rely on DB-generated UUID by inserting after storage;but we need versionId for path.
+  // We rely on DB-generated UUID by inserting after storage; but we need versionId for path.
   // Use a pseudo-id and store it as directory name via checksum pathing:
   // For simplicity, we store by versionNo directory and keep filename.
   const filename = safeFilename(originalFilename);

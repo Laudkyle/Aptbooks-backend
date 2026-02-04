@@ -4,7 +4,7 @@ const svc = require("./imports.service");
 
 const router = express.Router();
 
-// Body is expected as raw text/csv;alternatively send JSON { csvText: "..." }
+// Body is expected as raw text/csv; alternatively send JSON { csvText: "..." }
 router.post("/coa", requirePermission("accounting.imports.run"), express.text({ type: ["text/*"], limit: "10mb" }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;

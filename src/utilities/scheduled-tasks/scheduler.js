@@ -14,7 +14,7 @@ function getSchedulerState() {
   return { ..._state };
 }
 
-function utcNow() { return new Date();}
+function utcNow() { return new Date(); }
 
 
 function computeNextRunAt(task) {
@@ -70,7 +70,7 @@ function computeNextRunAt(task) {
 // Deterministic 32-bit advisory lock key from task_code
 function lockKeyFromCode(code) {
   let h = 2166136261;
-  for (let i = 0;i < code.length;i++) {
+  for (let i = 0; i < code.length; i++) {
     h ^= code.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }

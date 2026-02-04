@@ -36,21 +36,21 @@ router.post("/", idempotency({ required: true }), requirePermission("transaction
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("transactions.vendor_payment.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listVendorPayments({ orgId, query: req.query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("transactions.vendor_payment.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getVendorPaymentDetails({ orgId, id: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/auto-allocate", idempotency({ required: true }), requirePermission("transactions.vendor_payment.manage"), async (req, res, next) => {
@@ -73,7 +73,7 @@ router.post("/:id/auto-allocate", idempotency({ required: true }), requirePermis
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/reallocate", idempotency({ required: true }), requirePermission("transactions.allocations.reallocate"), async (req, res, next) => {
@@ -96,7 +96,7 @@ router.post("/:id/reallocate", idempotency({ required: true }), requirePermissio
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/post", idempotency({ required: true }), requirePermission("transactions.vendor_payment.post"), async (req, res, next) => {
@@ -118,7 +118,7 @@ router.post("/:id/post", idempotency({ required: true }), requirePermission("tra
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.vendor_payment.void"), async (req, res, next) => {
@@ -141,7 +141,7 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("tra
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

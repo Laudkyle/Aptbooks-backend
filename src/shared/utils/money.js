@@ -47,7 +47,7 @@ function parseDecimalToBigInt(value, scale = 2) {
   const intPart = m[2];
   const fracRaw = m[3] || "";
   if (fracRaw.length > scale) {
-    throw new Error(`Too many decimal places;max ${scale}`);
+    throw new Error(`Too many decimal places; max ${scale}`);
   }
 
   const fracPart = fracRaw.padEnd(scale, "0");
@@ -82,7 +82,7 @@ function multiplyQtyByUnitPriceToMoney(qty, unitPrice, qtyScale = 6, moneyScale 
   const qtyBI = parseDecimalToBigInt(qty, qtyScale);
   const priceBI = parseDecimalToBigInt(unitPrice, moneyScale);
 
-  // product scale = qtyScale + moneyScale;we want moneyScale.
+  // product scale = qtyScale + moneyScale; we want moneyScale.
   // So divide by 10^qtyScale with half-up rounding.
   const denom = 10n ** BigInt(qtyScale);
   const half = denom / 2n;

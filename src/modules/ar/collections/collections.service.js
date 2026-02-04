@@ -12,7 +12,6 @@ async function queue({ orgId, asOfDate, minDaysPastDue, includeDisputed }) {
   }
 }
 
-
 async function partnerOpenInvoices({ orgId, partnerId, asOfDate }) {
   const client = await pool.connect();
   try {
@@ -25,7 +24,7 @@ async function partnerOpenInvoices({ orgId, partnerId, asOfDate }) {
 // Templates
 async function listTemplates({ orgId }) {
   const client = await pool.connect();
-  try { return await repo.listTemplates({ orgId, client });} finally { client.release();}
+  try { return await repo.listTemplates({ orgId, client }); } finally { client.release(); }
 }
 async function createTemplate({ orgId, payload }) {
   return withTransaction(async (client) => repo.createTemplate({ orgId, payload, client }));
@@ -40,7 +39,7 @@ async function deleteTemplate({ orgId, id }) {
 // Rules
 async function listRules({ orgId }) {
   const client = await pool.connect();
-  try { return await repo.listRules({ orgId, client });} finally { client.release();}
+  try { return await repo.listRules({ orgId, client }); } finally { client.release(); }
 }
 async function createRule({ orgId, payload }) {
   return withTransaction(async (client) => repo.createRule({ orgId, payload, client }));
@@ -55,7 +54,7 @@ async function deleteRule({ orgId, id }) {
 // Cases
 async function listCases({ orgId, status }) {
   const client = await pool.connect();
-  try { return await repo.listCases({ orgId, status, client });} finally { client.release();}
+  try { return await repo.listCases({ orgId, status, client }); } finally { client.release(); }
 }
 async function createCase({ orgId, actorUserId, payload }) {
   return withTransaction(async (client) => {
@@ -84,12 +83,12 @@ async function listDunningRuns({ orgId }) {
   try {
     const { rows } = await client.query(`SELECT * FROM dunning_runs WHERE organization_id=$1 ORDER BY id DESC`, [orgId]);
     return rows;
-  } finally { client.release();}
+  } finally { client.release(); }
 }
 
 async function getDunningRun({ orgId, runId }) {
   const client = await pool.connect();
-  try { return await repo.getDunningRun({ orgId, runId, client });} finally { client.release();}
+  try { return await repo.getDunningRun({ orgId, runId, client }); } finally { client.release(); }
 }
 
 module.exports = {

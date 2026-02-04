@@ -34,21 +34,21 @@ router.post("/", idempotency({ required: true }), requirePermission("transaction
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("transactions.bill.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listBills({ orgId, query: req.query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("transactions.bill.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getBillDetails({ orgId, billId: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // -----------------------------------------------------------------------------
@@ -77,7 +77,7 @@ router.post(
       });
 
       res.json(doc);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -104,7 +104,7 @@ router.post(
       });
 
       res.json(doc);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -131,7 +131,7 @@ router.post(
       });
 
       res.json(doc);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -154,7 +154,7 @@ router.post("/:id/issue", idempotency({ required: true }), requirePermission("tr
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.bill.void"), async (req, res, next) => {
@@ -177,7 +177,7 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("tra
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

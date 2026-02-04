@@ -116,7 +116,7 @@ function safeEvalFormula(expression, context) {
     throw new AppError(400, "Invalid formula expression");
   }
   // eslint-disable-next-line no-new-func
-  return Function(`"use strict";return (${replaced});`)();
+  return Function(`"use strict"; return (${replaced});`)();
 }
 
 function computeLineAmounts({ line, lineAccounts, tbMap, ctx }) {
@@ -386,7 +386,7 @@ async function buildTemplateStatement({ orgId, statementType, periodId, compareP
 
   const ctx = {};
   const childResults = new Map();
-  // First pass: compute leaf amounts and formula lines;section totals computed on rollup
+  // First pass: compute leaf amounts and formula lines; section totals computed on rollup
   for (const line of lines) {
     const r = computeLineAmounts({ line, lineAccounts, tbMap, ctx });
     childResults.set(line.id, { ...r, id: line.id, amount: r.amount });
@@ -544,7 +544,7 @@ async function cashFlowStatement({ orgId, periodId, comparePeriodId }) {
     };
 
     for (const cl of cashLines) {
-      const cashChange = Number(cl.debit || 0) - Number(cl.credit || 0);// cash accounts are debit-normal
+      const cashChange = Number(cl.debit || 0) - Number(cl.credit || 0); // cash accounts are debit-normal
       const others = nonCashByJournal.get(cl.journal_id) || [];
       if (!others.length) {
         addAmount(unclassified?.id, cashChange);
@@ -552,7 +552,7 @@ async function cashFlowStatement({ orgId, periodId, comparePeriodId }) {
       }
       const weights = others.map((o) => Math.abs(Number(o.amount_base || (Number(o.debit || 0) + Number(o.credit || 0)))));
       const denom = weights.reduce((s, w) => s + w, 0) || 0;
-      for (let i = 0;i < others.length;i++) {
+      for (let i = 0; i < others.length; i++) {
         const o = others[i];
         const w = denom ? weights[i] / denom : 1 / others.length;
         const allocated = cashChange * w;

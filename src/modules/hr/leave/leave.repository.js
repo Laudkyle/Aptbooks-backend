@@ -1,6 +1,6 @@
 const { pool } = require("../../../db/pool");
 
-function q(client) { return client || pool;}
+function q(client) { return client || pool; }
 
 // -------------------- Leave Types --------------------
 async function createLeaveType(orgId, payload) {
@@ -18,7 +18,7 @@ async function createLeaveType(orgId, payload) {
 async function listLeaveTypes(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE organization_id=$1";
-  if (query.status) { params.push(query.status);where += ` AND status=$${params.length}`;}
+  if (query.status) { params.push(query.status); where += ` AND status=$${params.length}`; }
   const r = await pool.query(`SELECT * FROM hr_leave_types ${where} ORDER BY code ASC`, params);
   return r.rows;
 }
@@ -31,7 +31,7 @@ async function getLeaveType(orgId, id) {
 async function updateLeaveType(orgId, id, payload) {
   const fields = [];
   const params = [orgId, id];
-  const set = (k, v) => { params.push(v);fields.push(`${k}=$${params.length}`);};
+  const set = (k, v) => { params.push(v); fields.push(`${k}=$${params.length}`); };
 
   if (payload.code !== undefined) set("code", payload.code);
   if (payload.name !== undefined) set("name", payload.name);
@@ -83,8 +83,8 @@ async function getLeaveBalance(orgId, { employeeId, leaveTypeId }, client=null, 
 async function listLeaveBalances(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE b.organization_id=$1";
-  if (query.employee_id) { params.push(query.employee_id);where += ` AND b.employee_id=$${params.length}`;}
-  if (query.leave_type_id) { params.push(query.leave_type_id);where += ` AND b.leave_type_id=$${params.length}`;}
+  if (query.employee_id) { params.push(query.employee_id); where += ` AND b.employee_id=$${params.length}`; }
+  if (query.leave_type_id) { params.push(query.leave_type_id); where += ` AND b.leave_type_id=$${params.length}`; }
   const r = await pool.query(
     `
       SELECT b.*, lt.code AS leave_type_code, lt.name AS leave_type_name
@@ -145,11 +145,11 @@ async function getLeaveRequest(orgId, id, client=null, forUpdate=false) {
 async function listLeaveRequests(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE lr.organization_id=$1";
-  if (query.status) { params.push(query.status);where += ` AND lr.status=$${params.length}`;}
-  if (query.employee_id) { params.push(query.employee_id);where += ` AND lr.employee_id=$${params.length}`;}
-  if (query.leave_type_id) { params.push(query.leave_type_id);where += ` AND lr.leave_type_id=$${params.length}`;}
-  if (query.from_date) { params.push(query.from_date);where += ` AND lr.start_date >= $${params.length}`;}
-  if (query.to_date) { params.push(query.to_date);where += ` AND lr.end_date <= $${params.length}`;}
+  if (query.status) { params.push(query.status); where += ` AND lr.status=$${params.length}`; }
+  if (query.employee_id) { params.push(query.employee_id); where += ` AND lr.employee_id=$${params.length}`; }
+  if (query.leave_type_id) { params.push(query.leave_type_id); where += ` AND lr.leave_type_id=$${params.length}`; }
+  if (query.from_date) { params.push(query.from_date); where += ` AND lr.start_date >= $${params.length}`; }
+  if (query.to_date) { params.push(query.to_date); where += ` AND lr.end_date <= $${params.length}`; }
 
   const r = await pool.query(
     `

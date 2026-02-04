@@ -14,7 +14,7 @@ function assertEnum(v, allowed, label) {
 function parseExpressionJson(input) {
   if (!input) return null;
   if (typeof input === "object") return input;
-  // Only accept JSON text;never eval.
+  // Only accept JSON text; never eval.
   if (typeof input === "string") {
     try {
       return JSON.parse(input);
@@ -190,7 +190,7 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
   });
   const date = asOfDate ? new Date(asOfDate) : new Date();
   if (Number.isNaN(date.getTime())) throw new AppError(400, "asOfDate must be a valid date");
-  const asOf = date.toISOString().slice(0, 10);// store as date
+  const asOf = date.toISOString().slice(0, 10); // store as date
 
   const cache = new Map();
   const computed = [];
@@ -343,7 +343,7 @@ async function importValuesCsv({ orgId, csvText, actorUserId, req }) {
     if (!Number.isFinite(num)) throw new AppError(400, "value must be numeric");
     let metaJson = null;
     if (metaRaw) {
-      try { metaJson = JSON.parse(metaRaw);} catch (e) { throw new AppError(400, "metaJson must be valid JSON");}
+      try { metaJson = JSON.parse(metaRaw); } catch (e) { throw new AppError(400, "metaJson must be valid JSON"); }
     }
     const row = await repo.upsertValue({
       orgId,

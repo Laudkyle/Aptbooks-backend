@@ -7,7 +7,7 @@ async function createItem(orgId, payload) {
   return repo.createItem(orgId, payload);
 }
 
-async function listItems(orgId) { return repo.listItems(orgId);}
+async function listItems(orgId) { return repo.listItems(orgId); }
 
 async function getItem(orgId, id) {
   const item = await repo.getItem(orgId, id);

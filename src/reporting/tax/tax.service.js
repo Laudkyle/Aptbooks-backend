@@ -63,7 +63,7 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
   assertIsoDate(toDate, "to");
   if (toDate < fromDate) throw new AppError(400, "to must be on or after from");
 
-  // Choose a template if provided;otherwise use first VAT template.
+  // Choose a template if provided; otherwise use first VAT template.
   let template = null;
   if (templateCode) {
     const { rows } = await pool.query(
@@ -90,7 +90,7 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
     template = rows[0] || null;
   }
 
-  // Load template boxes;if no template, fall back to grouping by tax_codes.box_code.
+  // Load template boxes; if no template, fall back to grouping by tax_codes.box_code.
   let templateBoxes = [];
   if (template) {
     const { rows } = await pool.query(

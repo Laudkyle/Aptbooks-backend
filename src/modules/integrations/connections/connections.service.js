@@ -69,10 +69,10 @@ async function test(ctx, id) {
   let ok = true;
   let msg = 'OK';
   if (before.type === 'odbc' || before.type === 'jdbc') {
-    if (!cfg.connectionString) { ok = false;msg = 'configJson.connectionString required';}
+    if (!cfg.connectionString) { ok = false; msg = 'configJson.connectionString required'; }
   }
   if (before.type === 'webhook') {
-    if (!cfg.url) { ok = false;msg = 'configJson.url required';}
+    if (!cfg.url) { ok = false; msg = 'configJson.url required'; }
   }
   const after = await repo.updateConnection({ organizationId: ctx.organizationId, connectionId: id, patch: {
     lastTestedAt: new Date().toISOString(),

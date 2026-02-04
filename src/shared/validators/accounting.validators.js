@@ -44,7 +44,7 @@ const journalCreateSchema = z.object({
     if ((d > 0 && c > 0) || (d === 0 && c === 0)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Line ${i + 1} must have either debit or credit`, path: ["lines", i] });
     }
-    debit += d;credit += c;
+    debit += d; credit += c;
   }
   if (debit !== credit) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Journal not balanced", path: ["lines"] });

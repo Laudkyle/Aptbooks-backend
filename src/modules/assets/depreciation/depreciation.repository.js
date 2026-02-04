@@ -19,7 +19,9 @@ async function createSchedule({ orgId, payload }) {
     throw new AppError(400, "effectiveStartDate (or depreciationStartDate) is required");
   }
 
- 
+  // NOTE: Overlap validation should be done in service layer (recommended),
+  // but we also protect here as last line of defence.
+  // Overlap rule: existing.start <= newEnd AND existing.end >= newStart (NULL end = open-ended)
   const { rows: overlap } = await pool.query(
     `
     SELECT id

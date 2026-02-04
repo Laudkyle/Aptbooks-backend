@@ -36,14 +36,6 @@ async function getBand(orgId, id) {
   return rows[0] || null;
 }
 
-async function getBandByCode(orgId, code) {
-  const { rows } = await pool.query(
-    `SELECT * FROM hr_compensation_bands WHERE organization_id=$1 AND code=$2`,
-    [orgId, code]
-  );
-  return rows[0] || null;
-}
-
 async function updateBand(orgId, id, payload) {
   const fields = [];
   const vals = [orgId, id];
@@ -80,4 +72,4 @@ async function deactivateBand(orgId, id) {
   return rows[0] || null;
 }
 
-module.exports = { createBand, listBands, getBand, getBandByCode, updateBand, deactivateBand };
+module.exports = { createBand, listBands, getBand, updateBand, deactivateBand };

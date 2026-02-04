@@ -36,7 +36,7 @@ async function assertExists({ table, orgId, id, name, allowStatuses }) {
     throw new AppError(409, `${name} is blocked`);
   }
 
-  // Effective dating is optional;enforce only when configured.
+  // Effective dating is optional; enforce only when configured.
   const t = todayIsoDate();
   if (row.valid_from && String(row.valid_from) > t) {
     throw new AppError(409, `${name} is not yet effective`);

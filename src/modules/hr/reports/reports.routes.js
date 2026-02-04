@@ -13,7 +13,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.headcount({ orgId: req.user.organization_id, query: req.query }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -23,7 +23,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.leaveBalances({ orgId: req.user.organization_id, query: req.query }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -33,7 +33,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.payrollCosts({ orgId: req.user.organization_id, query: req.query }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 

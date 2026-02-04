@@ -13,7 +13,7 @@ function base32Decode(str) {
     bits += val.toString(2).padStart(5, "0");
   }
   const bytes = [];
-  for (let i = 0;i + 8 <= bits.length;i += 8) {
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
     bytes.push(parseInt(bits.slice(i, i + 8), 2));
   }
   return Buffer.from(bytes);
@@ -24,7 +24,7 @@ function base32Encode(buf) {
   let bits = "";
   for (const byte of b) bits += byte.toString(2).padStart(8, "0");
   let out = "";
-  for (let i = 0;i < bits.length;i += 5) {
+  for (let i = 0; i < bits.length; i += 5) {
     const chunk = bits.slice(i, i + 5);
     if (chunk.length < 5) break;
     out += BASE32_ALPHABET[parseInt(chunk, 2)];
@@ -50,7 +50,7 @@ function totp(secretBase32, { timeStepSeconds = 30, t = Date.now(), window = 1 }
   const counter = Math.floor(t / 1000 / timeStepSeconds);
   // allow small window
   const codes = [];
-  for (let w = -window;w <= window;w += 1) {
+  for (let w = -window; w <= window; w += 1) {
     codes.push(hotp(secretBase32, counter + w));
   }
   return codes;

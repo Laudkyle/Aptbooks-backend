@@ -1,6 +1,6 @@
 const { z } = require("zod");
 const uuid = z.string().uuid();
-const isoDate = z.string().min(8);// YYYY-MM-DD
+const isoDate = z.string().min(8); // YYYY-MM-DD
 
 const createAssetCategorySchema = z.object({
   code: z.string().min(1),

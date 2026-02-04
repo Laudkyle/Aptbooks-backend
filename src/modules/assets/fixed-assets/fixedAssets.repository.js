@@ -30,20 +30,19 @@ async function createAsset({ orgId, payload }) {
 
 async function listAssets({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["organization_id=$1"]; 
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.categoryId) { where.push(`category_id=$${i++}`);params.push(query.categoryId);}
-  if (query?.locationId) { where.push(`location_id=$${i++}`);params.push(query.locationId);}
-  if (query?.departmentId) { where.push(`department_id=$${i++}`);params.push(query.departmentId);}
-  if (query?.costCenterId) { where.push(`cost_center_id=$${i++}`);params.push(query.costCenterId);}
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
+  if (query?.categoryId) { where.push(`category_id=$${i++}`); params.push(query.categoryId); }
+  if (query?.locationId) { where.push(`location_id=$${i++}`); params.push(query.locationId); }
+  if (query?.departmentId) { where.push(`department_id=$${i++}`); params.push(query.departmentId); }
+  if (query?.costCenterId) { where.push(`cost_center_id=$${i++}`); params.push(query.costCenterId); }
   if (query?.q) {
     where.push(`(code ILIKE $${i} OR name ILIKE $${i})`);
     params.push(`%${query.q}%`);
     i++;
   }
-
 
   const { rows } = await pool.query(
     `SELECT * FROM fixed_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,

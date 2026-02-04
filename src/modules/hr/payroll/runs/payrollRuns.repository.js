@@ -90,7 +90,7 @@ async function replaceRunLines(orgId, runId, lines) {
     }
     await client.query('COMMIT');
   } catch (e) {
-    try { await client.query('ROLLBACK');} catch (_) {}
+    try { await client.query('ROLLBACK'); } catch (_) {}
     throw e;
   } finally {
     client.release();
@@ -101,21 +101,6 @@ async function listRunLines(orgId, runId) {
   const { rows } = await pool.query(
     `
       SELECT l.*, e.employee_no, e.first_name, e.last_name
-      FROM hr_payroll_run_lines l
-      JOIN hr_employees e ON e.id=l.employee_id
-      WHERE l.organization_id=$1 AND l.payroll_run_id=$2
-      ORDER BY l.line_no ASC
-    `,
-    [orgId, runId]
-  );
-  return rows;
-}
-
-async function listRunLinesForPayout(orgId, runId) {
-  const { rows } = await pool.query(
-    `
-      SELECT l.*, e.employee_no, e.first_name, e.last_name,
-             e.bank_name, e.bank_account_no, e.bank_branch
       FROM hr_payroll_run_lines l
       JOIN hr_employees e ON e.id=l.employee_id
       WHERE l.organization_id=$1 AND l.payroll_run_id=$2
@@ -186,7 +171,6 @@ module.exports = {
   getPeriod,
   replaceRunLines,
   listRunLines,
-  listRunLinesForPayout,
   getEmployeesForIds,
   getRunJournal,
   linkRunJournal,

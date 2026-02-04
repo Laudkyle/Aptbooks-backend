@@ -16,7 +16,7 @@ router.post(
     try {
       const { organization_id: orgId, id: userId } = req.user;
       res.status(201).json(await svc.ingest(orgId, userId, req));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -27,7 +27,7 @@ router.get(
     try {
       const { organization_id: orgId } = req.user;
       res.json(await svc.query(orgId, req.query));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 

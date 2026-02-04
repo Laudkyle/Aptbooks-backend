@@ -33,7 +33,7 @@ router.post("/", idempotency({ required: true }), requirePermission("transaction
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("transactions.invoice.read"), async (req, res, next) => {
@@ -41,14 +41,14 @@ router.get("/", requirePermission("transactions.invoice.read"), async (req, res,
     const orgId = req.user.organization_id;
     const query = validate(listInvoicesQuerySchema, req.query);
     res.json(await svc.listInvoices({ orgId, query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("transactions.invoice.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getInvoiceDetails({ orgId, invoiceId: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // -----------------------------------------------------------------------------
@@ -77,7 +77,7 @@ router.post(
       });
 
       res.json(doc);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -104,7 +104,7 @@ router.post(
       });
 
       res.json(doc);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -131,7 +131,7 @@ router.post(
       });
 
       res.json(doc);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -154,7 +154,7 @@ router.post("/:id/issue", idempotency({ required: true }), requirePermission("tr
     });
 
     res.json(issued);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.invoice.void"), async (req, res, next) => {
@@ -179,7 +179,7 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("tra
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

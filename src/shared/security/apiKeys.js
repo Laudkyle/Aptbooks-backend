@@ -2,7 +2,7 @@ const crypto = require("crypto");
 
 function generatePrefix() {
   // short prefix for indexing / log redaction
-  return crypto.randomBytes(6).toString("hex");// 12 chars
+  return crypto.randomBytes(6).toString("hex"); // 12 chars
 }
 
 function generateSecret() {

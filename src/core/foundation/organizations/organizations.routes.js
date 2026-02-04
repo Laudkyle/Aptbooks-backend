@@ -23,7 +23,7 @@ router.post("/", async (req, res, next) => {
       [name, currencyCode]
     );
     res.status(201).json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Org-scoped reads should be authenticated
@@ -33,7 +33,7 @@ router.get("/me", authRequired, async (req, res, next) => {
     const { rows } = await pool.query(`SELECT * FROM organizations WHERE id=$1`, [orgId]);
     if (!rows.length) throw new AppError(404, "Org not found");
     res.json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Update organization profile fields
@@ -90,7 +90,7 @@ router.patch(
       });
 
       res.json(rows[0]);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -163,7 +163,7 @@ router.post(
       });
 
       res.status(201).json({ document: doc, version, organization: after[0] });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 

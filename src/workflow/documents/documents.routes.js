@@ -57,7 +57,7 @@ router.get("/types", requirePermission("documents.read"), async (req, res, next)
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listDocumentTypes({ orgId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/approval-levels", idempotency({ required: true }), requirePermission("documents.manage"), async (req, res, next) => {
@@ -86,7 +86,7 @@ router.get("/approval-levels", requirePermission("documents.read"), async (req, 
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listApprovalLevels({ orgId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.put("/types/:typeId/approval-levels", requirePermission("documents.manage"), async (req, res, next) => {
@@ -109,7 +109,7 @@ router.put("/types/:typeId/approval-levels", requirePermission("documents.manage
       after: body
     });
     res.json(result);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Create document metadata (DRAFT)
@@ -131,7 +131,7 @@ router.post("/", idempotency({ required: true }), requirePermission("documents.c
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // List documents (optionally by entity)
@@ -140,7 +140,7 @@ router.get("/", requirePermission("documents.read"), async (req, res, next) => {
     const orgId = req.user.organization_id;
     const query = validate(listDocumentsQuerySchema, req.query);
     res.json(await svc.listDocuments({ orgId, query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Document details (versions + approvals)
@@ -148,7 +148,7 @@ router.get("/:id", requirePermission("documents.read"), async (req, res, next) =
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getDocumentDetails({ orgId, documentId: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Upload new version (application/octet-stream)
@@ -187,7 +187,7 @@ router.post(
       });
 
       res.status(201).json(result.version);
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -201,10 +201,10 @@ router.get("/:id/versions/:versionId/download", requirePermission("documents.rea
       versionId: req.params.versionId
     });
     res.setHeader("Content-Type", version.mime_type || "application/octet-stream");
-    res.setHeader("Content-Disposition", `attachment;filename=\"${version.original_filename}\"`);
+    res.setHeader("Content-Disposition", `attachment; filename=\"${version.original_filename}\"`);
     stream.on("error", (err) => next(err));
     stream.pipe(res);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Submit for approval (creates multi-level approval records)
@@ -226,7 +226,7 @@ router.post("/:id/submit", idempotency({ required: true }), requirePermission("d
     });
 
     res.json(result);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Approve current level
@@ -253,7 +253,7 @@ router.post("/:id/approve", idempotency({ required: true }), requirePermission("
     });
 
     res.json(result);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Reject current level
@@ -280,7 +280,7 @@ router.post("/:id/reject", idempotency({ required: true }), requirePermission("a
     });
 
     res.json(result);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

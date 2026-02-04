@@ -13,7 +13,6 @@ function sumMoney(lines) {
   return { debit, credit };
 }
 
-
 async function assertPeriodOpen(orgId, periodId) {
   const { rows } = await pool.query(
     `SELECT id, status, start_date, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
@@ -52,7 +51,7 @@ async function updateSchedule({ orgId, actorUserId, scheduleId, payload }) {
   const hasPostings = await repo.hasPostings({ orgId, scheduleId });
   const onlyStatusChange = Object.keys(payload).every((k) => k === "status");
   if (hasPostings && !onlyStatusChange) {
-    throw new AppError(409, "Cannot edit schedule fields after postings exist;deactivate and create a new schedule");
+    throw new AppError(409, "Cannot edit schedule fields after postings exist; deactivate and create a new schedule");
   }
 
   const updated = await repo.updateSchedule({ orgId, scheduleId, payload });
@@ -210,7 +209,7 @@ async function runPeriodEndDepreciation({ orgId, actorUserId, periodId }) {
 
     return { status: "posted", runId: run.id, journalId: posted.journalId, count: postings.length };
   } catch (e) {
-    try { await lockClient.query("ROLLBACK");} catch (_) {}
+    try { await lockClient.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     lockClient.release();

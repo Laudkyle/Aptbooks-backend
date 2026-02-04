@@ -20,16 +20,16 @@ function parseCsv(text) {
 function splitCsvLine(line) {
   // minimal RFC4180-ish parser supporting quotes and commas
   const out=[];
-  let cur="";let inQ=false;
+  let cur=""; let inQ=false;
   for (let i=0;i<line.length;i++) {
     const c=line[i];
     if (inQ) {
       if (c==='"') {
-        if (line[i+1]==='"') { cur+='"';i++;}
+        if (line[i+1]==='"') { cur+='"'; i++; }
         else inQ=false;
       } else cur+=c;
     } else {
-      if (c===',') { out.push(cur);cur="";}
+      if (c===',') { out.push(cur); cur=""; }
       else if (c==='"') inQ=true;
       else cur+=c;
     }
@@ -51,7 +51,7 @@ async function importCoaCsv({ orgId, actorUserId, csvText, options = {} }) {
   const errors = [];
 
   // Multiple passes to resolve parentCode references.
-  for (let pass=0;pass<5 && pending.length;pass++) {
+  for (let pass=0; pass<5 && pending.length; pass++) {
     const still=[];
     for (const item of pending) {
       const r=item.r;
@@ -68,7 +68,7 @@ async function importCoaCsv({ orgId, actorUserId, csvText, options = {} }) {
       }
       const codeKey = code.toUpperCase();
       if (byCode.has(codeKey)) {
-        // already exists;skip
+        // already exists; skip
         continue;
       }
 
@@ -142,7 +142,7 @@ async function importJournalsCsv({ orgId, actorUserId, csvText, options = {} }) 
     for (const lr of group) {
       const accountCode = String(lr.accountCode || lr.account_code || '').trim();
       const accountId = accByCode.get(accountCode.toUpperCase());
-      if (!accountId) { errs.push(`Unknown accountCode ${accountCode}`);continue;}
+      if (!accountId) { errs.push(`Unknown accountCode ${accountCode}`); continue; }
       lines.push({
         accountId,
         description: lr.description || lr.lineDescription || null,
@@ -169,7 +169,7 @@ async function importJournalsCsv({ orgId, actorUserId, csvText, options = {} }) 
     let final = { journalKey: k, journalId, status: created.status || 'draft' };
     if (autoPost) {
       await journals.submitDraftJournal({ orgId, journalId, actorUserId });
-      await journals.approveSubmittedJournal({ orgId, journalId, actorUserId: actorUserId + '' });// may fail SoD
+      await journals.approveSubmittedJournal({ orgId, journalId, actorUserId: actorUserId + '' }); // may fail SoD
       final = await journals.postDraftJournal({ orgId, journalId, actorUserId: actorUserId + '' });
       final.journalKey = k;
     }

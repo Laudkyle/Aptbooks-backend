@@ -47,7 +47,22 @@ async function upsertAllocation(client, { vendorPaymentId, billId, amountApplied
 
 async function getVendorPaymentById(orgId, id) {
   const { rows } = await pool.query(
-    `SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2`,
+    `SELECT 
+      vp.*,
+      bp.name as vendor_name,
+      bp.email as vendor_email,
+      bp.phone as vendor_phone,
+      addr.label as vendor_address_label,
+      addr.line1 as vendor_address_line1,
+      addr.line2 as vendor_address_line2,
+      addr.city as vendor_address_city,
+      addr.region as vendor_address_region,
+      addr.postal_code as vendor_address_postal_code,
+      addr.country as vendor_address_country
+     FROM vendor_payments vp
+     LEFT JOIN business_partners bp ON vp.vendor_id = bp.id
+     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     WHERE vp.organization_id=$1 AND vp.id=$2`,
     [orgId, id]
   );
   return rows[0] || null;
@@ -63,20 +78,34 @@ async function getAllocations(vendorPaymentId) {
 
 async function listVendorPayments({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["vp.organization_id=$1"];
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.vendorId) { where.push(`vendor_id=$${i++}`);params.push(query.vendorId);}
+  if (query?.status) { 
+    where.push(`vp.status=$${i++}`); 
+    params.push(query.status); 
+  }
+  if (query?.vendorId) { 
+    where.push(`vp.vendor_id=$${i++}`); 
+    params.push(query.vendorId); 
+  }
 
   const { rows } = await pool.query(
-    `SELECT * FROM vendor_payments WHERE ${where.join(" AND ")} ORDER BY payment_date DESC, created_at DESC`,
+    `SELECT 
+      vp.*,
+      bp.name as vendor_name,
+      addr.line1 as vendor_address_line1,
+      addr.city as vendor_address_city,
+      addr.country as vendor_address_country
+     FROM vendor_payments vp
+     LEFT JOIN business_partners bp ON vp.vendor_id = bp.id
+     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     WHERE ${where.join(" AND ")} 
+     ORDER BY vp.payment_date DESC, vp.created_at DESC`,
     params
   );
   return rows;
 }
-
-
 
 async function deleteAllocations(client, vendorPaymentId) {
   await client.query(

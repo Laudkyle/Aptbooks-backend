@@ -11,7 +11,6 @@ async function create(orgId, payload) {
   return rows[0];
 }
 
-
 async function list(orgId) {
   const { rows } = await pool.query(
     `SELECT * FROM bank_accounts WHERE organization_id=$1 ORDER BY code`,

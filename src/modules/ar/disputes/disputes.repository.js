@@ -8,7 +8,6 @@ async function listReasonCodes({ orgId, client }) {
   return rows;
 }
 
-
 async function upsertReasonCode({ orgId, payload, client }) {
   const { rows } = await client.query(
     `INSERT INTO dispute_reason_codes (organization_id, code, description, is_active)

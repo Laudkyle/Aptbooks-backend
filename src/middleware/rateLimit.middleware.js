@@ -10,7 +10,7 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
   // Support a Postgres-backed store to keep behaviour deterministic across replicas.
   const storeMode = (env.RATE_LIMIT_STORE || "memory").toLowerCase();
 
-  const store = new Map();// key -> { resetAt, count }
+  const store = new Map(); // key -> { resetAt, count }
   const WINDOW = windowMs ?? env.RATE_LIMIT_WINDOW_MS;
   const MAX = max ?? env.RATE_LIMIT_MAX;
 

@@ -12,7 +12,7 @@ router.get("/activity", async (req, res, next) => {
     const orgId = req.user.organization_id;
     const out = await svc.listActivity({ orgId, query: req.query });
     res.json({ data: out });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Reporting definition changes (triggered audit table from Stage 5)
@@ -21,7 +21,7 @@ router.get("/definition-changes", async (req, res, next) => {
     const orgId = req.user.organization_id;
     const out = await svc.listDefinitionChanges({ orgId, query: req.query });
     res.json({ data: out });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Period close audit pack summary
@@ -31,7 +31,7 @@ router.get("/period-close", async (req, res, next) => {
     const { periodId } = req.query;
     const out = await svc.periodCloseAudit({ orgId, periodId });
     res.json({ data: out });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // CSV export for activity logs
@@ -40,7 +40,7 @@ router.get("/export", async (req, res, next) => {
     const orgId = req.user.organization_id;
     const rows = await svc.listActivity({ orgId, query: req.query });
 
-    const header = ["created_at","action","entity_type","entity_id","actor_user_id","ip","user_agent"];
+    const header = ["created_at","action","entity_type","entity_id","actor_user_id","ip","user_agent"]; 
     const lines = [header.join(",")];
     for (const r of rows) {
       const vals = [
@@ -60,13 +60,13 @@ router.get("/export", async (req, res, next) => {
       lines.push(vals.join(","));
     }
 
-    res.setHeader("Content-Type", "text/csv;charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment;filename="audit_activity_${Date.now()}.csv"`);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="audit_activity_${Date.now()}.csv"`);
     res.send(lines.join("\n"));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
-// Schedule audit exports (stored configuration;actual delivery can be implemented via scheduler later)
+// Schedule audit exports (stored configuration; actual delivery can be implemented via scheduler later)
 router.post("/export/schedule", async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -80,7 +80,7 @@ router.post("/export/schedule", async (req, res, next) => {
       [orgId, req.user.id, name, JSON.stringify(filters || {}), cron, is_enabled]
     );
     res.status(201).json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

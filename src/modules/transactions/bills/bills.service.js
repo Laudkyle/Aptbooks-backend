@@ -85,7 +85,7 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       currencyCode: baseCurrency
     });
 
-    for (let i = 0;i < computed.length;i++) {
+    for (let i = 0; i < computed.length; i++) {
       const l = computed[i];
       await repo.insertBillLine(client, {
         billId: bill.id,

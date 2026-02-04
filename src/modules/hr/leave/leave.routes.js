@@ -29,7 +29,7 @@ router.post(
       const actorUserId = req.user.id;
       const payload = validate(createLeaveTypeSchema, req.body);
       res.status(201).json(await svc.createLeaveType({ orgId, actorUserId, payload, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -39,7 +39,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.listLeaveTypes({ orgId: req.user.organization_id, query: req.query }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -50,7 +50,7 @@ router.put(
     try {
       const payload = validate(updateLeaveTypeSchema, req.body);
       res.json(await svc.updateLeaveType({ orgId: req.user.organization_id, actorUserId: req.user.id, leaveTypeId: req.params.id, payload, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -60,7 +60,7 @@ router.delete(
   async (req, res, next) => {
     try {
       res.json(await svc.deactivateLeaveType({ orgId: req.user.organization_id, actorUserId: req.user.id, leaveTypeId: req.params.id, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -73,7 +73,7 @@ router.post(
     try {
       const payload = validate(upsertLeaveBalanceSchema, req.body);
       res.status(201).json(await svc.upsertLeaveBalance({ orgId: req.user.organization_id, actorUserId: req.user.id, payload, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -83,7 +83,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.listLeaveBalances({ orgId: req.user.organization_id, query: req.query }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -96,7 +96,7 @@ router.post(
     try {
       const payload = validate(createLeaveRequestSchema, req.body);
       res.status(201).json(await svc.createLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, payload, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -106,7 +106,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.listLeaveRequests({ orgId: req.user.organization_id, query: req.query }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -116,7 +116,7 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.getLeaveRequest({ orgId: req.user.organization_id, requestId: req.params.id }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -127,7 +127,7 @@ router.post(
   async (req, res, next) => {
     try {
       res.json(await svc.submitLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -138,7 +138,7 @@ router.post(
   async (req, res, next) => {
     try {
       res.json(await svc.approveLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -150,7 +150,7 @@ router.post(
     try {
       const payload = validate(rejectLeaveRequestSchema, req.body || {});
       res.json(await svc.rejectLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, payload, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -161,7 +161,7 @@ router.post(
   async (req, res, next) => {
     try {
       res.json(await svc.cancelLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, audit: req.audit, writeAudit }));
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 

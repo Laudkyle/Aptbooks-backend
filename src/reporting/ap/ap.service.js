@@ -181,7 +181,7 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
 
   const entries = [];
   for (const b of bills) {
-    // Bills increase AP;show as debit to expense, credit AP. Statement perspective: bill increases payable.
+    // Bills increase AP; show as debit to expense, credit AP. Statement perspective: bill increases payable.
     entries.push({
       date: b.bill_date,
       type: "bill",
@@ -192,7 +192,7 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     });
   }
   for (const p of payments) {
-    // Payments reduce AP;show as credit.
+    // Payments reduce AP; show as credit.
     entries.push({
       date: p.payment_date,
       type: "payment",

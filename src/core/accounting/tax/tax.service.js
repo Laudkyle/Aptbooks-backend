@@ -93,9 +93,9 @@ async function listTaxCodes({ orgId, query }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
   let i = 2;
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.taxType) { where.push(`tax_type=$${i++}`);params.push(query.taxType);}
-  if (query?.jurisdictionId) { where.push(`jurisdiction_id=$${i++}`);params.push(query.jurisdictionId);}
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
+  if (query?.taxType) { where.push(`tax_type=$${i++}`); params.push(query.taxType); }
+  if (query?.jurisdictionId) { where.push(`jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
 
   const { rows } = await pool.query(
     `SELECT * FROM tax_codes WHERE ${where.join(" AND ")}

@@ -8,7 +8,6 @@ async function listPlans({ orgId, status, client }) {
   return rows;
 }
 
-
 async function getPlan({ orgId, id, client }) {
   const { rows } = await client.query(`SELECT * FROM payment_plans WHERE organization_id=$1 AND id=$2`, [orgId, id]);
   if (!rows.length) throw new AppError(404, 'Payment plan not found');

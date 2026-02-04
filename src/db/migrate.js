@@ -13,7 +13,7 @@ function parseArgs(argv) {
     baseline: "",
     dir: MIGRATIONS_DIR,
   };
-  for (let i = 2;i < argv.length;i++) {
+  for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") args.dryRun = true;
     else if (a === "--reset") args.reset = true;
@@ -71,7 +71,7 @@ async function baselineUpTo(client, files, baselineFile) {
   if (idx === -1) {
     throw new Error(`Baseline file not found in migrations dir: ${baselineFile}`);
   }
-  for (let i = 0;i <= idx;i++) {
+  for (let i = 0; i <= idx; i++) {
     const f = files[i];
     await client.query("INSERT INTO schema_migrations(id) VALUES($1) ON CONFLICT DO NOTHING", [f]);
   }

@@ -62,9 +62,9 @@ beforeAll(async () => {
   periodId = p.body.id;
 
   // Pick postable accounts from seeded COA
-  dtaAccountId = await pickAccount(orgId, ["1", "15"]);// asset
-  dtlAccountId = await pickAccount(orgId, ["2", "21"]);// liability
-  dteAccountId = await pickAccount(orgId, ["5", "6", "4"]);// expense (fallback revenue)
+  dtaAccountId = await pickAccount(orgId, ["1", "15"]); // asset
+  dtlAccountId = await pickAccount(orgId, ["2", "21"]); // liability
+  dteAccountId = await pickAccount(orgId, ["5", "6", "4"]); // expense (fallback revenue)
   if (!dtaAccountId || !dtlAccountId || !dteAccountId) {
     throw new Error("Unable to resolve seeded postable accounts for IAS12 tests");
   }

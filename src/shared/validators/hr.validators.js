@@ -208,9 +208,8 @@ const updateEmployeeBenefitSchema = z.object({
 // -----------------------------------------------------------------------------
 // Statutory Rules
 // -----------------------------------------------------------------------------
-
 const payeBracketSchema = z.object({
-  // up_to is inclusive upper bound for this bracket;null means "no upper limit"
+  // up_to is inclusive upper bound for this bracket; null means "no upper limit"
   up_to: z.number().positive().optional().nullable(),
   rate: z.number().min(0).max(100),
 });
@@ -230,8 +229,6 @@ createStatutoryRuleSchema = z.object({
   cap_amount: z.number().positive().optional().nullable(),
   expense_account_id: uuid,
   liability_account_id: uuid,
-  effective_from: z.string().min(4).optional().nullable(),
-  effective_to: z.string().min(4).optional().nullable(),
 });
 
 const updateStatutoryRuleSchema = z.object({
@@ -239,17 +236,12 @@ const updateStatutoryRuleSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).nullable().optional(),
   rule_type: z.enum(["income_tax","pension","social_security","health_insurance","other"]).optional(),
-  calculation_method: z.enum(["flat","progressive"]).optional(),
-  brackets: z.array(payeBracketSchema).optional(),
-  allowance_amount: z.number().min(0).optional(),
   employee_rate: z.number().min(0).max(100).optional(),
   employer_rate: z.number().min(0).max(100).optional(),
   base_on: z.enum(["base", "gross"]).optional(),
   cap_amount: z.number().positive().nullable().optional(),
   expense_account_id: uuid.optional(),
   liability_account_id: uuid.optional(),
-  effective_from: z.string().min(4).optional().nullable(),
-  effective_to: z.string().min(4).optional().nullable(),
   status: z.enum(["active","inactive"]).optional(),
 });
 

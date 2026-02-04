@@ -61,12 +61,12 @@ async function updatePaymentTerm({ orgId, id, payload }) {
     const params = [orgId, id];
     let i = 3;
 
-    if (payload.name !== undefined) { fields.push(`name=$${i++}`);params.push(payload.name);}
-    if (payload.netDays !== undefined) { fields.push(`net_days=$${i++}`);params.push(payload.netDays);}
-    if (payload.discountDays !== undefined) { fields.push(`discount_days=$${i++}`);params.push(payload.discountDays);}
-    if (payload.discountRate !== undefined) { fields.push(`discount_rate=$${i++}`);params.push(payload.discountRate);}
-    if (payload.isDefault !== undefined) { fields.push(`is_default=$${i++}`);params.push(payload.isDefault === true);}
-    if (payload.status !== undefined) { fields.push(`status=$${i++}`);params.push(payload.status);}
+    if (payload.name !== undefined) { fields.push(`name=$${i++}`); params.push(payload.name); }
+    if (payload.netDays !== undefined) { fields.push(`net_days=$${i++}`); params.push(payload.netDays); }
+    if (payload.discountDays !== undefined) { fields.push(`discount_days=$${i++}`); params.push(payload.discountDays); }
+    if (payload.discountRate !== undefined) { fields.push(`discount_rate=$${i++}`); params.push(payload.discountRate); }
+    if (payload.isDefault !== undefined) { fields.push(`is_default=$${i++}`); params.push(payload.isDefault === true); }
+    if (payload.status !== undefined) { fields.push(`status=$${i++}`); params.push(payload.status); }
 
     if (!fields.length) {
       const { rows } = await client.query(

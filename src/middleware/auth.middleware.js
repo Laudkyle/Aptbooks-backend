@@ -53,7 +53,7 @@ function authRequired(req, _res, next) {
     if (payload?.typ && payload.typ !== "access") {
       return next(new AppError(401, "Invalid token type"));
     }
-    req.user = payload;// { id, organization_id, email }
+    req.user = payload; // { id, organization_id, email }
     return next();
   } catch {
     return next(new AppError(401, "Invalid token"));

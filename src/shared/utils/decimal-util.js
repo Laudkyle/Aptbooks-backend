@@ -57,7 +57,7 @@ export function calculatePresentValue({
   paymentTiming = 'arrears', // 'arrears' or 'advance'
 }) {
   const PMT = toDecimal(payment);
-  const r = toDecimal(annualDiscountRate).div(12);// Monthly rate
+  const r = toDecimal(annualDiscountRate).div(12); // Monthly rate
   const n = toDecimal(termMonths);
   
   // Handle zero interest rate
@@ -99,7 +99,7 @@ export function calculateAmortizationSchedule({
   const schedule = [];
   let balance = liability;
   
-  for (let period = 1;period <= n.toNumber();period++) {
+  for (let period = 1; period <= n.toNumber(); period++) {
     const interest = balance.times(r);
     const principal = PMT.minus(interest);
     const endingBalance = balance.minus(principal);

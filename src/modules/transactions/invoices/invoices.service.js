@@ -108,7 +108,7 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
 
     const invoice = invRows[0];
 
-    for (let i = 0;i < computed.length;i++) {
+    for (let i = 0; i < computed.length; i++) {
       const l = computed[i];
       await client.query(
         `
@@ -134,14 +134,9 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
 
 async function getInvoiceDetails({ orgId, invoiceId }) {
   const { rows } = await pool.query(
-  `SELECT 
-    i.*,
-    bp.name as customer_name
-   FROM invoices i
-   LEFT JOIN business_partners bp ON i.customer_id = bp.id
-   WHERE i.organization_id=$1 AND i.id=$2`,
-  [orgId, invoiceId]
-);
+    `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2`,
+    [orgId, invoiceId]
+  );
   if (!rows.length) throw new AppError(404, "Invoice not found");
   const invoice = rows[0];
 
@@ -155,30 +150,20 @@ async function getInvoiceDetails({ orgId, invoiceId }) {
 
 async function listInvoices({ orgId, query }) {
   const params = [orgId];
-  const where = ["i.organization_id=$1"]; // Added i. prefix
+  const where = ["organization_id=$1"];
   let i = 2;
 
-  if (query?.status) { 
-    where.push(`i.status=$${i++}`);
-    params.push(query.status);
-  }
-  if (query?.customerId) { 
-    where.push(`i.customer_id=$${i++}`);
-    params.push(query.customerId);
-  }
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
+  if (query?.customerId) { where.push(`customer_id=$${i++}`); params.push(query.customerId); }
 
   const { rows } = await pool.query(
-    `SELECT 
-      i.*,
-      bp.name as customer_name
-     FROM invoices i
-     LEFT JOIN business_partners bp ON i.customer_id = bp.id
-     WHERE ${where.join(" AND ")} 
-     ORDER BY i.invoice_date DESC, i.created_at DESC`,
+    `SELECT * FROM invoices WHERE ${where.join(" AND ")} ORDER BY invoice_date DESC, created_at DESC`,
     params
   );
   return rows;
 }
+
+
 async function getCustomerOutstandingAR({ orgId, customerId, client }) {
   const db = client || pool;
   const { rows } = await db.query(
@@ -239,14 +224,14 @@ async function assertInvoiceApprovalStateAllowsIssue({ orgId, invoice, client })
     `SELECT id FROM document_types WHERE organization_id=$1 AND code='INVOICE' AND is_active=TRUE`,
     [orgId]
   );
-  if (!dtRows.length) return;// No doc type configured => no enforcement
+  if (!dtRows.length) return; // No doc type configured => no enforcement
 
   const dtId = dtRows[0].id;
   const { rows: ladder } = await db.query(
     `SELECT 1 FROM document_type_approval_levels WHERE document_type_id=$1 LIMIT 1`,
     [dtId]
   );
-  if (!ladder.length) return;// No ladder => no enforcement
+  if (!ladder.length) return; // No ladder => no enforcement
 
   if (!invoice.workflow_document_id) {
     throw new AppError(409, "Invoice requires approval before issue (missing workflow document)");

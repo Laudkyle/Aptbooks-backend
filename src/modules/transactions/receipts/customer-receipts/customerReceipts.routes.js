@@ -35,21 +35,21 @@ router.post("/", requirePermission("transactions.customer_receipt.manage"), asyn
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("transactions.customer_receipt.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listCustomerReceipts({ orgId, query: req.query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("transactions.customer_receipt.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getCustomerReceiptDetails({ orgId, id: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/auto-allocate", requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
@@ -72,7 +72,7 @@ router.post("/:id/auto-allocate", requirePermission("transactions.customer_recei
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/reallocate", requirePermission("transactions.allocations.reallocate"), async (req, res, next) => {
@@ -95,7 +95,7 @@ router.post("/:id/reallocate", requirePermission("transactions.allocations.reall
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/post", requirePermission("transactions.customer_receipt.post"), async (req, res, next) => {
@@ -117,7 +117,7 @@ router.post("/:id/post", requirePermission("transactions.customer_receipt.post")
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/void", requirePermission("transactions.customer_receipt.void"), async (req, res, next) => {
@@ -140,7 +140,7 @@ router.post("/:id/void", requirePermission("transactions.customer_receipt.void")
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

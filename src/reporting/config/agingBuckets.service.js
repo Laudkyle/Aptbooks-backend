@@ -7,7 +7,7 @@ async function listBucketSets({ orgId }) {
   try {
     const { rows } = await client.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 ORDER BY id DESC`, [orgId]);
     return rows;
-  } finally { client.release();}
+  } finally { client.release(); }
 }
 
 async function createBucketSet({ orgId, payload }) {
@@ -88,7 +88,7 @@ async function listBuckets({ orgId, bucketSetId }) {
       [orgId, bucketSetId]
     );
     return rows;
-  } finally { client.release();}
+  } finally { client.release(); }
 }
 
 async function upsertBucket({ orgId, bucketSetId, payload }) {

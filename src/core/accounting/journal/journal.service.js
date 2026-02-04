@@ -3,60 +3,10 @@ const { AppError } = require("../../../shared/errors/AppError");
 const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 
-// Helper function to get user role
-async function getUserRole(client, { orgId, userId }) {
-  const { rows } = await client.query(
-    `SELECT r.name as role_name, r.id as role_id
-     FROM user_roles ur
-     JOIN roles r ON ur.role_id = r.id
-     WHERE r.organization_id = $1 AND ur.user_id = $2`,
-    [orgId, userId]
-  );
-  
-  if (!rows.length) {
-    throw new AppError(403, "User does not have a role in this organization");
-  }
-  
-  return rows[0].role_name.toLowerCase();
-}
-
-// Helper function to check if user has required permission
-async function checkPermission(client, { orgId, userId, allowedRoles, action }) {
-  const role = await getUserRole(client, { orgId, userId });
-  
-  if (!allowedRoles.includes(role)) {
-    throw new AppError(403, `User with role '${role}' cannot ${action}`);
-  }
-  
-  return role;
-}
-
-// Helper to check segregation of duties (maker cannot be checker)
-async function checkSegregationOfDuties(client, { orgId, makerUserId, checkerUserId, action }) {
-  if (String(makerUserId) === String(checkerUserId)) {
-    throw new AppError(403, `Segregation of duties: User cannot ${action} their own work`);
-  }
-}
-
-// Helper to check if user can modify/delete based on role
-async function checkModifyPermission(client, { orgId, userId, resourceCreatorId, action }) {
-  const role = await getUserRole(client, { orgId, userId });
-  
-  // Admin can modify/delete anything
-  if (role === 'admin') {
-    return true;
-  }
-  
-  // Manager can modify/delete only if they didn't create it
-  if (role === 'manager') {
-    if (String(userId) === String(resourceCreatorId)) {
-      throw new AppError(403, `Manager cannot ${action} their own work`);
-    }
-    return true;
-  }
-  
-  throw new AppError(403, `User with role '${role}' cannot ${action}`);
-}
+// Banking integration: record posted journals that affect bank accounts into bank_transactions
+// so the cashbook/reconciliation views can include operational transactions (receipts/payments/journals)
+// without waiting for statement imports.
+const bankTransactionsRepo = require("../../../modules/banking/bank-transactions/bankTransactions.repository");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -68,10 +18,12 @@ async function getOrgBaseCurrency(client, orgId) {
 }
 
 function parseRateToMicro(rate) {
+  // 6dp rate precision
   return parseDecimalToBigInt(rate || 1, 6);
 }
 
 function computeBaseCents({ amountCents, rateMicro }) {
+  // baseCents = (amountCents * rateMicro) / 1e6
   return (amountCents * rateMicro) / 1000000n;
 }
 
@@ -99,6 +51,7 @@ async function lookupFxRateMicro(client, { orgId, rateTypeCode = "SPOT", fromCur
   if (inv.rows.length) {
     const baseMicro = parseRateToMicro(inv.rows[0].rate);
     if (baseMicro <= 0n) throw new AppError(400, "Invalid stored FX rate");
+    // invert: 1 / r. keep micro precision: (1e12 / baseMicro) gives micro
     return (1000000n * 1000000n) / baseMicro;
   }
 
@@ -120,6 +73,7 @@ function sumBaseCents(lines) {
 }
 
 function sum2(lines) {
+  // Sums using amount_base when available (base currency equivalent).
   return lines.reduce((acc, l) => {
     const debitC = parseDecimalToBigInt(l.debit || 0, 2);
     const creditC = parseDecimalToBigInt(l.credit || 0, 2);
@@ -146,20 +100,11 @@ function assertEntryDateWithinPeriod(entryDate, period) {
   if (d < s || d > e) throw new AppError(409, "entryDate must be within the selected period");
 }
 
-// CREATE: Only clerk can create drafts
 async function createDraftJournal({ orgId, actorUserId, payload, client: existingClient = null }) {
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
     if (managesTx) await client.query("BEGIN");
-
-    // Check permission: Only clerk can create drafts
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['clerk'],
-      action: 'create journal drafts'
-    });
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
@@ -186,7 +131,8 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
     const typeId = tRows[0].id;
 
-    // Compute & validate base-equivalent totals
+    // Compute & validate base-equivalent totals. For non-base currencies we either use a provided fxRate
+    // or look up a rate effective on entryDate.
     const preparedLines = [];
     for (const l of payload.lines || []) {
       const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase();
@@ -225,7 +171,7 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     );
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced in base currency");
 
-    // Validate accounts exist and are postable+active
+    // Validate accounts exist and are postable+active up front
     for (const l of payload.lines) {
       const { rows: aRows } = await client.query(
         `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
@@ -247,7 +193,7 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     );
     const journalId = jRows[0].id;
 
-    for (let i = 0;i < preparedLines.length;i++) {
+    for (let i = 0; i < preparedLines.length; i++) {
       const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
@@ -271,7 +217,7 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     return { journalId, status: "draft" };
   } catch (e) {
     if (managesTx) {
-      try { await client.query("ROLLBACK");} catch (_) {}
+      try { await client.query("ROLLBACK"); } catch (_) {}
     }
     throw e;
   } finally {
@@ -279,20 +225,11 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
   }
 }
 
-// POST: Only accountant or admin can post (not clerk, not manager, not viewer)
 async function postDraftJournal({ orgId, journalId, actorUserId, client: existingClient = null }) {
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
     if (managesTx) await client.query('BEGIN');
-
-    // Check permission: Only accountant or admin can post
-    const userRole = await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['accountant', 'admin'],
-      action: 'post journals'
-    });
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
@@ -307,19 +244,11 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     );
     if (!jRows.length) throw new AppError(404, 'Journal not found');
     const journal = jRows[0];
-    
     if (!['draft','approved'].includes(journal.status)) {
       throw new AppError(409, 'Journal must be in draft or approved status to post');
     }
-
-    // Check segregation of duties: creator cannot post
-    if (journal.created_by) {
-      await checkSegregationOfDuties(client, {
-        orgId,
-        makerUserId: journal.created_by,
-        checkerUserId: actorUserId,
-        action: 'post'
-      });
+    if (journal.created_by && String(journal.created_by) === String(actorUserId)) {
+      throw new AppError(403, 'Segregation of duties: creator cannot post this journal');
     }
 
     const period = await getPeriodForUpdate(client, orgId, journal.period_id);
@@ -341,7 +270,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     );
     if (!lines.length) throw new AppError(400, 'Journal has no lines');
 
-    // Validate accounts and ensure amount_base/fx_rate are correct
+    // Validate accounts and ensure amount_base/fx_rate are present and correct.
     for (const l of lines) {
       if (!l.is_postable) throw new AppError(400, 'Non-postable account used');
       if (l.account_status !== 'active') throw new AppError(400, 'Inactive account used');
@@ -369,6 +298,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       const computedBaseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
       const storedBaseCents = parseDecimalToBigInt(l.amount_base || 0, 2);
 
+      // If missing/incorrect, update line.
       if (storedBaseCents !== computedBaseCents || String(l.fx_rate || '').trim() === '') {
         await client.query(
           `UPDATE journal_entry_lines
@@ -376,6 +306,9 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
            WHERE id=$1`,
           [l.line_id, currencyCode, bigIntToDecimalString(rateMicro, 6), bigIntToDecimalString(computedBaseCents, 2)]
         );
+        l.currency_code = currencyCode;
+        l.fx_rate = bigIntToDecimalString(rateMicro, 6);
+        l.amount_base = bigIntToDecimalString(computedBaseCents, 2);
       }
     }
 
@@ -409,13 +342,31 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       [orgId, journalId, actorUserId]
     );
 
+    // Feed bank_transactions ledger for any bank accounts hit by this journal.
+    // This is best-effort; it will skip unsupported currency cases rather than failing posting.
+    try {
+      await bankTransactionsRepo.upsertFromPostedJournal(client, {
+        orgId,
+        journalId,
+        entryDate: journal.entry_date,
+        actorUserId,
+      });
+    } catch (e) {
+      // Never block posting for cashbook enrichment.
+      await enqueueEvent({
+        orgId,
+        eventType: 'banking.bank_transactions.enrichment_failed',
+        payload: { journalId, error: String(e && e.message ? e.message : e) },
+      });
+    }
+
     await enqueueEvent({ orgId, eventType: 'accounting.journal.posted', payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date } });
 
     if (managesTx) await client.query('COMMIT');
     return { journalId, status: 'posted' };
   } catch (e) {
     if (managesTx) {
-      try { await client.query('ROLLBACK');} catch (_) {}
+      try { await client.query('ROLLBACK'); } catch (_) {}
     }
     throw e;
   } finally {
@@ -423,26 +374,24 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
   }
 }
 
-// VOID: Only accountant or admin can void
+/**
+ * Accounting-correct void/**
+ * Accounting-correct void: create and post a reversal journal.
+ * - Requires original journal is POSTED and not already voided.
+ * - Reversal journal is posted immediately in the SAME period.
+ * - Original journal is marked voided with link via memo and void_reason.
+ */
 async function voidByReversal({ orgId, journalId, actorUserId, reason, client: existingClient = null }) {
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
     if (managesTx) await client.query("BEGIN");
 
-    // Check permission: Only accountant or admin can void
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['accountant', 'admin'],
-      action: 'void journals'
-    });
-
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const { rows: jRows } = await client.query(
       `
-      SELECT id, status, period_id, entry_date, memo, journal_entry_type_id, created_by
+      SELECT id, status, period_id, entry_date, memo, journal_entry_type_id
       FROM journal_entries
       WHERE organization_id=$1 AND id=$2
       FOR UPDATE
@@ -453,18 +402,8 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
     const orig = jRows[0];
     if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be voided");
 
-    // Check segregation of duties: creator cannot void
-    if (orig.created_by) {
-      await checkSegregationOfDuties(client, {
-        orgId,
-        makerUserId: orig.created_by,
-        checkerUserId: actorUserId,
-        action: 'void'
-      });
-    }
-
     const period = await getPeriodForUpdate(client, orgId, orig.period_id);
-    if (period.status !== "open") throw new AppError(409, "Period not open;cannot create reversal in this period");
+    if (period.status !== "open") throw new AppError(409, "Period not open; cannot create reversal in this period");
 
     const { rows: lines } = await client.query(
       `
@@ -477,18 +416,20 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
     );
     if (!lines.length) throw new AppError(400, "Journal has no lines");
 
+    // Create reversal journal (draft)
     const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason}`;
     const { rows: revRows } = await client.query(
       `
       INSERT INTO journal_entries
-        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, created_by)
-      VALUES ($1,$2,$3,$4,$5,'draft',$6)
+        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status)
+      VALUES ($1,$2,$3,$4,$5,'draft')
       RETURNING id
       `,
-      [orgId, orig.journal_entry_type_id, orig.period_id, orig.entry_date, reversalMemo, actorUserId]
+      [orgId, orig.journal_entry_type_id, orig.period_id, orig.entry_date, reversalMemo]
     );
     const reversalId = revRows[0].id;
 
+    // Reverse lines: swap debit/credit
     for (const l of lines) {
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
@@ -510,6 +451,8 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       );
     }
 
+    // Post reversal (update GL)
+    // Fetch reversal lines for posting
     const { rows: revLines } = await client.query(
       `
       SELECT account_id, debit, credit, amount_base
@@ -547,20 +490,23 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       [orgId, actorUserId, reversalId]
     );
 
-    await client.query(
-      `
-      UPDATE journal_entries
-      SET status='voided',
-          voided_at=NOW(),
-          voided_by=$3,
-          void_reason=$4,
-          updated_at=NOW()
-      WHERE organization_id=$1
-        AND id=$2
-        AND status='posted'
-      `,
-      [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
-    );
+    // Mark original voided (for UX/reporting; GL is corrected by reversal)
+    // Mark original voided (for UX/reporting; GL is corrected by reversal)
+// IMPORTANT: Do NOT modify memo or any other non-void field (immutability trigger)
+await client.query(
+  `
+  UPDATE journal_entries
+  SET status='voided',
+      voided_at=NOW(),
+      voided_by=$3,
+      void_reason=$4,
+      updated_at=NOW()
+  WHERE organization_id=$1
+    AND id=$2
+    AND status='posted'
+  `,
+  [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
+);
 
     await enqueueEvent({ orgId, eventType: "accounting.journal.voided", payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id } });
 
@@ -568,7 +514,142 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
     return { journalId, status: "voided", reversalJournalId: reversalId };
   } catch (e) {
     if (managesTx) {
-      try { await client.query("ROLLBACK");} catch (_) {}
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
+    throw e;
+  } finally {
+    if (managesTx) client.release();
+  }
+}
+async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey, client: existingClient = null }) {
+  const client = existingClient || (await pool.connect());
+  const managesTx = !existingClient;
+  try {
+    if (managesTx) await client.query("BEGIN");
+
+    const baseCurrency = await getOrgBaseCurrency(client, orgId);
+
+    // 1) Load original (lock)
+    const { rows: jRows } = await client.query(
+      `
+      SELECT id, status, period_id, entry_date, memo, journal_entry_type_id
+      FROM journal_entries
+      WHERE organization_id=$1 AND id=$2
+      FOR UPDATE
+      `,
+      [orgId, journalId]
+    );
+    if (!jRows.length) throw new AppError(404, "Journal not found");
+    const orig = jRows[0];
+    if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be reversed");
+
+    // 2) Target period must be open (reversal posts there)
+    const targetPeriod = await getPeriodForUpdate(client, orgId, targetPeriodId);
+    if (targetPeriod.status !== "open") throw new AppError(409, "Target period not open; cannot post reversal");
+
+    // 3) Idempotency: if reversal already exists, return it
+    if (idempotencyKey) {
+      const { rows: existing } = await client.query(
+        `
+        SELECT id
+        FROM journal_entries
+        WHERE organization_id=$1 AND idempotency_key=$2
+        LIMIT 1
+        `,
+        [orgId, idempotencyKey]
+      );
+      if (existing.length) {
+        if (managesTx) await client.query("COMMIT");
+        return { reversalJournalId: existing[0].id, alreadyExisted: true };
+      }
+    }
+
+    // 4) Load original lines
+    const { rows: lines } = await client.query(
+      `
+      SELECT line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base
+      FROM journal_entry_lines
+      WHERE journal_entry_id=$1
+      ORDER BY line_no
+      `,
+      [journalId]
+    );
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
+
+    // 5) Create reversal journal in TARGET period/date
+    const reversalMemo = `Reversal of JE ${journalId}. Reason: ${reason || "n/a"}`;
+    const { rows: revRows } = await client.query(
+      `
+      INSERT INTO journal_entries
+        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key)
+      VALUES ($1,$2,$3,$4,$5,'draft',$6)
+      RETURNING id
+      `,
+      [orgId, orig.journal_entry_type_id, targetPeriodId, entryDate, reversalMemo, idempotencyKey || null]
+    );
+    const reversalId = revRows[0].id;
+
+    // 6) Insert reversed lines
+    for (const l of lines) {
+      const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
+      const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
+      const newDebitBI = creditBI;
+      const newCreditBI = debitBI;
+      const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI;
+
+      const newDebit = bigIntToDecimalString(newDebitBI, 2);
+      const newCredit = bigIntToDecimalString(newCreditBI, 2);
+      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
+
+      await client.query(
+        `
+        INSERT INTO journal_entry_lines
+          (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `,
+        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
+      );
+    }
+
+    // 7) Post reversal into GL balances for TARGET period
+    const { rows: revLines } = await client.query(
+      `SELECT account_id, debit, credit FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+      [reversalId]
+    );
+    const totals = sum2(revLines);
+    if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced (unexpected)");
+
+    for (const l of revLines) {
+      await client.query(
+        `
+        INSERT INTO general_ledger_balances
+          (organization_id, period_id, account_id, debit_total, credit_total)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT (organization_id, period_id, account_id)
+        DO UPDATE SET
+          debit_total = general_ledger_balances.debit_total + EXCLUDED.debit_total,
+          credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
+        `,
+        [orgId, targetPeriodId, l.account_id, l.debit || "0", l.credit || "0"]
+      );
+    }
+
+    await client.query(
+      `
+      UPDATE journal_entries
+      SET status='posted', posted_at=NOW(), posted_by=$2
+      WHERE organization_id=$1 AND id=$3
+      `,
+      [orgId, actorUserId, reversalId]
+    );
+
+    // 8) IMPORTANT: Do NOT modify original journal status
+    await enqueueEvent({ orgId, eventType: 'accounting.journal.reversed', payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate } });
+    if (managesTx) await client.query("COMMIT");
+    return { reversalJournalId: reversalId, alreadyExisted: false };
+  } catch (e) {
+    if (managesTx) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
     }
     throw e;
   } finally {
@@ -576,39 +657,49 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
   }
 }
 
-// UPDATE DRAFT HEADER: Only clerk can update their own drafts
+// ---------------------------------
+// Stage 2: Draft editing + lifecycle
+// ---------------------------------
+
+async function getJournalWithLines({ orgId, journalId }) {
+  const { rows: j } = await pool.query(
+    `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
+    [orgId, journalId]
+  );
+  if (!j.length) throw new AppError(404, "Journal not found");
+  const { rows: lines } = await pool.query(
+    `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+    [journalId]
+  );
+  return { journal: j[0], lines };
+}
+
+async function assertEditableJournal(client, { orgId, journalId }) {
+  const { rows: jRows } = await client.query(
+    `SELECT id, status, period_id, entry_date, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+    [orgId, journalId]
+  );
+  if (!jRows.length) throw new AppError(404, "Journal not found");
+  const j = jRows[0];
+  if (!["draft", "rejected"].includes(j.status)) {
+    throw new AppError(409, "Only draft/rejected journals can be edited");
+  }
+  const period = await getPeriodForUpdate(client, orgId, j.period_id);
+  if (period.status !== "open") throw new AppError(409, "Period not open");
+  return { journal: j, period };
+}
+
 async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
-    // Check permission: Only clerk can edit drafts
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['clerk'],
-      action: 'edit journal drafts'
-    });
-
-    const { rows: jRows } = await client.query(
-      `SELECT id, status, period_id, entry_date, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
-      [orgId, journalId]
-    );
-    if (!jRows.length) throw new AppError(404, "Journal not found");
-    const j = jRows[0];
-    
-    if (!["draft", "rejected"].includes(j.status)) {
-      throw new AppError(409, "Only draft/rejected journals can be edited");
-    }
-
-    // Only creator can edit their own drafts
-    if (j.created_by && String(j.created_by) !== String(actorUserId)) {
+    const { journal } = await assertEditableJournal(client, { orgId, journalId });
+    if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
+      // Allow only creator to edit draft by default
       throw new AppError(403, "Only the creator can edit this draft journal");
     }
 
-    const period = await getPeriodForUpdate(client, orgId, j.period_id);
-    if (period.status !== "open") throw new AppError(409, "Period not open");
-
+    // Resolve type id if typeCode provided
     let typeId = null;
     if (payload.typeCode) {
       const { rows: tRows } = await client.query(`SELECT id FROM journal_entry_types WHERE code=$1`, [payload.typeCode]);
@@ -616,7 +707,7 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
       typeId = tRows[0].id;
     }
 
-    let periodId = payload.periodId || j.period_id;
+    let periodId = payload.periodId || journal.period_id;
     if (payload.periodId) {
       const p = await getPeriodForUpdate(client, orgId, payload.periodId);
       if (p.status !== "open") throw new AppError(409, "Target period not open");
@@ -625,7 +716,8 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
     }
 
     if (payload.entryDate && !payload.periodId) {
-      assertEntryDateWithinPeriod(payload.entryDate, period);
+      const p = await getPeriodForUpdate(client, orgId, journal.period_id);
+      assertEntryDateWithinPeriod(payload.entryDate, p);
     }
 
     await client.query(
@@ -646,48 +738,25 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
     await client.query("COMMIT");
     return { journalId, status: "draft" };
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-// REPLACE DRAFT LINES: Only clerk can replace their own draft lines
 async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
-    // Check permission: Only clerk can edit drafts
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['clerk'],
-      action: 'edit journal lines'
-    });
-
-    const { rows: jRows } = await client.query(
-      `SELECT id, status, period_id, entry_date, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
-      [orgId, journalId]
-    );
-    if (!jRows.length) throw new AppError(404, "Journal not found");
-    const j = jRows[0];
-    
-    if (!["draft", "rejected"].includes(j.status)) {
-      throw new AppError(409, "Only draft/rejected journals can be edited");
-    }
-
-    // Only creator can edit their own drafts
-    if (j.created_by && String(j.created_by) !== String(actorUserId)) {
+    const { journal } = await assertEditableJournal(client, { orgId, journalId });
+    if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
       throw new AppError(403, "Only the creator can edit this draft journal");
     }
 
-    const period = await getPeriodForUpdate(client, orgId, j.period_id);
-    if (period.status !== "open") throw new AppError(409, "Period not open");
-
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
+    // Prepare lines with proper FX rates and base amounts
     const preparedLines = [];
     for (const l of lines) {
       const currencyCode = String(l.currencyCode || baseCurrency).toUpperCase();
@@ -700,12 +769,13 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
         if (l.fxRate != null) {
           rateMicro = parseRateToMicro(l.fxRate);
         } else {
+          // Look up FX rate for the journal's entry date
           rateMicro = await lookupFxRateMicro(client, {
             orgId,
             rateTypeCode: l.rateTypeCode || "SPOT",
             fromCurrency: currencyCode,
             toCurrency: baseCurrency,
-            asOfDate: j.entry_date,
+            asOfDate: journal.entry_date,
           });
         }
       }
@@ -714,6 +784,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
     }
 
+    // Validate totals are balanced
     const totals = preparedLines.reduce(
       (acc, l) => {
         const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
@@ -726,6 +797,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
     );
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
+    // Validate accounts
     for (const l of preparedLines) {
       const { rows: aRows } = await client.query(
         `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
@@ -736,16 +808,19 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
     }
 
+    // IMPORTANT: Check if there are existing lines first
     const { rows: existingLines } = await client.query(
       `SELECT COUNT(*) as count FROM journal_entry_lines WHERE journal_entry_id = $1`,
       [journalId]
     );
     
+    // Delete existing lines if they exist
     if (parseInt(existingLines[0].count) > 0) {
       await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [journalId]);
     }
 
-    for (let i = 0;i < preparedLines.length;i++) {
+    // Insert new lines with ALL required fields including fx_rate
+    for (let i = 0; i < preparedLines.length; i++) {
       const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
@@ -768,6 +843,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       );
     }
 
+    // If journal was rejected, revert back to draft
     await client.query(
       `UPDATE journal_entries
        SET status = 'draft', rejected_at = NULL, rejected_by = NULL, rejection_reason = NULL, updated_at = NOW()
@@ -778,37 +854,23 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
     await client.query("COMMIT");
     return { journalId, status: "draft" };
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();
   }
 }
-
-// SUBMIT: Only clerk can submit their own drafts
 async function submitDraftJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
-    // Check permission: Only clerk can submit drafts
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['clerk'],
-      action: 'submit journals for approval'
-    });
-
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by, period_id, entry_date FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
-    
     if (j.status !== "draft") throw new AppError(409, "Only draft journals can be submitted");
-    
-    // Only creator can submit their own drafts
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
       throw new AppError(403, "Only the creator can submit this journal");
     }
@@ -835,301 +897,170 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
     await client.query("COMMIT");
     return { journalId, status: "submitted" };
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-// APPROVE: Only manager or admin can approve (not clerk, not accountant)
 async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
-    // Check permission: Only manager or admin can approve
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['manager', 'admin'],
-      action: 'approve journals'
-    });
-
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
-    
     if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be approved");
-    
-    // Check segregation of duties: creator cannot approve
-    if (j.created_by) {
-      await checkSegregationOfDuties(client, {
-        orgId,
-        makerUserId: j.created_by,
-        checkerUserId: actorUserId,
-        action: 'approve'
-      });
+    if (j.created_by && String(j.created_by) === String(actorUserId)) {
+      throw new AppError(403, "Segregation of duties: creator cannot approve this journal");
     }
-
     await client.query(
       `UPDATE journal_entries
        SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId]
     );
-
     await client.query("COMMIT");
     return { journalId, status: "approved" };
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-// REJECT: Only manager or admin can reject (not clerk, not accountant)
 async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
-    // Check permission: Only manager or admin can reject
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['manager', 'admin'],
-      action: 'reject journals'
-    });
-
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
-    
     if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be rejected");
-    
-    // Check segregation of duties: creator cannot reject
-    if (j.created_by) {
-      await checkSegregationOfDuties(client, {
-        orgId,
-        makerUserId: j.created_by,
-        checkerUserId: actorUserId,
-        action: 'reject'
-      });
+    if (j.created_by && String(j.created_by) === String(actorUserId)) {
+      throw new AppError(403, "Segregation of duties: creator cannot reject this journal");
     }
-
     await client.query(
       `UPDATE journal_entries
        SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId, reason]
     );
-
     await client.query("COMMIT");
     return { journalId, status: "rejected" };
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-// CANCEL: Only clerk can cancel their own drafts or rejected journals
 async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    
-    // Check permission: Only clerk can cancel drafts
-    await checkPermission(client, {
-      orgId,
-      userId: actorUserId,
-      allowedRoles: ['clerk'],
-      action: 'cancel journals'
-    });
-
     const { rows: jRows } = await client.query(
       `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
-    
     if (j.status !== "draft" && j.status !== "rejected") {
       throw new AppError(409, "Only draft/rejected journals can be canceled");
     }
-    
-    // Only creator can cancel their own drafts
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
       throw new AppError(403, "Only the creator can cancel this journal");
     }
-
     await client.query(
       `UPDATE journal_entries
        SET status='canceled', canceled_at=NOW(), canceled_by=$3, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2`,
       [orgId, journalId, actorUserId]
     );
-
     await client.query("COMMIT");
     return { journalId, status: "canceled" };
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();
   }
 }
 
-// GET JOURNAL WITH LINES: All roles can view, but with different field visibility
-async function getJournalWithLines({ orgId, journalId, actorUserId = null }) {
-  const client = await pool.connect();
-  try {
-    let userRole = 'viewer'; // Default role for public access
-    
-    // If actorUserId is provided, check their role
-    if (actorUserId) {
-      try {
-        userRole = await getUserRole(client, { orgId, userId: actorUserId });
-      } catch (e) {
-        // If user has no role, they're still a viewer
-        console.warn(`User ${actorUserId} has no role in org ${orgId}, defaulting to viewer`);
-      }
-    }
-
-    const { rows: j } = await client.query(
-      `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
-      [orgId, journalId]
-    );
-    
-    if (!j.length) throw new AppError(404, "Journal not found");
-    
-    // For viewers, restrict sensitive fields
-    const journal = j[0];
-    if (userRole === 'viewer') {
-      // Remove sensitive fields for viewers
-      const { created_by, submitted_by, approved_by, posted_by, voided_by, ...safeJournal } = journal;
-      journal.safeJournal = safeJournal;
-    }
-
-    const { rows: lines } = await client.query(
-      `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
-      [journalId]
-    );
-    
-    return { journal: userRole === 'viewer' ? journal.safeJournal : journal, lines };
-  } finally {
-    client.release();
+async function batchPostJournals({ orgId, actorUserId, journalIds, client: existingClient = null }) {
+  // Best-effort batch: posts sequentially; each post is transactional.
+  const results = [];
+  for (const id of journalIds) {
+    const r = await postDraftJournal({ orgId, journalId: id, actorUserId, client: existingClient });
+    results.push(r);
   }
+  return { count: results.length, results };
 }
 
-// LIST JOURNALS: All roles can list, but with different filters/visibility
-async function listJournals({ orgId, actorUserId, filters = {}, limit = 100, offset = 0 }) {
-  const client = await pool.connect();
-  try {
-    let userRole = 'viewer';
-    
-    // If actorUserId is provided, check their role
-    if (actorUserId) {
-      try {
-        userRole = await getUserRole(client, { orgId, userId: actorUserId });
-      } catch (e) {
-        console.warn(`User ${actorUserId} has no role in org ${orgId}, defaulting to viewer`);
-      }
-    }
+async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
+  const where = ["organization_id=$1"];
+  const params = [orgId];
+  let i = 2;
 
-    const where = ["je.organization_id=$1"];
-    const params = [orgId];
-    let i = 2;
-
-    if (filters.periodId) {
-      where.push(`je.period_id=$${i++}`);
-      params.push(filters.periodId);
-    }
-    
-    if (filters.status && filters.status.trim() !== '') {
-      where.push(`je.status=$${i++}`);
-      params.push(filters.status);
-    }
-    
-    if (filters.from) {
-      where.push(`je.entry_date >= $${i++}::date`);
-      params.push(filters.from);
-    }
-    
-    if (filters.to) {
-      where.push(`je.entry_date <= $${i++}::date`);
-      params.push(filters.to);
-    }
-
-    // Clerks can only see their own journals
-    if (userRole === 'clerk' && actorUserId) {
-      where.push(`je.created_by = $${i++}`);
-      params.push(actorUserId);
-    }
-
-    params.push(limit);
-    params.push(offset);
-
-    const { rows } = await client.query(
-      `
-      SELECT 
-        je.id, 
-        je.journal_entry_type_id, 
-        jet.name as journal_entry_type,  
-        je.period_id, 
-        je.entry_date, 
-        je.memo, 
-        je.entry_no, 
-        je.status,
-        ${userRole === 'viewer' ? 'NULL as created_by,' : 'je.created_by,'}
-        je.submitted_at, 
-        ${userRole === 'viewer' ? 'NULL as submitted_by,' : 'je.submitted_by,'}
-        je.approved_at, 
-        ${userRole === 'viewer' ? 'NULL as approved_by,' : 'je.approved_by,'}
-        je.rejected_at, 
-        ${userRole === 'viewer' ? 'NULL as rejected_by,' : 'je.rejected_by,'}
-        je.rejection_reason,
-        je.canceled_at, 
-        ${userRole === 'viewer' ? 'NULL as canceled_by,' : 'je.canceled_by,'}
-        je.created_at, 
-        je.updated_at
-      FROM journal_entries je
-      LEFT JOIN journal_entry_types jet ON je.journal_entry_type_id = jet.id
-      WHERE ${where.join(" AND ")}
-      ORDER BY je.entry_no DESC, je.created_at DESC
-      LIMIT $${i++} OFFSET $${i++}
-      `,
-      params
-    );
-    return rows;
-  } finally {
-    client.release();
+  if (filters.periodId) {
+    where.push(`period_id=$${i++}`);
+    params.push(filters.periodId);
   }
+  if (filters.status) {
+    where.push(`status=$${i++}`);
+    params.push(filters.status);
+  }
+  if (filters.from) {
+    where.push(`entry_date >= $${i++}::date`);
+    params.push(filters.from);
+  }
+  if (filters.to) {
+    where.push(`entry_date <= $${i++}::date`);
+    params.push(filters.to);
+  }
+
+  params.push(limit);
+  params.push(offset);
+
+  const { rows } = await pool.query(
+    `
+    SELECT id, journal_entry_type_id, period_id, entry_date, memo, status,
+           created_by, submitted_at, submitted_by, approved_at, approved_by,
+           rejected_at, rejected_by, rejection_reason,
+           canceled_at, canceled_by,
+           created_at, updated_at
+    FROM journal_entries
+    WHERE ${where.join(" AND ")}
+    ORDER BY entry_date DESC, created_at DESC
+    LIMIT $${i++} OFFSET $${i++}
+    `,
+    params
+  );
+  return rows;
 }
+
 
 module.exports = {
   createDraftJournal,
   postDraftJournal,
   voidByReversal,
+  reversePostedJournal,
+  listJournals,
+  getJournalWithLines,
   updateDraftHeader,
   replaceDraftLines,
   submitDraftJournal,
   approveSubmittedJournal,
   rejectSubmittedJournal,
   cancelDraftJournal,
-  getJournalWithLines,
-  listJournals,
-  // Helper functions for testing
-  getUserRole,
-  checkPermission,
-  checkSegregationOfDuties
+  batchPostJournals
 };

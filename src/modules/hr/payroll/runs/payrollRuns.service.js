@@ -8,15 +8,6 @@ const componentsRepo = require("../components/components.repository");
 const statutoryRepo = require("../../statutory/statutory.repository");
 const benefitsRepo = require("../../benefits/benefits.repository");
 
-function csvEscape(v) {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
-    return '"' + s.replaceAll('"', '""') + '"';
-  }
-  return s;
-}
-
 function computeDaysInclusive(startDate, endDate) {
   const ms = 24 * 60 * 60 * 1000;
   const a = new Date(startDate);
@@ -94,50 +85,6 @@ async function listRunLines({ orgId, runId }) {
   return runsRepo.listRunLines(orgId, runId);
 }
 
-async function exportNetPayCsv({ orgId, runId }) {
-  const run = await getRun({ orgId, runId });
-  const lines = await runsRepo.listRunLinesForPayout(orgId, runId);
-  const headers = [
-    "employee_no",
-    "first_name",
-    "last_name",
-    "bank_name",
-    "bank_account_no",
-    "bank_branch",
-    "net_pay",
-  ];
-  const out = [headers.join(",")];
-  for (const l of lines) {
-    out.push(headers.map((h) => {
-      if (h === "net_pay") return csvEscape(Number(l.net_pay || 0).toFixed(2));
-      return csvEscape(l[h]);
-    }).join(","));
-  }
-  // Include metadata as a trailing comment line (safe in CSV)
-  out.push(`# payroll_run_id=${run.id}, pay_date=${run.pay_date}`);
-  return out.join("\n");
-}
-
-async function exportBankPaymentsCsv({ orgId, runId, format = "generic" }) {
-  // Currently 'generic' format: bank_name, bank_account_no, bank_branch, account_name, amount
-  const lines = await runsRepo.listRunLinesForPayout(orgId, runId);
-  const headers = ["bank_name","bank_account_no","bank_branch","account_name","amount"];
-  const out = [headers.join(",")];
-  for (const l of lines) {
-    const accountName = `${l.first_name || ""} ${l.last_name || ""}`.trim();
-    const amount = Number(l.net_pay || 0).toFixed(2);
-    const row = {
-      bank_name: l.bank_name,
-      bank_account_no: l.bank_account_no,
-      bank_branch: l.bank_branch,
-      account_name: accountName,
-      amount,
-    };
-    out.push(headers.map(h => csvEscape(row[h])).join(","));
-  }
-  return out.join("\n");
-}
-
 async function calculateRun({ orgId, actorUserId, runId }) {
   const run = await getRun({ orgId, runId });
   if (!["draft", "calculated"].includes(run.status)) {
@@ -163,7 +110,7 @@ async function calculateRun({ orgId, actorUserId, runId }) {
   const componentById = new Map(components.map((c) => [String(c.id), c]));
 
   // Statutory rules and benefits effective as of run pay date
-  const statutoryRules = await statutoryRepo.listRulesEffective(orgId, run.pay_date);
+  const statutoryRules = await statutoryRepo.listRules(orgId, { status: "active" });
   const employeeBenefits = await benefitsRepo.listEmployeeBenefitsEffective(orgId, run.pay_date);
   const benefitsByEmployee = new Map();
   for (const eb of employeeBenefits) {
@@ -448,6 +395,4 @@ module.exports = {
   buildJournal,
   postJournal,
   listRunLines,
-  exportNetPayCsv,
-  exportBankPaymentsCsv,
 };

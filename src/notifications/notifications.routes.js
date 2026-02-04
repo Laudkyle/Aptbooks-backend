@@ -82,7 +82,7 @@ router.get("/smtp", requirePermission("settings.read"), async (req, res, next) =
       [orgId]
     );
     res.json(rows[0]?.value_json || null);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.put("/smtp", requirePermission("settings.manage"), async (req, res, next) => {
@@ -116,7 +116,7 @@ router.put("/smtp", requirePermission("settings.manage"), async (req, res, next)
     });
 
     res.json({ ok: true });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // SMTP test endpoint (configuration only). The repo does not ship an SMTP client dependency.
@@ -130,9 +130,9 @@ router.post("/smtp/test", requirePermission("settings.manage"), async (req, res,
       [orgId]
     );
     if (!rows.length) throw new AppError(409, "SMTP not configured");
-    // Return a placeholder response;integrate nodemailer or Gmail API in deployment.
+    // Return a placeholder response; integrate nodemailer or Gmail API in deployment.
     res.json({ ok: true, message: "SMTP configuration found. Test delivery is not executed in this build.", to });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

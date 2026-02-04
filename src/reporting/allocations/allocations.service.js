@@ -10,7 +10,7 @@ const {
 } = require("../_util");
 const { validateDimensionJson } = require("../dimensions/dimensions.validator");
 
-const STATUS = ["active", "inactive", "archived"];// bases/rules
+const STATUS = ["active", "inactive", "archived"]; // bases/rules
 
 async function fetchAccountNormalBalances({ orgId, accountIds }) {
   if (!Array.isArray(accountIds) || !accountIds.length) return new Map();
@@ -277,7 +277,7 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
       const lineRows = [];
       let lineNo = 1;
       let allocatedSum = 0;
-      for (let i = 0;i < targets.length;i++) {
+      for (let i = 0; i < targets.length; i++) {
         const t = targets[i];
         const w = Number(t.weight);
         let amt = (baseAmount * w) / totalWeight;
@@ -580,7 +580,7 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
 
     const lines = [];
     let allocatedSum = 0;
-    for (let i = 0;i < targets.length;i++) {
+    for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
       const w = Number(t.weight);
       let amt = (baseAmount * w) / totalWeight;
@@ -668,7 +668,7 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
 
     const lines = [];
     let allocatedSum = 0;
-    for (let i = 0;i < targets.length;i++) {
+    for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
       const w = Number(t.weight);
       let amt = (baseAmount * w) / totalWeight;

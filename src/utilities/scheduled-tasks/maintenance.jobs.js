@@ -34,7 +34,7 @@ async function maintenanceRetentionDaily() {
 }
 
 async function maintenanceRateLimitCleanupDaily() {
-  // Only relevant if RATE_LIMIT_STORE=postgres;safe even if table is missing.
+  // Only relevant if RATE_LIMIT_STORE=postgres; safe even if table is missing.
   const retentionDays = Number(process.env.RATE_LIMIT_RETENTION_DAYS || 7);
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
   try {

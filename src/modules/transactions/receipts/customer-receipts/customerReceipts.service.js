@@ -197,7 +197,7 @@ async function autoAllocateCustomerReceipt({ orgId, actorUserId, id, rule }) {
     // Try discount settlement first (if eligible)
     const maxDiscount = computeEarlyPaymentDiscount({
       outstanding,
-      cashApplied: outstanding, // placeholder;will recompute below
+      cashApplied: outstanding, // placeholder; will recompute below
       term,
       receiptDate: cr.receipt_date,
       invoiceDate: r.invoice_date
@@ -367,7 +367,7 @@ async function postCustomerReceipt({ orgId, actorUserId, id }) {
   let discountCents = 0n;
   let settlementCents = 0n;
 
-  // Validate allocations and compute discounts;update allocation rows with computed discounts
+  // Validate allocations and compute discounts; update allocation rows with computed discounts
   for (const a of allocations) {
     const inv = await getInvoice(orgId, a.invoice_id);
     if (!inv) throw new AppError(400, `Invalid invoiceId: ${a.invoice_id}`);

@@ -66,7 +66,7 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
   );
   const dn = rows[0];
 
-  for (let i = 0;i < payload.lines.length;i++) {
+  for (let i = 0; i < payload.lines.length; i++) {
     const l = payload.lines[i];
     await client.query(
       `INSERT INTO debit_note_lines(
@@ -94,8 +94,8 @@ async function list({ orgId, query, client }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
   let i = 2;
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.vendorId) { where.push(`vendor_id=$${i++}`);params.push(query.vendorId);}
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
+  if (query?.vendorId) { where.push(`vendor_id=$${i++}`); params.push(query.vendorId); }
   const { rows } = await client.query(
     `SELECT * FROM debit_notes WHERE ${where.join(" AND ")}
      ORDER BY debit_note_date DESC, created_at DESC

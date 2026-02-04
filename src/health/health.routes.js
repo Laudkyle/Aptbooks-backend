@@ -41,7 +41,7 @@ async function tableExists(tableName) {
 
 async function moduleTableCheck() {
   // Minimal “is the module wired + migrated” checks using canonical tables.
-  // (These are not functional tests;they are health indicators.)
+  // (These are not functional tests; they are health indicators.)
   const modules = [
     { module: "core.foundation", required: ["organizations", "users", "roles", "permissions", "system_settings", "audit_logs"] },
     { module: "core.accounting", required: ["chart_of_accounts", "journal_entries", "journal_entry_lines", "accounting_periods", "general_ledger_balances"] },

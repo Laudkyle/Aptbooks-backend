@@ -14,8 +14,8 @@ async function listStockCounts(orgId, query = {}) {
   const params = [orgId];
   const where = ['sc.organization_id=$1'];
   let i = 2;
-  if (query.warehouseId) { where.push(`sc.warehouse_id=$${i++}`);params.push(query.warehouseId);}
-  if (query.status) { where.push(`sc.status=$${i++}`);params.push(query.status);}
+  if (query.warehouseId) { where.push(`sc.warehouse_id=$${i++}`); params.push(query.warehouseId); }
+  if (query.status) { where.push(`sc.status=$${i++}`); params.push(query.status); }
   const { rows } = await pool.query(
     `SELECT sc.*,
             w.code AS warehouse_code,
@@ -65,11 +65,11 @@ async function setStatus(orgId, id, status, actorUserId, extra = {}) {
   const fields = [];
   const params = [orgId, id];
   let i = 3;
-  fields.push(`status=$${i++}`);params.push(status);
-  if (status === 'submitted') { fields.push(`submitted_at=NOW()`);fields.push(`submitted_by=$${i++}`);params.push(actorUserId);}
-  if (status === 'approved') { fields.push(`approved_at=NOW()`);fields.push(`approved_by=$${i++}`);params.push(actorUserId);}
-  if (status === 'posted') { fields.push(`posted_at=NOW()`);fields.push(`posted_by=$${i++}`);params.push(actorUserId);}
-  if (extra.postedTxnId) { fields.push(`posted_txn_id=$${i++}`);params.push(extra.postedTxnId);}
+  fields.push(`status=$${i++}`); params.push(status);
+  if (status === 'submitted') { fields.push(`submitted_at=NOW()`); fields.push(`submitted_by=$${i++}`); params.push(actorUserId); }
+  if (status === 'approved') { fields.push(`approved_at=NOW()`); fields.push(`approved_by=$${i++}`); params.push(actorUserId); }
+  if (status === 'posted') { fields.push(`posted_at=NOW()`); fields.push(`posted_by=$${i++}`); params.push(actorUserId); }
+  if (extra.postedTxnId) { fields.push(`posted_txn_id=$${i++}`); params.push(extra.postedTxnId); }
   const { rows } = await pool.query(
     `UPDATE inventory_stock_counts SET ${fields.join(', ')}, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
     params

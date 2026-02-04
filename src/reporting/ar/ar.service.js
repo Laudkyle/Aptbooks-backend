@@ -203,7 +203,7 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     });
   }
   for (const r of receipts) {
-    // Receipts reduce AR;show as credit.
+    // Receipts reduce AR; show as credit.
     entries.push({
       date: r.receipt_date,
       type: "receipt",

@@ -34,7 +34,6 @@ async function listCategories({ orgId }) {
   return rows;
 }
 
-
 async function getCategory({ orgId, id }) {
   const { rows } = await pool.query(
     `SELECT * FROM asset_categories WHERE organization_id=$1 AND id=$2`,

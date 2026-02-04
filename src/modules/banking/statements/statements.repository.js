@@ -1,6 +1,6 @@
 const { pool } = require("../../../db/pool");
 
-function db(client) { return client || pool;}
+function db(client) { return client || pool; }
 
 async function createStatement(orgId, createdBy, payload, client = null) {
   const { bankAccountId, statementDate, openingBalance, closingBalance } = payload;
@@ -12,7 +12,6 @@ async function createStatement(orgId, createdBy, payload, client = null) {
   );
   return rows[0];
 }
-
 
 async function getStatement(orgId, statementId, client = null) {
   const { rows } = await db(client).query(
@@ -106,14 +105,14 @@ async function addLines(orgId, bankAccountId, statementId, lines, userId, client
             `SELECT * FROM bank_statement_lines WHERE statement_id=$1 AND external_id=$2 LIMIT 1`,
             [statementId, l.externalId]
           );
-          if (rows.length) { results.push(rows[0]);continue;}
+          if (rows.length) { results.push(rows[0]); continue; }
         }
         if (l.lineHash) {
           const { rows } = await conn.query(
             `SELECT * FROM bank_statement_lines WHERE statement_id=$1 AND line_hash=$2 LIMIT 1`,
             [statementId, l.lineHash]
           );
-          if (rows.length) { results.push(rows[0]);continue;}
+          if (rows.length) { results.push(rows[0]); continue; }
         }
       }
       throw e;

@@ -11,7 +11,6 @@ function normalizeText(v) {
   return String(v).trim().replace(/\s+/g, " ");
 }
 
-
 function computeLineHash({ txnDate, amount, description, reference, externalId }) {
   const material = [
     txnDate,
@@ -152,7 +151,7 @@ async function matchLine(orgId, userId, lineId, payload) {
   });
 }
 
-async function listStatements(orgId) { return repo.listStatements(orgId);}
+async function listStatements(orgId) { return repo.listStatements(orgId); }
 
 module.exports = {
   createStatement,

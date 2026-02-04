@@ -27,7 +27,7 @@ async function createBenefitPlan(orgId, payload) {
 async function listBenefitPlans(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE organization_id=$1";
-  if (query.status) { params.push(query.status);where += ` AND status=$${params.length}`;}
+  if (query.status) { params.push(query.status); where += ` AND status=$${params.length}`; }
   const r = await pool.query(`SELECT * FROM hr_benefit_plans ${where} ORDER BY code ASC`, params);
   return r.rows;
 }
@@ -37,15 +37,10 @@ async function getBenefitPlan(orgId, id) {
   return r.rows[0] || null;
 }
 
-async function getBenefitPlanByCode(orgId, code) {
-  const r = await pool.query(`SELECT * FROM hr_benefit_plans WHERE organization_id=$1 AND code=$2`, [orgId, code]);
-  return r.rows[0] || null;
-}
-
 async function updateBenefitPlan(orgId, id, payload) {
   const fields = [];
   const params = [orgId, id];
-  const set = (k, v) => { params.push(v);fields.push(`${k}=$${params.length}`);};
+  const set = (k, v) => { params.push(v); fields.push(`${k}=$${params.length}`); };
   if (payload.code !== undefined) set("code", payload.code);
   if (payload.name !== undefined) set("name", payload.name);
   if (payload.description !== undefined) set("description", payload.description);
@@ -90,9 +85,9 @@ async function assignEmployeeBenefit(orgId, payload) {
 async function listEmployeeBenefits(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE eb.organization_id=$1";
-  if (query.employee_id) { params.push(query.employee_id);where += ` AND eb.employee_id=$${params.length}`;}
-  if (query.benefit_plan_id) { params.push(query.benefit_plan_id);where += ` AND eb.benefit_plan_id=$${params.length}`;}
-  if (query.status) { params.push(query.status);where += ` AND eb.status=$${params.length}`;}
+  if (query.employee_id) { params.push(query.employee_id); where += ` AND eb.employee_id=$${params.length}`; }
+  if (query.benefit_plan_id) { params.push(query.benefit_plan_id); where += ` AND eb.benefit_plan_id=$${params.length}`; }
+  if (query.status) { params.push(query.status); where += ` AND eb.status=$${params.length}`; }
 
   const r = await pool.query(
     `
@@ -142,7 +137,7 @@ async function listEmployeeBenefitsEffective(orgId, asOfDate) {
 async function updateEmployeeBenefit(orgId, id, payload) {
   const fields = [];
   const params = [orgId, id];
-  const set = (k, v) => { params.push(v);fields.push(`${k}=$${params.length}`);};
+  const set = (k, v) => { params.push(v); fields.push(`${k}=$${params.length}`); };
   if (payload.effective_from !== undefined) set("effective_from", payload.effective_from);
   if (payload.effective_to !== undefined) set("effective_to", payload.effective_to);
   if (payload.status !== undefined) set("status", payload.status);
@@ -166,7 +161,6 @@ async function deactivateEmployeeBenefit(orgId, id) {
 
 module.exports = {
   createBenefitPlan, listBenefitPlans, getBenefitPlan, updateBenefitPlan, deactivateBenefitPlan,
-  getBenefitPlanByCode,
   assignEmployeeBenefit, listEmployeeBenefits, getEmployeeBenefit, updateEmployeeBenefit, deactivateEmployeeBenefit,
   listEmployeeBenefitsEffective,
 };

@@ -24,7 +24,7 @@ router.get(
         offset: req.query.offset,
       });
       res.json({ data: out });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -35,7 +35,7 @@ router.post(
     try {
       const out = await svc.createDashboard(ctx(req), req.body || {});
       res.status(201).json({ data: out });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -46,7 +46,7 @@ router.patch(
     try {
       const out = await svc.updateDashboard(ctx(req), req.params.dashboardId, req.body || {});
       res.json({ data: out });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -58,7 +58,7 @@ router.get(
     try {
       const out = await svc.listWidgets(ctx(req), req.params.dashboardId, req.query.includeArchived === "true");
       res.json({ data: out });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -69,7 +69,7 @@ router.post(
     try {
       const out = await svc.createWidget(ctx(req), req.params.dashboardId, req.body || {});
       res.status(201).json({ data: out });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 
@@ -80,7 +80,7 @@ router.patch(
     try {
       const out = await svc.updateWidget(ctx(req), req.params.widgetId, req.body || {});
       res.json({ data: out });
-    } catch (e) { next(e);}
+    } catch (e) { next(e); }
   }
 );
 

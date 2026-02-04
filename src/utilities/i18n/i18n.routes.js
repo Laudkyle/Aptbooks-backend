@@ -10,8 +10,8 @@ router.get("/locales", requirePermission("utilities.i18n.read"), (req, res) => {
 });
 
 router.get("/messages/:locale", requirePermission("utilities.i18n.read"), (req, res, next) => {
-  try { res.json(svc.getMessages(req.params.locale));}
-  catch (e) { next(e);}
+  try { res.json(svc.getMessages(req.params.locale)); }
+  catch (e) { next(e); }
 });
 
 module.exports = router;

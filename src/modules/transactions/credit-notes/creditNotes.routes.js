@@ -33,21 +33,21 @@ router.post("/", requirePermission("transactions.credit_note.manage"), async (re
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("transactions.credit_note.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listCreditNotes({ orgId, query: req.query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("transactions.credit_note.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getCreditNoteDetails({ orgId, id: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/issue", requirePermission("transactions.credit_note.issue"), async (req, res, next) => {
@@ -68,7 +68,7 @@ router.post("/:id/issue", requirePermission("transactions.credit_note.issue"), a
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/apply", requirePermission("transactions.credit_note.apply"), async (req, res, next) => {
@@ -90,7 +90,7 @@ router.post("/:id/apply", requirePermission("transactions.credit_note.apply"), a
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/void", requirePermission("transactions.credit_note.void"), async (req, res, next) => {
@@ -112,7 +112,7 @@ router.post("/:id/void", requirePermission("transactions.credit_note.void"), asy
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

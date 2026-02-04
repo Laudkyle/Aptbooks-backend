@@ -1,5 +1,5 @@
 const router = require("express").Router();
-const bcrypt = require("bcrypt");
+const bcrypt = require("bcrypt"); 
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { pool } = require("../../../db/pool");
@@ -75,7 +75,7 @@ router.get("/me/login-history", async (req, res, next) => {
       [orgId, req.user.id, limit]
     );
     res.json({ data: rows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Admin: login history with filtering
@@ -107,7 +107,7 @@ router.get("/:userId/login-history", requirePermission("users.read"), async (req
       params
     );
     res.json({ data: rows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/create/", requirePermission("users.manage"), async (req, res, next) => {
@@ -193,7 +193,7 @@ router.get("/:id", requirePermission("users.read"), async (req, res, next) => {
     );
 
     res.json({ ...uRows[0], roles: roleRows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Update user fields
@@ -288,7 +288,7 @@ router.post("/:id/enable", requirePermission("users.manage"), async (req, res, n
     });
 
     res.json(after[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Remove role assignment(s)
@@ -330,7 +330,7 @@ router.delete("/:id/roles", requirePermission("rbac.roles.manage"), async (req, 
 
     res.json({ userId, removed: roleIds });
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     next(e);
   } finally {
     client.release();
@@ -366,7 +366,7 @@ router.delete("/:id", requirePermission("users.manage"), async (req, res, next) 
     });
 
     res.json(after[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.patch("/:id/disable", requirePermission("users.manage"), async (req, res, next) => {
@@ -475,7 +475,7 @@ router.get("/me/organizations", async (req, res, next) => {
     );
 
     res.json({ userId, organizations: rows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/me/switch-organization", async (req, res, next) => {
@@ -527,7 +527,7 @@ router.post("/me/switch-organization", async (req, res, next) => {
       user: { id: user.id, email: user.email, organization_id: user.organization_id },
       tokens: { accessToken, refreshToken: refresh.token }
     });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

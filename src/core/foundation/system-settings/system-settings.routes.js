@@ -98,7 +98,7 @@ router.put(
       await client.query("COMMIT");
       res.json({ ok: true, data: updated });
     } catch (e) {
-      try { await client.query("ROLLBACK");} catch (_) { /* ignore */ }
+      try { await client.query("ROLLBACK"); } catch (_) { /* ignore */ }
       next(e);
     } finally {
       client.release();
@@ -115,7 +115,7 @@ router.get("/:key", requirePermission("settings.read"), async (req, res, next) =
     );
     if (!rows.length) throw new AppError(404, "Setting not found");
     res.json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.put("/:key", requirePermission("settings.manage"), async (req, res, next) => {
@@ -148,7 +148,7 @@ if (key === "inventoryCostMethod") {
        ON CONFLICT (organization_id, key) DO UPDATE SET value_json=EXCLUDED.value_json`,
       [orgId, key, JSON.stringify({ method, locked: true })]
     );
-    throw new AppError(409, "inventoryCostMethod is now locked;cannot be changed after accounting activity begins");
+    throw new AppError(409, "inventoryCostMethod is now locked; cannot be changed after accounting activity begins");
   }
   // Validate payload
   if (!value?.method || !["WEIGHTED_AVERAGE","FIFO"].includes(value.method)) throw new AppError(400, "inventoryCostMethod.method must be WEIGHTED_AVERAGE or FIFO");
@@ -179,7 +179,7 @@ if (key === "inventoryCostMethod") {
     });
 
     res.json(after[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

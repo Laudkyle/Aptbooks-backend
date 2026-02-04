@@ -84,7 +84,7 @@ function setRefreshCookie(res, token) {
   };
   if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
 
-  // Express has res.cookie built-in;no cookie-parser required for setting.
+  // Express has res.cookie built-in; no cookie-parser required for setting.
   res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, token, opts);
 }
 
@@ -225,7 +225,7 @@ router.post("/login", async (req, res, next) => {
       accessToken,
       refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : refresh.token
     });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // 2FA enrollment (generate secret)
@@ -242,7 +242,7 @@ router.post("/2fa/enroll", require("../../../middleware/auth.middleware").authRe
     // store as pending secret (two_factor_secret) until enabled
     await pool.query(`UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId, secret]);
     res.json({ secret, otpauth });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // 2FA enable (verify TOTP)
@@ -259,7 +259,7 @@ router.post("/2fa/verify", require("../../../middleware/auth.middleware").authRe
     if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp");
     await pool.query(`UPDATE users SET two_factor_enabled=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
     res.json({ ok: true });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // 2FA disable (verify password + TOTP)
@@ -278,7 +278,7 @@ router.post("/2fa/disable", require("../../../middleware/auth.middleware").authR
     if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 })) throw new AppError(400, "Invalid otp");
     await pool.query(`UPDATE users SET two_factor_enabled=FALSE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, userId]);
     res.json({ ok: true });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 /**
@@ -441,9 +441,9 @@ router.post("/forgot-password", async (req, res, next) => {
       }
     }
 
-    // In production you'd send tokens via email;here we optionally return them for dev/test.
+    // In production you'd send tokens via email; here we optionally return them for dev/test.
     res.json(env.RETURN_RESET_TOKEN_IN_RESPONSE ? { ok: true, issued } : { ok: true });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/reset-password", async (req, res, next) => {
@@ -506,7 +506,7 @@ router.post("/reset-password", async (req, res, next) => {
     } finally {
       client.release();
     }
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 router.post("/refresh", async (req, res, next) => {
   try {
@@ -532,7 +532,7 @@ router.post("/refresh", async (req, res, next) => {
       accessToken: rotated.accessToken,
       refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : rotated.refreshToken
     });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/logout", async (req, res, next) => {
@@ -573,7 +573,7 @@ router.post("/logout", async (req, res, next) => {
     });
 
     res.json({ ok: true });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/logout-all", async (req, res, next) => {
@@ -613,7 +613,7 @@ router.post("/logout-all", async (req, res, next) => {
     });
 
     res.json({ ok: true });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

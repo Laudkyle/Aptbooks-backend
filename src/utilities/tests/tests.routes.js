@@ -13,7 +13,7 @@ router.get(
   requirePermission("utilities.tests.run"),
   async (req, res, next) => {
     try {
-      // Listing does not require ALLOW_TEST_RUN_API;this is safe metadata.
+      // Listing does not require ALLOW_TEST_RUN_API; this is safe metadata.
       res.json({ data: { files: svc.listTestFiles() } });
     } catch (err) {
       next(err);

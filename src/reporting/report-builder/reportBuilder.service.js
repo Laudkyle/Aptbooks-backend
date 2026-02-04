@@ -378,7 +378,7 @@ async function upsertShare(ctx, reportId, payload) {
 }
 
 async function deleteShare(ctx, shareId) {
-  // share deletion is manage-only;caller already has manage permission
+  // share deletion is manage-only; caller already has manage permission
   return repo.deleteShare({ organizationId: ctx.organizationId, shareId });
 }
 

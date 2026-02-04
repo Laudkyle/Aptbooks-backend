@@ -26,7 +26,7 @@ router.post("/", requirePermission("accounting.coa.manage"), async (req, res, ne
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("accounting.coa.read"), async (req, res, next) => {
@@ -34,14 +34,14 @@ router.get("/", requirePermission("accounting.coa.read"), async (req, res, next)
     const orgId = req.user.organization_id;
     const includeArchived = req.query.includeArchived === "true";
     res.json(await coaAPI.listAccounts({ orgId, includeArchived }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("accounting.coa.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await coaAPI.getAccount({ orgId, accountId: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.patch("/:id", requirePermission("accounting.coa.manage"), async (req, res, next) => {
@@ -64,7 +64,7 @@ router.patch("/:id", requirePermission("accounting.coa.manage"), async (req, res
     });
 
     res.json(after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Archive account (soft-delete)
@@ -88,7 +88,7 @@ router.post("/:id/archive", requirePermission("accounting.coa.archive"), async (
     });
 
     res.json(after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

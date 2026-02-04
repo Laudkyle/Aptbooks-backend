@@ -3,7 +3,7 @@ const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { normalizeCode, normalizeStatus, assertUuid } = require("../_util");
 
-const CENTER_TYPES = ["cost", "profit", "investment"];// routes map to tables
+const CENTER_TYPES = ["cost", "profit", "investment"]; // routes map to tables
 const CENTER_STATUSES = ["active", "inactive", "archived"];
 
 function tableForType(type) {
@@ -18,7 +18,7 @@ function assertName(name) {
 function parseDate(value, field) {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value !== "string") throw new AppError(400, `${field} must be an ISO date string (YYYY-MM-DD)`);
-  // light validation;Postgres will enforce on write
+  // light validation; Postgres will enforce on write
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new AppError(400, `${field} must be YYYY-MM-DD`);
   return value;
 }
@@ -158,8 +158,8 @@ async function updateCenter({ orgId, type, id, code, name, status, parentId, val
     const usage = await usageForCenter({ orgId, type, id });
     const hasRefs = usage.usage.some((u) => Number(u.count || 0) > 0);
     if (hasRefs && normStatus === "archived") {
-      // allow inactive with refs;disallow archiving if referenced (can be changed later via explicit reassignment workflow)
-      throw new AppError(409, "Center is referenced by existing records;archive is not permitted. Use inactive/block instead.");
+      // allow inactive with refs; disallow archiving if referenced (can be changed later via explicit reassignment workflow)
+      throw new AppError(409, "Center is referenced by existing records; archive is not permitted. Use inactive/block instead.");
     }
   }
 
@@ -207,11 +207,11 @@ async function archiveCenter({ orgId, type, id, actorUserId, req }) {
   if (!before) return;
   if (before.status === "archived") return;
 
-  // Governance: do not archive if referenced;use inactive instead.
+  // Governance: do not archive if referenced; use inactive instead.
   const usage = await usageForCenter({ orgId, type, id });
   const hasRefs = usage.usage.some((u) => Number(u.count || 0) > 0);
   if (hasRefs) {
-    throw new AppError(409, "Center is referenced by existing records;archive is not permitted. Use inactive/block instead.");
+    throw new AppError(409, "Center is referenced by existing records; archive is not permitted. Use inactive/block instead.");
   }
 
   const { rows } = await pool.query(

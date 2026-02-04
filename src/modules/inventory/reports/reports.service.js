@@ -3,7 +3,7 @@ const { pool } = require("../../../db/pool");
 async function inventoryValuation(orgId, { warehouseId } = {}) {
   const params = [orgId];
   let where = "WHERE b.organization_id=$1";
-  if (warehouseId) { params.push(warehouseId);where += ` AND b.warehouse_id=$${params.length}`;}
+  if (warehouseId) { params.push(warehouseId); where += ` AND b.warehouse_id=$${params.length}`; }
 
   const { rows } = await pool.query(
     `
@@ -25,10 +25,10 @@ async function inventoryValuation(orgId, { warehouseId } = {}) {
 async function inventoryMovements(orgId, { from, to, warehouseId, itemId } = {}) {
   const params=[orgId];
   let where="WHERE t.organization_id=$1";
-  if (from) { params.push(from);where += ` AND t.txn_date >= $${params.length}`;}
-  if (to) { params.push(to);where += ` AND t.txn_date <= $${params.length}`;}
-  if (warehouseId) { params.push(warehouseId);where += ` AND (t.source_warehouse_id=$${params.length} OR t.dest_warehouse_id=$${params.length})`;}
-  if (itemId) { params.push(itemId);where += ` AND EXISTS (SELECT 1 FROM inventory_transaction_lines l WHERE l.transaction_id=t.id AND l.item_id=$${params.length})`;}
+  if (from) { params.push(from); where += ` AND t.txn_date >= $${params.length}`; }
+  if (to) { params.push(to); where += ` AND t.txn_date <= $${params.length}`; }
+  if (warehouseId) { params.push(warehouseId); where += ` AND (t.source_warehouse_id=$${params.length} OR t.dest_warehouse_id=$${params.length})`; }
+  if (itemId) { params.push(itemId); where += ` AND EXISTS (SELECT 1 FROM inventory_transaction_lines l WHERE l.transaction_id=t.id AND l.item_id=$${params.length})`; }
 
   const { rows } = await pool.query(
     `

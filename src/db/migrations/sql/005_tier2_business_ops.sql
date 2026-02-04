@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS business_partners (
   email CITEXT,
   phone TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
-
   default_receivable_account_id UUID REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
   default_payable_account_id UUID REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
   payment_terms_id UUID REFERENCES payment_terms(id) ON DELETE SET NULL,

@@ -1,6 +1,6 @@
 const { pool } = require("../../../db/pool");
 
-function db(client) { return client || pool;}
+function db(client) { return client || pool; }
 
 async function findActive(orgId, bankAccountId, periodId, client = null) {
   const { rows } = await db(client).query(
@@ -12,7 +12,6 @@ async function findActive(orgId, bankAccountId, periodId, client = null) {
   );
   return rows[0] || null;
 }
-
 
 async function create(orgId, userId, { bankAccountId, periodId }, client = null) {
   const { rows } = await db(client).query(

@@ -71,7 +71,7 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
   );
   const cn = rows[0];
 
-  for (let i = 0;i < payload.lines.length;i++) {
+  for (let i = 0; i < payload.lines.length; i++) {
     const l = payload.lines[i];
     await client.query(
       `INSERT INTO credit_note_lines(
@@ -97,10 +97,10 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
 
 async function list({ orgId, query, client }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["organization_id=$1"]; 
   let i = 2;
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.customerId) { where.push(`customer_id=$${i++}`);params.push(query.customerId);}
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
+  if (query?.customerId) { where.push(`customer_id=$${i++}`); params.push(query.customerId); }
   const { rows } = await client.query(
     `SELECT * FROM credit_notes WHERE ${where.join(" AND ")}
      ORDER BY credit_note_date DESC, created_at DESC

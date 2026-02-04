@@ -76,8 +76,8 @@ async function listPartners({ orgId, query }) {
   const where = ["organization_id=$1"];
   let i = 2;
 
-  if (query?.type) { where.push(`type=$${i++}`);params.push(query.type);}
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
+  if (query?.type) { where.push(`type=$${i++}`); params.push(query.type); }
+  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
 
   const { rows } = await pool.query(
     `SELECT * FROM business_partners WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,

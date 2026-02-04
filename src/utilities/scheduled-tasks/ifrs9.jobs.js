@@ -35,7 +35,7 @@ function yyyyMmDdUTC(d) {
  * Modern accounting behaviour:
  *  - Period-end ECL compute is commonly automated.
  *  - Posting can be automated, but should remain tenant-controllable. This implementation defaults
- *    to auto-post enabled;set system setting compliance.ifrs9.autopost.enabled to disable.
+ *    to auto-post enabled; set system setting compliance.ifrs9.autopost.enabled to disable.
  *
  * Safeguards:
  *  - Do nothing if an ECL run already exists for (period, model, as_of_date).

@@ -9,7 +9,7 @@ const repo = require('./writeoffs.repository');
 
 async function listReasonCodes({ orgId }) {
   const client = await pool.connect();
-  try { return await repo.listReasonCodes({ orgId, client });} finally { client.release();}
+  try { return await repo.listReasonCodes({ orgId, client }); } finally { client.release(); }
 }
 async function upsertReasonCode({ orgId, payload }) {
   return withTransaction(async (client) => repo.upsertReasonCode({ orgId, payload, client }));
@@ -20,7 +20,7 @@ async function deleteReasonCode({ orgId, code }) {
 
 async function getSettings({ orgId }) {
   const client = await pool.connect();
-  try { return await repo.getSettings({ orgId, client });} finally { client.release();}
+  try { return await repo.getSettings({ orgId, client }); } finally { client.release(); }
 }
 async function upsertSettings({ orgId, payload }) {
   return withTransaction(async (client) => repo.upsertSettings({ orgId, payload, client }));
@@ -28,11 +28,11 @@ async function upsertSettings({ orgId, payload }) {
 
 async function listWriteoffs({ orgId, status }) {
   const client = await pool.connect();
-  try { return await repo.listWriteoffs({ orgId, status, client });} finally { client.release();}
+  try { return await repo.listWriteoffs({ orgId, status, client }); } finally { client.release(); }
 }
 async function getWriteoff({ orgId, id }) {
   const client = await pool.connect();
-  try { return await repo.getWriteoff({ orgId, id, client });} finally { client.release();}
+  try { return await repo.getWriteoff({ orgId, id, client }); } finally { client.release(); }
 }
 
 async function createDraft({ orgId, actorUserId, payload }) {

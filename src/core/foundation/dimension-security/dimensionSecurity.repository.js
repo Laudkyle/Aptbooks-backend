@@ -41,11 +41,11 @@ async function updateRule({ organizationId, ruleId, patch }) {
   const values = [organizationId, ruleId];
   let i = 3;
 
-  if (patch.principalType) { fields.push(`principal_type=$${i++}`);values.push(patch.principalType);}
-  if (patch.principalId) { fields.push(`principal_id=$${i++}`);values.push(patch.principalId);}
-  if (patch.effect) { fields.push(`effect=$${i++}`);values.push(patch.effect);}
-  if (patch.ruleJson !== undefined) { fields.push(`rule_json=$${i++}::jsonb`);values.push(JSON.stringify(patch.ruleJson || {}));}
-  if (patch.note !== undefined) { fields.push(`note=$${i++}`);values.push(patch.note);}
+  if (patch.principalType) { fields.push(`principal_type=$${i++}`); values.push(patch.principalType); }
+  if (patch.principalId) { fields.push(`principal_id=$${i++}`); values.push(patch.principalId); }
+  if (patch.effect) { fields.push(`effect=$${i++}`); values.push(patch.effect); }
+  if (patch.ruleJson !== undefined) { fields.push(`rule_json=$${i++}::jsonb`); values.push(JSON.stringify(patch.ruleJson || {})); }
+  if (patch.note !== undefined) { fields.push(`note=$${i++}`); values.push(patch.note); }
 
   fields.push(`updated_at=now()`);
 

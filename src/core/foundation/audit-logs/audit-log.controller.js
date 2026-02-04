@@ -6,7 +6,7 @@ class AuditLogController {
    */
   async getAuditLogs(req, res, next) {
     try {
-      const { organizationId } = req.organization;// From auth middleware
+      const { organizationId } = req.organization; // From auth middleware
       const {
         page = 1,
         limit = 50,
@@ -116,7 +116,7 @@ class AuditLogController {
 
       if (format === 'csv') {
         res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment;filename="audit-logs-${Date.now()}.csv"`);
+        res.setHeader('Content-Disposition', `attachment; filename="audit-logs-${Date.now()}.csv"`);
         return res.send(exportData);
       }
 

@@ -16,7 +16,7 @@ async function withTransaction(fn, existingClient = null) {
     await client.query("COMMIT");
     return out;
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
     client.release();

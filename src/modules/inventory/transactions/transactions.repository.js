@@ -123,9 +123,9 @@ async function listTransactions(orgId, query = {}) {
   const params = [orgId];
   const where = ['organization_id=$1'];
   let i = 2;
-  if (query.status2) { where.push(`status2=$${i++}`);params.push(query.status2);}
-  if (query.txnType) { where.push(`txn_type=$${i++}`);params.push(query.txnType);}
-  if (query.periodId) { where.push(`period_id=$${i++}`);params.push(query.periodId);}
+  if (query.status2) { where.push(`status2=$${i++}`); params.push(query.status2); }
+  if (query.txnType) { where.push(`txn_type=$${i++}`); params.push(query.txnType); }
+  if (query.periodId) { where.push(`period_id=$${i++}`); params.push(query.periodId); }
   const { rows } = await pool.query(
     `SELECT * FROM inventory_transactions WHERE ${where.join(' AND ')} ORDER BY txn_date DESC, created_at DESC`,
     params

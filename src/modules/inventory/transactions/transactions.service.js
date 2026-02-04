@@ -27,8 +27,8 @@ async function assertPeriodOpen(client, orgId, periodId, txnDate) {
   if (p.status !== "open") throw new AppError(409, "Period not open");
 
   const d = txnDate instanceof Date ? txnDate : new Date(txnDate);
-  const start = new Date(p.start_date);start.setHours(0, 0, 0, 0);
-  const end = new Date(p.end_date);end.setHours(23, 59, 59, 999);
+  const start = new Date(p.start_date); start.setHours(0, 0, 0, 0);
+  const end = new Date(p.end_date); end.setHours(23, 59, 59, 999);
   if (d < start || d > end) throw new AppError(409, "Transaction date outside open period");
   return p;
 }
@@ -398,7 +398,7 @@ async function reversePostedTransaction({ orgId, actorUserId, transactionId, rea
   if (orig.txn.status2 !== "posted") throw new AppError(409, "Only posted transactions can be reversed");
   if (orig.txn.reversed_txn_id) return { transactionId, reversedTxnId: orig.txn.reversed_txn_id };
 
-  // Construct a reversing adjustment: for receipts -> decrease;issues -> increase;transfer -> swap;adjustment -> invert directions.
+  // Construct a reversing adjustment: for receipts -> decrease; issues -> increase; transfer -> swap; adjustment -> invert directions.
   const reverseType = orig.txn.txn_type === "transfer" ? "transfer" : "adjustment";
 
   const draftPayload = {

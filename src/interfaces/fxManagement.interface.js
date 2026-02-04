@@ -1,7 +1,7 @@
 const fxSvc = require("../core/accounting/fx/fx.service");
 
 async function createRateType({ orgId, code, name, actorUserId, req }) {
-  // orgId kept for symmetry;rate types are global but we audit against org
+  // orgId kept for symmetry; rate types are global but we audit against org
   return fxSvc.createRateType({ code, name, actorUserId, req });
 }
 

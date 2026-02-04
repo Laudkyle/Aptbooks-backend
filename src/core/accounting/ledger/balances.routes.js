@@ -12,7 +12,7 @@ router.get("/trial-balance", requirePermission("accounting.balances.read"), asyn
     const { periodId } = req.query;
     if (!periodId) throw new AppError(400, "periodId required");
     res.json(await balanceAPI.trialBalance({ orgId, periodId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/gl", requirePermission("accounting.balances.read"), async (req, res, next) => {
@@ -21,7 +21,7 @@ router.get("/gl", requirePermission("accounting.balances.read"), async (req, res
     const { periodId } = req.query;
     if (!periodId) throw new AppError(400, "periodId required");
     res.json(await balanceAPI.glBalances({ orgId, periodId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/account-activity", requirePermission("accounting.balances.read"), async (req, res, next) => {
@@ -30,7 +30,7 @@ router.get("/account-activity", requirePermission("accounting.balances.read"), a
     const { accountId, from, to } = req.query;
     if (!accountId || !from || !to) throw new AppError(400, "accountId, from, to are required");
     res.json(await balanceAPI.accountActivity({ orgId, accountId, fromDate: from, toDate: to }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

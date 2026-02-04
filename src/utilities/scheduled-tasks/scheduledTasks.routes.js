@@ -14,7 +14,7 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
       `SELECT * FROM scheduled_tasks ORDER BY code ASC`
     );
     res.json(rows);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Enable/disable
@@ -34,7 +34,7 @@ router.post("/:code/:status/toggle", requirePermission("settings.manage"), async
     );
     if (!rows.length) throw new AppError(404, "Task not found");
     res.json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // View recent runs for a task
@@ -54,7 +54,7 @@ router.get("/:code/runs", requirePermission("settings.read"), async (req, res, n
     );
 
     res.json(rows);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Run a task now (synchronously)
@@ -105,7 +105,7 @@ router.post("/:code/run", requirePermission("settings.manage"), async (req, res,
     );
 
     res.json(doneRows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Run details
@@ -119,7 +119,7 @@ router.get("/:code/runs/:runId", requirePermission("settings.read"), async (req,
     );
     if (!rows.length) throw new AppError(404, "Run not found");
     res.json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

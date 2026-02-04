@@ -21,7 +21,7 @@ function buildSchedule({ start_date, frequency, installment_count, total_amount 
   const base = Math.floor((total / n) * 100) / 100;
   const schedule = [];
   let allocated = 0;
-  for (let i = 0;i < n;i++) {
+  for (let i = 0; i < n; i++) {
     let amount = base;
     if (i === n - 1) amount = Number((total - allocated).toFixed(2));
     allocated = Number((allocated + amount).toFixed(2));
@@ -36,11 +36,11 @@ function buildSchedule({ start_date, frequency, installment_count, total_amount 
 
 async function listPlans({ orgId, status }) {
   const client = await pool.connect();
-  try { return await repo.listPlans({ orgId, status, client });} finally { client.release();}
+  try { return await repo.listPlans({ orgId, status, client }); } finally { client.release(); }
 }
 async function getPlan({ orgId, id }) {
   const client = await pool.connect();
-  try { return await repo.getPlan({ orgId, id, client });} finally { client.release();}
+  try { return await repo.getPlan({ orgId, id, client }); } finally { client.release(); }
 }
 
 async function createPlan({ orgId, actorUserId, payload }) {

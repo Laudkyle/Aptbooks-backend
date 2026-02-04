@@ -4,7 +4,7 @@ const { AppError } = require("../../shared/errors/AppError");
 function parseDimensionJson(text) {
   if (!text) return null;
   if (typeof text === 'object') return text;
-  try { return JSON.parse(String(text));} catch { throw new AppError(400, 'Invalid dimensionJson');}
+  try { return JSON.parse(String(text)); } catch { throw new AppError(400, 'Invalid dimensionJson'); }
 }
 
 async function timeSeries({ orgId, fromPeriodId, toPeriodId, accountId, dimensionJson }) {
@@ -65,7 +65,7 @@ function movingAverage(series, field = 'net', window = 3) {
   const w = Math.max(1, Math.min(60, Number(window) || 3));
   const vals = series.map(p => Number(p[field] ?? 0));
   const out = [];
-  for (let i = 0;i < vals.length;i++) {
+  for (let i = 0; i < vals.length; i++) {
     const start = Math.max(0, i - w + 1);
     const slice = vals.slice(start, i + 1);
     const avg = slice.reduce((a,b)=>a+b,0)/slice.length;
@@ -82,7 +82,7 @@ function monteCarlo({ baseValue, mean = 0, stddev = 1, iterations = 1000 }) {
 
   // Box-Muller
   const samples = new Array(n);
-  for (let i = 0;i < n;i++) {
+  for (let i = 0; i < n; i++) {
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
     while (v === 0) v = Math.random();

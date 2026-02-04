@@ -4,7 +4,7 @@ const { pool } = require("../../../db/pool");
 async function headcountSummary(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE e.organization_id=$1";
-  if (query.status) { params.push(query.status);where += ` AND e.status=$${params.length}`;}
+  if (query.status) { params.push(query.status); where += ` AND e.status=$${params.length}`; }
 
   const r = await pool.query(
     `
@@ -28,7 +28,7 @@ async function headcountSummary(orgId, query = {}) {
 async function leaveBalancesSummary(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE b.organization_id=$1";
-  if (query.leave_type_id) { params.push(query.leave_type_id);where += ` AND b.leave_type_id=$${params.length}`;}
+  if (query.leave_type_id) { params.push(query.leave_type_id); where += ` AND b.leave_type_id=$${params.length}`; }
 
   const r = await pool.query(
     `
@@ -53,9 +53,9 @@ async function payrollCostSummary(orgId, query = {}) {
   // Summarize payroll run totals by period, optionally by run_id
   const params = [orgId];
   let where = "WHERE r.organization_id=$1";
-  if (query.run_id) { params.push(query.run_id);where += ` AND r.id=$${params.length}`;}
-  if (query.period_start) { params.push(query.period_start);where += ` AND r.period_start >= $${params.length}`;}
-  if (query.period_end) { params.push(query.period_end);where += ` AND r.period_end <= $${params.length}`;}
+  if (query.run_id) { params.push(query.run_id); where += ` AND r.id=$${params.length}`; }
+  if (query.period_start) { params.push(query.period_start); where += ` AND r.period_start >= $${params.length}`; }
+  if (query.period_end) { params.push(query.period_end); where += ` AND r.period_end <= $${params.length}`; }
 
   const r = await pool.query(
     `

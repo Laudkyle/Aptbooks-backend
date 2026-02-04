@@ -23,7 +23,7 @@ const { env } = require("../config/env");
  * Canonical entity types supported out-of-the-box.
  *
  * Add new types here as modules are introduced.
- * IMPORTANT: Tier 10 should treat entity_type as data;do not enforce hard-coded enums there.
+ * IMPORTANT: Tier 10 should treat entity_type as data; do not enforce hard-coded enums there.
  */
 const RESOLVERS = {
   invoice: async ({ orgId, entityId }) => {

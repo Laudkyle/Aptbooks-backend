@@ -168,7 +168,7 @@ async function getIfrs9Settings({ orgId }) {
 
 async function upsertIfrs9Settings({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
-  logger.debug({ keys: Object.keys(payload || {}) }, "IFRS9: received payload"); try {
+  logger.debug({ keys: Object.keys(payload || {}) }, "IFRS9: received payload");  try {
     await client.query("BEGIN");
 
     // Validate accounts if provided
@@ -525,8 +525,8 @@ async function computeEcl({ orgId, actorUserId, payload }) {
 
     // Aggregate per customer + bucket
     const rounding = settings.rounding_decimals ?? 2;
-    const lines = new Map();// key customer|bucketOrParam|stage
-    const stageCache = new Map();// customer_id -> stage (GENERAL)
+    const lines = new Map(); // key customer|bucketOrParam|stage
+    const stageCache = new Map(); // customer_id -> stage (GENERAL)
 
     for (const ex of exposureRows) {
       // Defensive: skip exposure rows without a counterparty

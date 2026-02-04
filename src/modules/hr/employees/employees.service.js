@@ -101,7 +101,7 @@ async function importEmployees({ orgId, actorUserId, employees, mode = "upsert",
   }
   const results = { created: 0, updated: 0, skipped: 0, errors: [] };
 
-  for (let idx = 0;idx < employees.length;idx += 1) {
+  for (let idx = 0; idx < employees.length; idx += 1) {
     const row = employees[idx] || {};
     try {
       if (!row.employee_no || !row.first_name || !row.last_name) {
@@ -110,11 +110,11 @@ async function importEmployees({ orgId, actorUserId, employees, mode = "upsert",
       }
       const existing = await repo.getEmployeeByNo(orgId, row.employee_no);
       if (!existing) {
-        if (mode === "update") { results.skipped += 1;continue;}
+        if (mode === "update") { results.skipped += 1; continue; }
         await createEmployee({ orgId, actorUserId, payload: row, audit, writeAudit });
         results.created += 1;
       } else {
-        if (mode === "create") { results.skipped += 1;continue;}
+        if (mode === "create") { results.skipped += 1; continue; }
         await updateEmployee({ orgId, actorUserId, employeeId: existing.id, payload: row, audit, writeAudit });
         results.updated += 1;
       }
@@ -131,18 +131,18 @@ function splitCsvLine(line) {
   const out = [];
   let cur = "";
   let inQ = false;
-  for (let i = 0;i < line.length;i += 1) {
+  for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
     if (inQ) {
       if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"';i += 1;}
+        if (line[i + 1] === '"') { cur += '"'; i += 1; }
         else inQ = false;
       } else {
         cur += ch;
       }
     } else {
       if (ch === '"') inQ = true;
-      else if (ch === ",") { out.push(cur);cur = "";}
+      else if (ch === ",") { out.push(cur); cur = ""; }
       else cur += ch;
     }
   }
@@ -156,10 +156,10 @@ function parseCsv(text) {
   if (lines.length < 2) throw new AppError(400, "CSV must include header and at least one row");
   const header = splitCsvLine(lines[0]).map(h => h.trim());
   const rows = [];
-  for (let i = 1;i < lines.length;i += 1) {
+  for (let i = 1; i < lines.length; i += 1) {
     const cols = splitCsvLine(lines[i]);
     const obj = {};
-    for (let j = 0;j < header.length;j += 1) obj[header[j]] = (cols[j] ?? "").trim();
+    for (let j = 0; j < header.length; j += 1) obj[header[j]] = (cols[j] ?? "").trim();
     rows.push(obj);
   }
   return rows;

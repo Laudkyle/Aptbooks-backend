@@ -36,7 +36,7 @@ async function ifrs15AutoPostRevenueDaily() {
     );
     if (!periods.length) continue;
 
-    // settings required for posting;skip org if missing
+    // settings required for posting; skip org if missing
     let settings;
     try {
       settings = await ifrs15.getSettings({ orgId: o.id });

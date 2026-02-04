@@ -77,10 +77,25 @@ async function recordAllocationEvent(client, { orgId, customerReceiptId, actorUs
   );
 }
 
-async function getCustomerReceiptById(orgId, id) {
+async function getCustomerReceiptById(orgId, receiptId) {
   const { rows } = await pool.query(
-    `SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2`,
-    [orgId, id]
+    `SELECT 
+      cr.*,
+      bp.name as customer_name,
+      bp.email as customer_email,
+      bp.phone as customer_phone,
+      addr.label as customer_address_label,
+      addr.line1 as customer_address_line1,
+      addr.line2 as customer_address_line2,
+      addr.city as customer_address_city,
+      addr.region as customer_address_region,
+      addr.postal_code as customer_address_postal_code,
+      addr.country as customer_address_country
+     FROM customer_receipts cr
+     LEFT JOIN business_partners bp ON cr.customer_id = bp.id
+     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     WHERE cr.organization_id=$1 AND cr.id=$2`,
+    [orgId, receiptId]
   );
   return rows[0] || null;
 }
@@ -95,20 +110,34 @@ async function getAllocations(customerReceiptId) {
 
 async function listCustomerReceipts({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["cr.organization_id=$1"];
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`);params.push(query.status);}
-  if (query?.customerId) { where.push(`customer_id=$${i++}`);params.push(query.customerId);}
+  if (query?.status) { 
+    where.push(`cr.status=$${i++}`); 
+    params.push(query.status); 
+  }
+  if (query?.customerId) { 
+    where.push(`cr.customer_id=$${i++}`); 
+    params.push(query.customerId); 
+  }
 
   const { rows } = await pool.query(
-    `SELECT * FROM customer_receipts WHERE ${where.join(" AND ")}
-     ORDER BY receipt_date DESC, created_at DESC`,
+    `SELECT 
+      cr.*,
+      bp.name as customer_name,
+      addr.line1 as customer_address_line1,
+      addr.city as customer_address_city,
+      addr.country as customer_address_country
+     FROM customer_receipts cr
+     LEFT JOIN business_partners bp ON cr.customer_id = bp.id
+     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     WHERE ${where.join(" AND ")}
+     ORDER BY cr.receipt_date DESC, cr.created_at DESC`,
     params
   );
   return rows;
 }
-
 module.exports = {
   nextReceiptNo,
   insertCustomerReceipt,

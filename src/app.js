@@ -70,7 +70,7 @@ app.use("/utilities/release", require("./utilities/release/release.routes"));
 app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
 
 app.use(helmet({
-  // API-first backend;Swagger UI uses inline scripts/styles.
+  // API-first backend; Swagger UI uses inline scripts/styles.
   contentSecurityPolicy: false
 }));
 
@@ -79,7 +79,7 @@ const corsOptions = {
     // Allow non-browser tools (no Origin header)
     if (!origin) return cb(null, true);
 
-    // If allowlist is empty, block in production;allow in non-production.
+    // If allowlist is empty, block in production; allow in non-production.
     if (!env.CORS_ALLOWED_ORIGINS || env.CORS_ALLOWED_ORIGINS.length === 0) {
       if (env.NODE_ENV === "production") return cb(new Error("CORS origin not allowed"));
       return cb(null, true);
@@ -140,7 +140,6 @@ app.use("/core/accounting/statements", accountingStatementRoutes);
 app.use("/core/accounting/reconciliation", reconciliationRoutes);
 app.use("/core/accounting/imports", accountingImportRoutes);
 app.use("/core/accounting/exports", accountingExportRoutes);
-app.use("/core/reference", require("./core/foundation/reference/reference.routes"));
 
 
 app.use("/modules/webhooks", webhookRoutes);

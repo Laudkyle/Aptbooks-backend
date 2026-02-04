@@ -23,7 +23,7 @@ async function runDueSavedReportSchedulesHourly() {
       version = await reportRepo.getLatestVersion({ organizationId, reportId });
     }
     if (!version) {
-      // Cannot run;disable schedule to prevent retries.
+      // Cannot run; disable schedule to prevent retries.
       await reportRepo.updateSchedule({ organizationId, scheduleId: sched.id, patch: { isEnabled: false } });
       continue;
     }

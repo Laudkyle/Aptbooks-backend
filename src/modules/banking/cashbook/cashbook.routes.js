@@ -12,8 +12,7 @@ router.get("/", requirePermission("banking.cashbook.read"), async (req, res, nex
   try {
     const { organization_id: orgId } = req.user;
     res.json(await svc.listCashbook(orgId, req.query));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
-
 
 module.exports = router;

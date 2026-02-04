@@ -168,7 +168,7 @@ async function listPeriodsOverlappingRange(client, orgId, startDate, endDate) {
 // -------------------------
 
 async function getSettingsPublic({ orgId }) {
-  return getSettings(pool, orgId);// not used (kept for parity)
+  return getSettings(pool, orgId); // not used (kept for parity)
 }
 
 
@@ -383,7 +383,7 @@ async function activateContract({ orgId, actorUserId, contractId, payload }) {
 
     // Allocate with rounding residual to last obligation
     let allocatedSum = new Decimal(0);
-    for (let i = 0;i < obligations.length;i++) {
+    for (let i = 0; i < obligations.length; i++) {
       const o = obligations[i];
       let alloc;
       if (i === obligations.length - 1) {
@@ -514,9 +514,9 @@ async function generateSchedule({ orgId, actorUserId, contractId, payload, clien
         const totalDays = daysBetweenInclusive(start, end);
         if (totalDays <= 0) throw new AppError(409, "Invalid obligation date range");
 
-        // allocate per-period by overlap days;rounding residual to last period
+        // allocate per-period by overlap days; rounding residual to last period
         let allocated = new Decimal(0);
-        for (let i = 0;i < periods.length;i++) {
+        for (let i = 0; i < periods.length; i++) {
           const p = periods[i];
           const ov = overlapDays(start, end, p.start_date, p.end_date);
           let amt;
@@ -524,12 +524,12 @@ async function generateSchedule({ orgId, actorUserId, contractId, payload, clien
             amt = allocAmt.minus(allocated);
           } else {
             amt = allocAmt.mul(new Decimal(ov).div(totalDays));
-            // store at 6dp;posting rounds to 2dp as Tier-1 does
+            // store at 6dp; posting rounds to 2dp as Tier-1 does
             amt = amt.toDecimalPlaces(6);
             allocated = allocated.plus(amt);
           }
 
-          const recDate = p.end_date;// recognition anchored to period end
+          const recDate = p.end_date; // recognition anchored to period end
           await client.query(
             `INSERT INTO ifrs15_recognition_schedule_lines(
                organization_id, contract_id, obligation_id, period_id, recognition_date,
@@ -902,7 +902,7 @@ async function applyModification({ orgId, actorUserId, contractId, modificationI
     });
 
     // Outcome 2: Prospective modification (IFRS 15.21(a))
-    // Reallocation + rebuild of UNPOSTED schedules is sufficient;no cumulative catch-up.
+    // Reallocation + rebuild of UNPOSTED schedules is sufficient; no cumulative catch-up.
     if (decision.outcome === "PROSPECTIVE") {
       await client.query(
         `UPDATE ifrs15_contract_modifications
@@ -973,7 +973,7 @@ async function applyModification({ orgId, actorUserId, contractId, modificationI
             shouldBe = new Decimal(o.allocated_amount || 0).mul(pct).toDecimalPlaces(6);
           }
         }
-        // OUTPUT/INPUT methods require progress measurement inputs;Stage 2 expects those,
+        // OUTPUT/INPUT methods require progress measurement inputs; Stage 2 expects those,
         // but for now we keep catch-up conservative (0) unless already fully elapsed.
         if (shouldBe.isZero() && o.end_date && asDateOnly(o.end_date) < effDate) {
           shouldBe = new Decimal(o.allocated_amount || 0);
@@ -1365,7 +1365,7 @@ async function postFinancingForPeriod({ orgId, actorUserId, contractId, payload 
 
     const contractLiability = Decimal.max(billedToStart.minus(recognizedToStart), new Decimal(0));
     const contractAsset = Decimal.max(recognizedToStart.minus(billedToStart), new Decimal(0));
-    const net = contractAsset.minus(contractLiability);// + => asset (interest income), - => liability (interest expense)
+    const net = contractAsset.minus(contractLiability); // + => asset (interest income), - => liability (interest expense)
 
     const annualRate = new Decimal(contract.financing_annual_rate || 0);
     const days = new Decimal(daysBetweenInclusive(start, end));
@@ -1506,7 +1506,7 @@ async function generateCostSchedule({ orgId, actorUserId, contractId, costId, pa
     const total = new Decimal(cost.amount || 0);
     let allocated = new Decimal(0);
     let linesCreated = 0;
-    for (let i = 0;i < periods.length;i++) {
+    for (let i = 0; i < periods.length; i++) {
       const p = periods[i];
       const ov = overlapDays(start, end, p.start_date, p.end_date);
       let amt;

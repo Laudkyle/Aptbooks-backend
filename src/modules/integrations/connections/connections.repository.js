@@ -34,13 +34,13 @@ async function updateConnection({ organizationId, connectionId, patch }) {
   const values = [organizationId, connectionId];
   let i = 3;
 
-  if (patch.type) { fields.push(`type=$${i++}`);values.push(patch.type);}
-  if (patch.name) { fields.push(`name=$${i++}`);values.push(patch.name);}
-  if (patch.status) { fields.push(`status=$${i++}`);values.push(patch.status);}
-  if (patch.configJson !== undefined) { fields.push(`config_json=$${i++}::jsonb`);values.push(JSON.stringify(patch.configJson || {}));}
-  if (patch.lastTestedAt !== undefined) { fields.push(`last_tested_at=$${i++}::timestamptz`);values.push(patch.lastTestedAt);}
-  if (patch.lastTestResult !== undefined) { fields.push(`last_test_result=$${i++}`);values.push(patch.lastTestResult);}
-  if (patch.lastSyncAt !== undefined) { fields.push(`last_sync_at=$${i++}::timestamptz`);values.push(patch.lastSyncAt);}
+  if (patch.type) { fields.push(`type=$${i++}`); values.push(patch.type); }
+  if (patch.name) { fields.push(`name=$${i++}`); values.push(patch.name); }
+  if (patch.status) { fields.push(`status=$${i++}`); values.push(patch.status); }
+  if (patch.configJson !== undefined) { fields.push(`config_json=$${i++}::jsonb`); values.push(JSON.stringify(patch.configJson || {})); }
+  if (patch.lastTestedAt !== undefined) { fields.push(`last_tested_at=$${i++}::timestamptz`); values.push(patch.lastTestedAt); }
+  if (patch.lastTestResult !== undefined) { fields.push(`last_test_result=$${i++}`); values.push(patch.lastTestResult); }
+  if (patch.lastSyncAt !== undefined) { fields.push(`last_sync_at=$${i++}::timestamptz`); values.push(patch.lastSyncAt); }
 
   fields.push(`updated_at=now()`);
 

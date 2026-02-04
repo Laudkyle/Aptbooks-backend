@@ -1,8 +1,8 @@
-const { z } = require("zod"); 
+const { z } = require("zod");
 
-const uuid = z.string().uuid(); 
+const uuid = z.string().uuid();
 
-const contractIdParam = z.object({ contractId: uuid }); 
+const contractIdParam = z.object({ contractId: uuid });
 
 const upsertSettings = z.object({
   revenue_account_id: uuid,
@@ -16,7 +16,7 @@ const upsertSettings = z.object({
   default_cost_asset_account_id: uuid.optional(),
   default_cost_amort_expense_account_id: uuid.optional(),
   rounding_decimals: z.number().int().min(0).max(6).optional().default(2),
-}); 
+});
 
 const createContract = z.object({
   code: z.string().min(1).max(50),
@@ -31,7 +31,7 @@ const createContract = z.object({
   billing_account_id: uuid.optional(),
   start_date: z.coerce.date().optional(),
   end_date: z.coerce.date().optional(),
-}); 
+});
 
 const addObligation = z.object({
   contractId: uuid,
@@ -42,24 +42,24 @@ const addObligation = z.object({
   start_date: z.coerce.date().optional(),
   end_date: z.coerce.date().optional(),
   satisfaction_date: z.coerce.date().optional(),
-}); 
+});
 
 const activateContract = z.object({
   contractId: uuid,
   memo: z.string().max(500).optional(),
   entry_date: z.coerce.date().optional(),
-}); 
+});
 
 const generateSchedule = z.object({
   contractId: uuid,
   replace: z.boolean().optional().default(true),
-}); 
+});
 
 const postRevenue = z.object({
   period_id: uuid,
   entry_date: z.coerce.date().optional(),
   memo: z.string().max(500).optional(),
-}); 
+});
 
 // --------------------
 // Stage 2: modifications
@@ -75,9 +75,9 @@ const createModification = z.object({
   price_increase_commensurate_with_ssp: z.boolean().optional(),
   remaining_goods_services_distinct: z.boolean().optional(),
   notes: z.string().max(1000).optional(),
-}); 
+});
 
-const modificationIdParam = z.object({ contractId: uuid, modificationId: uuid }); 
+const modificationIdParam = z.object({ contractId: uuid, modificationId: uuid });
 
 const applyModification = z.object({
   entry_date: z.coerce.date().optional(),
@@ -86,7 +86,7 @@ const applyModification = z.object({
   adds_distinct_goods_services: z.boolean().optional(),
   price_increase_commensurate_with_ssp: z.boolean().optional(),
   remaining_goods_services_distinct: z.boolean().optional(),
-}); 
+});
 
 // --------------------
 // Stage 2B: variable consideration governance
@@ -101,25 +101,25 @@ const createVariableConsideration = z.object({
   highly_probable_no_reversal: z.boolean().optional().default(false),
   constraint_basis: z.string().max(2000).optional(),
   rationale: z.string().max(2000).optional(),
-}); 
+});
 
-const variableConsiderationIdParam = z.object({ contractId: uuid, variableConsiderationId: uuid }); 
+const variableConsiderationIdParam = z.object({ contractId: uuid, variableConsiderationId: uuid });
 
 const reviewVariableConsideration = z.object({
   notes: z.string().max(2000).optional(),
-}); 
+});
 
 const approveVariableConsideration = z.object({
   // Only approvable if highly_probable_no_reversal is true (enforced in service).
   include_in_transaction_price: z.boolean().optional().default(false),
   included_amount: z.number().optional(),
   notes: z.string().max(2000).optional(),
-}); 
+});
 
 const applyVariableConsideration = z.object({
   // Applies the latest approved VC entry as of the given effective date.
   effective_date: z.coerce.date().optional(),
-}); 
+});
 
 // --------------------
 // Stage 2: financing component
@@ -130,13 +130,13 @@ const setFinancingTerms = z.object({
   annual_rate: z.number().nonnegative(),
   effective_from: z.coerce.date(),
   effective_to: z.coerce.date().optional(),
-}); 
+});
 
 const postFinancing = z.object({
   period_id: uuid,
   entry_date: z.coerce.date().optional(),
   memo: z.string().max(500).optional(),
-}); 
+});
 
 // --------------------
 // Stage 2: contract costs
@@ -151,21 +151,21 @@ const createCost = z.object({
   amort_expense_account_id: uuid.optional(),
   amort_start_date: z.coerce.date(),
   amort_end_date: z.coerce.date(),
-}); 
+});
 
-const costIdParam = z.object({ contractId: uuid, costId: uuid }); 
+const costIdParam = z.object({ contractId: uuid, costId: uuid });
 
 const generateCostSchedule = z.object({
   contractId: uuid,
   costId: uuid,
   replace: z.boolean().optional().default(true),
-}); 
+});
 
 const postCostAmort = z.object({
   period_id: uuid,
   entry_date: z.coerce.date().optional(),
   memo: z.string().max(500).optional(),
-}); 
+});
 
 // --------------------
 // Stage 2C: disclosures reports
@@ -173,20 +173,20 @@ const postCostAmort = z.object({
 
 const rollforwardReport = z.object({
   period_id: uuid,
-}); 
+});
 
 const rpoReport = z.object({
   as_of_period_id: uuid,
-}); 
+});
 
 const revenueDisaggregationReport = z.object({
   period_id: uuid,
   dimension: z.enum(["OBLIGATION_TYPE", "SATISFACTION_METHOD", "CUSTOMER"]).optional().default("OBLIGATION_TYPE"),
-}); 
+});
 
 const judgementsReport = z.object({
   as_of_date: z.coerce.date().optional(),
-}); 
+});
 
 module.exports = {
   contractIdParam,
@@ -214,4 +214,4 @@ module.exports = {
   rpoReport,
   revenueDisaggregationReport,
   judgementsReport,
-}; 
+};

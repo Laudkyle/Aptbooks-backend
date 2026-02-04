@@ -1,6 +1,6 @@
 const { pool } = require("../../../db/pool");
 
-function db(client) { return client || pool;}
+function db(client) { return client || pool; }
 
 async function listRules(orgId) {
   const { rows } = await pool.query(
@@ -9,7 +9,6 @@ async function listRules(orgId) {
   );
   return rows;
 }
-
 
 async function createRule(orgId, userId, payload, client = null) {
   const { rows } = await db(client).query(

@@ -4,7 +4,7 @@ const depreciationSvc = require("../../modules/assets/depreciation/depreciation.
 
 async function runPeriodEndDepreciationDaily() {
   // Find open periods and run depreciation for each.
-  // You may constrain to "current" open period;this runs safely due to idempotency.
+  // You may constrain to "current" open period; this runs safely due to idempotency.
   const { rows: orgs } = await pool.query(`SELECT id FROM organizations ORDER BY created_at ASC`);
 
   for (const o of orgs) {
@@ -17,7 +17,7 @@ async function runPeriodEndDepreciationDaily() {
     );
 
     for (const p of openPeriods) {
-      // Safe to call;(org, period) run table prevents duplicates
+      // Safe to call; (org, period) run table prevents duplicates
       await depreciationSvc.runPeriodEndDepreciation({ orgId, actorUserId, periodId: p.id });
     }
   }

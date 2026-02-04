@@ -110,7 +110,7 @@ router.post("/:id/lines", requirePermission("accounting.journal.edit"), async (r
     const actorUserId = req.user.id;
 
     const line = validate(journalLineAddSchema, req.body);
-    // Implemented as replace by appending;avoids exposing line ids as API contract in Phase 4.
+    // Implemented as replace by appending; avoids exposing line ids as API contract in Phase 4.
     const current = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
     const lines = (current.lines || []).map((l) => ({
       accountId: l.account_id,

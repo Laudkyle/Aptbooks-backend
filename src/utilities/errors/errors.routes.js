@@ -52,7 +52,7 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
       params
     );
     res.json({ data: rows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Error statistics
@@ -88,7 +88,7 @@ router.get("/stats/summary/", requirePermission("settings.read"), async (req, re
     );
 
     res.json({ summary: rows[0] || { total: 0, server_errors: 0, client_errors: 0, unique_correlations: 0 }, top_paths: top });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Get by correlation id
@@ -110,7 +110,7 @@ router.get("/:correlationId", requirePermission("settings.read"), async (req, re
       [correlationId, orgId || null]
     );
     res.json({ data: rows });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

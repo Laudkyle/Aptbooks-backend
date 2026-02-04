@@ -35,14 +35,6 @@ async function getGrade(orgId, id) {
   return rows[0] || null;
 }
 
-async function getGradeByCode(orgId, code) {
-  const { rows } = await pool.query(
-    `SELECT * FROM hr_grades WHERE organization_id=$1 AND code=$2`,
-    [orgId, code]
-  );
-  return rows[0] || null;
-}
-
 async function updateGrade(orgId, id, payload) {
   const fields = [];
   const vals = [orgId, id];
@@ -79,4 +71,4 @@ async function deactivateGrade(orgId, id) {
   return rows[0] || null;
 }
 
-module.exports = { createGrade, listGrades, getGrade, getGradeByCode, updateGrade, deactivateGrade };
+module.exports = { createGrade, listGrades, getGrade, updateGrade, deactivateGrade };

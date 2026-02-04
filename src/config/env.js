@@ -67,7 +67,7 @@ RETURN_RESET_TOKEN_IN_RESPONSE:
   // Rate limit store: "memory" (single instance) or "postgres" (shared, multi-instance)
   RATE_LIMIT_STORE: (process.env.RATE_LIMIT_STORE || "memory").toLowerCase(),
 
-  // Auth rate limiting (additional layer;login endpoint also has its own limiter)
+  // Auth rate limiting (additional layer; login endpoint also has its own limiter)
   AUTH_RATE_LIMIT_WINDOW_MS: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW_MS || "900000", 10), // 15m
   AUTH_RATE_LIMIT_MAX: parseInt(process.env.AUTH_RATE_LIMIT_MAX || "50", 10), // 50 req / 15m / IP
 

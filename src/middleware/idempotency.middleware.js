@@ -91,7 +91,7 @@ function idempotency({ required = true } = {}) {
             [orgId, key, method, path, requestHash, res.statusCode, responseBody]
           );
         } catch (_) {
-          // best-effort;do not break response
+          // best-effort; do not break response
         }
       };
 
@@ -122,7 +122,7 @@ function idempotency({ required = true } = {}) {
         return origJson(body);
       };
       res.send = (body) => {
-        // avoid storing large buffers;store metadata only
+        // avoid storing large buffers; store metadata only
         if (Buffer.isBuffer(body)) {
           void finalize({ ok: true, buffer: true, bytes: body.length });
         } else {

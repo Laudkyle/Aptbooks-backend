@@ -9,7 +9,7 @@ router.get("/", requirePermission("rbac.permissions.read"), async (_req, res, ne
   try {
     const { rows } = await pool.query(`SELECT code, description FROM permissions ORDER BY code`);
     res.json(rows);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

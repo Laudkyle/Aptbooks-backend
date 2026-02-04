@@ -46,7 +46,7 @@ function calculatePresentValue({
 }) {
   const PMT = toDecimal(payment);
   const ppy = toDecimal(paymentsPerYear);
-  const r = toDecimal(annualDiscountRate).div(ppy);// periodic rate
+  const r = toDecimal(annualDiscountRate).div(ppy); // periodic rate
   const n = toDecimal(periods);
   
   // Handle zero interest rate
@@ -231,7 +231,7 @@ async function createLease({ orgId, actorUserId, payload }) {
       throw new AppError(400, "Term months must be greater than 0");
     }
 
-    // Force status to draft;activation must occur via initial recognition.
+    // Force status to draft; activation must occur via initial recognition.
     const enforcedStatus = 'draft';
 
     const { rows } = await client.query(
@@ -336,7 +336,7 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
     }
 
     // Number of payment periods across the term.
-    // term_months is the contract length;payment frequency is derived from payments_per_year.
+    // term_months is the contract length; payment frequency is derived from payments_per_year.
     // Example: term_months=12, payments_per_year=4 -> 4 periods (quarterly).
     const nPeriods = termMonths.times(paymentsPerYear).div(12);
     if (!nPeriods.isInteger() || !nPeriods.greaterThan(0)) {
@@ -377,7 +377,7 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
     const startDate = new Date(lease.commencement_date);
 
     const totalPeriods = nPeriods.toNumber();
-    for (let i = 1;i <= totalPeriods;i += 1) {
+    for (let i = 1; i <= totalPeriods; i += 1) {
       const offsetPeriods = timing === "advance" ? (i - 1) : i;
       const dueDate = addMonths(startDate, monthsPerPeriod.times(offsetPeriods).toNumber());
 
@@ -400,7 +400,7 @@ async function generateSchedule({ orgId, actorUserId, leaseId, payload }) {
         principal = payment.minus(interest);
         
         if (principal.lessThan(0)) {
-          throw new AppError(400, "Payment amount is too low for the discount rate;schedule would go negative");
+          throw new AppError(400, "Payment amount is too low for the discount rate; schedule would go negative");
         }
 
         // Final-period rounding fix: clear the remaining balance by adjusting principal (and payment if needed).
@@ -582,7 +582,7 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
 
         // Verify that interest + principal equals payment (within tolerance)
         const sum = interest.plus(principal);
-        const tolerance = new Decimal(0.000001);// 0.000001 tolerance for rounding
+        const tolerance = new Decimal(0.000001); // 0.000001 tolerance for rounding
         if (sum.minus(total).abs().greaterThan(tolerance)) {
           throw new AppError(400, `Schedule line does not balance (interest + principal != payment). Expected ${total}, got ${sum}`);
         }
@@ -931,7 +931,7 @@ async function updateLeaseStatus({ orgId, actorUserId, leaseId, payload }) {
     // Transition rules (production-grade minimum):
     // - draft -> active is ONLY through initial recognition posting
     // - active -> closed (requires all schedule lines posted)
-    // - active -> terminated (blocks further postings;requires no future lines already posted)
+    // - active -> terminated (blocks further postings; requires no future lines already posted)
     // - closed/terminated are terminal states
     if (current === "draft" && nextStatus === "active") {
       throw new AppError(409, "Use initial recognition posting to activate a lease");

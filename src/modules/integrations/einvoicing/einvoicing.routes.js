@@ -15,7 +15,7 @@ router.post("/invoices/:invoiceId/generate", requirePermission("einvoicing.manag
     const out = await svc.generateInvoiceEInvoice({ orgId, actorUserId, invoiceId: req.params.invoiceId });
     await writeAudit({ organizationId: orgId, actorUserId, action: "einvoicing.generated", entityType: "e_invoices", entityId: out.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: out });
     res.status(201).json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("einvoicing.read"), async (req, res, next) => {
@@ -24,7 +24,7 @@ router.get("/:id", requirePermission("einvoicing.read"), async (req, res, next) 
     const out = await svc.getEInvoice({ orgId, id: req.params.id });
     if (!out) throw new AppError(404, "E-invoice not found");
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id/xml", requirePermission("einvoicing.read"), async (req, res, next) => {
@@ -34,7 +34,7 @@ router.get("/:id/xml", requirePermission("einvoicing.read"), async (req, res, ne
     if (!out) throw new AppError(404, "E-invoice not found");
     res.setHeader("Content-Type", "application/xml");
     res.send(out.ubl_xml);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

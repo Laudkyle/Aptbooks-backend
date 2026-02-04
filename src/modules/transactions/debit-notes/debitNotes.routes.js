@@ -33,21 +33,21 @@ router.post("/", requirePermission("transactions.debit_note.manage"), async (req
     });
 
     res.status(201).json(created);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("transactions.debit_note.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listDebitNotes({ orgId, query: req.query }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/:id", requirePermission("transactions.debit_note.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getDebitNoteDetails({ orgId, id: req.params.id }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/issue", requirePermission("transactions.debit_note.issue"), async (req, res, next) => {
@@ -68,7 +68,7 @@ router.post("/:id/issue", requirePermission("transactions.debit_note.issue"), as
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/apply", requirePermission("transactions.debit_note.apply"), async (req, res, next) => {
@@ -90,7 +90,7 @@ router.post("/:id/apply", requirePermission("transactions.debit_note.apply"), as
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/void", requirePermission("transactions.debit_note.void"), async (req, res, next) => {
@@ -112,7 +112,7 @@ router.post("/:id/void", requirePermission("transactions.debit_note.void"), asyn
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

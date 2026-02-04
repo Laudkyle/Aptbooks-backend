@@ -62,7 +62,7 @@ router.get("/:id/close-preview", requirePermission("accounting.period.close"), a
     const orgId = req.user.organization_id;
     const out = await periodAPI.closePreview({ orgId, periodId: req.params.id });
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/close", requirePermission("accounting.period.close"), async (req, res, next) => {
@@ -143,7 +143,7 @@ router.post("/:id/lock", requirePermission("accounting.period.lock"), async (req
     });
 
     res.json(out.after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/unlock", requirePermission("accounting.period.unlock"), async (req, res, next) => {
@@ -164,7 +164,7 @@ router.post("/:id/unlock", requirePermission("accounting.period.unlock"), async 
     });
 
     res.json(out.after);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/:id/roll-forward", requirePermission("accounting.period.roll_forward"), async (req, res, next) => {

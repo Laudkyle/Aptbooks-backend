@@ -4,7 +4,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const SYSTEM_EMAIL = "system@aptbooks.local";
 
 async function ensureSystemUserForOrg({ orgId }) {
-  // 1) Try by (orgId + is_system) first if you added the column;fallback to email.
+  // 1) Try by (orgId + is_system) first if you added the column; fallback to email.
   const { rows: existing } = await pool.query(
     `
     SELECT id, organization_id, email, status
@@ -28,7 +28,7 @@ async function ensureSystemUserForOrg({ orgId }) {
       WHERE id=$1 AND organization_id=$2
       `,
       [existing[0].id, orgId]
-    ).catch(() => {});// if is_system doesn't exist, ignore
+    ).catch(() => {}); // if is_system doesn't exist, ignore
     return existing[0].id;
   }
 

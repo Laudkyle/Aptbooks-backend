@@ -621,7 +621,7 @@ async function updateTempDifference({ orgId, actorUserId, tempDifferenceId, payl
     await client.query("COMMIT");
     return rows[0];
   } catch (err) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw err;
   } finally {
     client.release();
@@ -664,7 +664,7 @@ async function deleteTempDifference({ orgId, actorUserId, tempDifferenceId }) {
     await client.query("COMMIT");
     return { ok: true };
   } catch (err) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw err;
   } finally {
     client.release();
@@ -1138,7 +1138,7 @@ async function computeDeferredTax({ orgId, actorUserId, payload }) {
       deferred_tax_expense: deferredTaxExpense.toFixed(rounding),
     };
   } catch (err) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw err;
   } finally {
     client.release();
@@ -1271,7 +1271,7 @@ function buildMovementJournalLines({ movementDTA, movementDTL, settings }) {
   if (dtl.lt(0)) push(settings.deferred_tax_liability_account_id, dtl.abs(), 0);
 
   // Net deferred tax expense movement (single-sided)
-  // netExpense > 0 => Dr expense;netExpense < 0 => Cr expense
+  // netExpense > 0 => Dr expense; netExpense < 0 => Cr expense
   const netExpense = dtl.minus(dta);
   if (netExpense.gt(0)) push(settings.deferred_tax_expense_account_id, netExpense, 0);
   if (netExpense.lt(0)) push(settings.deferred_tax_expense_account_id, 0, netExpense.abs());
@@ -1306,7 +1306,7 @@ async function postDeferredTax({ orgId, actorUserId, payload }) {
   }
 
   // Must have a deferred tax run to post.
-  // Prefer explicit run_id;else post the latest FINAL run for period.
+  // Prefer explicit run_id; else post the latest FINAL run for period.
   let runId = payload.run_id || null;
   if (!runId) {
     const { rows: latestFinal } = await pool.query(

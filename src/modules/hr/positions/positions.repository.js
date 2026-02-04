@@ -49,14 +49,6 @@ async function getPosition(orgId, id) {
   return rows[0] || null;
 }
 
-async function getPositionByCode(orgId, code) {
-  const { rows } = await pool.query(
-    `SELECT * FROM hr_positions WHERE organization_id=$1 AND code=$2`,
-    [orgId, code]
-  );
-  return rows[0] || null;
-}
-
 async function updatePosition(orgId, id, payload) {
   const fields = [];
   const vals = [orgId, id];
@@ -93,4 +85,4 @@ async function deactivatePosition(orgId, id) {
   return rows[0] || null;
 }
 
-module.exports = { createPosition, listPositions, getPosition, getPositionByCode, updatePosition, deactivatePosition };
+module.exports = { createPosition, listPositions, getPosition, updatePosition, deactivatePosition };

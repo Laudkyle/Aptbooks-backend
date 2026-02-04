@@ -293,7 +293,7 @@ async function runDeferralRecognitions({ orgId, actorUserId, periodId }) {
   const period = pRows[0];
   if (period.status !== "open") throw new AppError(409, "Period is not open");
 
-  // 1) Find eligible schedules (NO FOR UPDATE here;we claim per schedule later)
+  // 1) Find eligible schedules (NO FOR UPDATE here; we claim per schedule later)
   const { rows: schedules } = await pool.query(
     `
     SELECT
@@ -702,7 +702,7 @@ async function runOne({
     await client.query("BEGIN");
 
     // Advisory lock for (orgId, ruleId, periodId, asOfDate) to prevent concurrent duplicates
-    // Uses hashtext which is stable;suitable for xact lock.
+    // Uses hashtext which is stable; suitable for xact lock.
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
       `accrual_run:${orgId}:${ruleId}:${period.id}:${asOfYMD}`,
     ]);
@@ -844,7 +844,7 @@ async function runDueAccruals({ orgId, actorUserId, asOfDate }) {
     if (r.frequency === "DAILY") return true;
 
     if (r.frequency === "WEEKLY") {
-      // Anchor: start_date weekday;if none, Monday
+      // Anchor: start_date weekday; if none, Monday
       const anchor = r.start_date
         ? parseYMD(ymd(parseYMD(r.start_date)))
         : new Date("1970-01-05T00:00:00.000Z");
@@ -852,7 +852,7 @@ async function runDueAccruals({ orgId, actorUserId, asOfDate }) {
     }
 
     if (r.frequency === "MONTHLY") {
-      // Anchor day-of-month;if none, 1st.
+      // Anchor day-of-month; if none, 1st.
       const anchorDay = r.start_date
         ? parseYMD(ymd(parseYMD(r.start_date))).getUTCDate()
         : 1;

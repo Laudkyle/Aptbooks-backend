@@ -106,26 +106,4 @@ router.get(
   }
 );
 
-// Exports
-router.get("/:id/export/netpay.csv", requirePermission("hr.payroll.export"), async (req, res, next) => {
-  try {
-    const orgId = req.user.organization_id;
-    const csv = await svc.exportNetPayCsv({ orgId, runId: req.params.id });
-    res.setHeader("Content-Type", "text/csv;charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment;filename=payroll_${req.params.id}_netpay.csv`);
-    res.status(200).send(csv);
-  } catch (e) { next(e);}
-});
-
-router.get("/:id/export/bank.csv", requirePermission("hr.payroll.export"), async (req, res, next) => {
-  try {
-    const orgId = req.user.organization_id;
-    const format = req.query.format || "generic";
-    const csv = await svc.exportBankPaymentsCsv({ orgId, runId: req.params.id, format });
-    res.setHeader("Content-Type", "text/csv;charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment;filename=payroll_${req.params.id}_bank_${format}.csv`);
-    res.status(200).send(csv);
-  } catch (e) { next(e);}
-});
-
 module.exports = router;

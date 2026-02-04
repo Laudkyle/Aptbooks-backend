@@ -13,7 +13,6 @@ async function assertPostableActiveAccount({ orgId, accountId, label }) {
   if (rows[0].status !== "active") throw new AppError(400, `${label} must be active`);
 }
 
-
 async function createCategory({ orgId, actorUserId, payload, audit = {} }) {
   await assertPostableActiveAccount({ orgId, accountId: payload.assetAccountId, label: "assetAccountId" });
   await assertPostableActiveAccount({ orgId, accountId: payload.accumDeprAccountId, label: "accumDeprAccountId" });

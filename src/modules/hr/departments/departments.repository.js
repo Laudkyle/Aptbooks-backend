@@ -35,14 +35,6 @@ async function getDepartment(orgId, id) {
   return rows[0] || null;
 }
 
-async function getDepartmentByCode(orgId, code) {
-  const { rows } = await pool.query(
-    `SELECT * FROM hr_departments WHERE organization_id=$1 AND code=$2`,
-    [orgId, code]
-  );
-  return rows[0] || null;
-}
-
 async function updateDepartment(orgId, id, payload) {
   const fields = [];
   const vals = [orgId, id];
@@ -83,7 +75,6 @@ module.exports = {
   createDepartment,
   listDepartments,
   getDepartment,
-  getDepartmentByCode,
   updateDepartment,
   deactivateDepartment,
 };

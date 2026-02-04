@@ -430,7 +430,7 @@ async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId
       const total = Number(annualAmount);
       const raw = total / n;
       let running = 0;
-      for (let i = 0;i < n;i++) {
+      for (let i = 0; i < n; i++) {
         const a = (i === n - 1) ? roundMoney(total - running, 2) : roundMoney(raw, 2);
         running = roundMoney(running + a, 2);
         perPeriodAmounts.push(a);
@@ -441,7 +441,7 @@ async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId
       if (!wsum) throw new AppError(400, "weights sum must be > 0");
       const total = Number(annualAmount);
       let running = 0;
-      for (let i = 0;i < n;i++) {
+      for (let i = 0; i < n; i++) {
         const share = total * (Number(weights[i]) / wsum);
         const a = (i === n - 1) ? roundMoney(total - running, 2) : roundMoney(share, 2);
         running = roundMoney(running + a, 2);
@@ -455,7 +455,7 @@ async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId
     const dim = await validateDimensionJson({ orgId, dimensionJson: dimensionJson || {} });
 
     // upsert per period
-    for (let i = 0;i < n;i++) {
+    for (let i = 0; i < n; i++) {
       const p = periods[i];
       const amountNum = Number(perPeriodAmounts[i]);
       if (Number.isNaN(amountNum)) throw new AppError(400, "Computed budget amount must be numeric");

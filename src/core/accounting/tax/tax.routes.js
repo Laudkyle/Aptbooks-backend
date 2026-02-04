@@ -27,7 +27,7 @@ router.get("/jurisdictions", async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json({ data: await svc.listJurisdictions({ orgId }) });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/jurisdictions", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
@@ -96,7 +96,7 @@ router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req,
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Tax Codes
@@ -109,7 +109,7 @@ router.get("/codes", async (req, res, next) => {
       jurisdictionId: req.query.jurisdictionId
     };
     res.json({ data: await svc.listTaxCodes({ orgId, query }) });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.post("/codes", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
@@ -178,7 +178,7 @@ router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, ne
     });
 
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Settings
@@ -186,7 +186,7 @@ router.get("/settings", async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json({ data: await svc.getTaxSettings({ orgId }) });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.put("/settings", requirePermission("tax.manage"), async (req, res, next) => {
@@ -207,7 +207,7 @@ router.put("/settings", requirePermission("tax.manage"), async (req, res, next) 
     });
 
     res.json(updated);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

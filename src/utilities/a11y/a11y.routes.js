@@ -5,7 +5,7 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 router.use(authRequired);
 
 router.get("/status", requirePermission("utilities.a11y.read"), (req, res) => {
-  // Backend cannot guarantee frontend WCAG compliance;this endpoint exposes a checklist scaffold.
+  // Backend cannot guarantee frontend WCAG compliance; this endpoint exposes a checklist scaffold.
   res.json({
     data: {
       standard: "WCAG 2.1 AA",

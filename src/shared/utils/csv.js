@@ -6,7 +6,7 @@ function splitCsvLine(line) {
   let cur = "";
   let inQ = false;
 
-  for (let i = 0;i < line.length;i += 1) {
+  for (let i = 0; i < line.length; i += 1) {
     const c = line[i];
 
     if (inQ) {
@@ -59,10 +59,10 @@ function parseCsvText(text) {
   const header = splitCsvLine(lines[0]).map((h) => h.trim());
   const rows = [];
 
-  for (let i = 1;i < lines.length;i += 1) {
+  for (let i = 1; i < lines.length; i += 1) {
     const cols = splitCsvLine(lines[i]);
     const obj = {};
-    for (let j = 0;j < header.length;j += 1) {
+    for (let j = 0; j < header.length; j += 1) {
       obj[header[j]] = (cols[j] ?? "").trim();
     }
     rows.push(obj);

@@ -12,7 +12,7 @@ router.get("/payment-terms", requirePermission("partners.read"), async (req, res
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listPaymentTerms({ orgId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // ---- Payment terms (manage)
@@ -39,7 +39,7 @@ router.post("/payment-terms", requirePermission("payment_config.manage"), async 
     const orgId = req.user.organization_id;
     const payload = validate(paymentTermPayloadSchema, req.body);
     res.status(201).json(await svc.createPaymentTerm({ orgId, payload }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.patch("/payment-terms/:id", requirePermission("payment_config.manage"), async (req, res, next) => {
@@ -48,7 +48,7 @@ router.patch("/payment-terms/:id", requirePermission("payment_config.manage"), a
     const payload = validate(paymentTermPatchSchema, req.body || {});
     const out = await svc.updatePaymentTerm({ orgId, id: req.params.id, payload });
     res.json(out);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.delete("/payment-terms/:id", requirePermission("payment_config.manage"), async (req, res, next) => {
@@ -56,7 +56,7 @@ router.delete("/payment-terms/:id", requirePermission("payment_config.manage"), 
     const orgId = req.user.organization_id;
     const ok = await svc.deletePaymentTerm({ orgId, id: req.params.id });
     res.json({ ok });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // ---- Payment methods (read)
@@ -64,26 +64,26 @@ router.get("/payment-methods", requirePermission("partners.read"), async (req, r
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.listPaymentMethods({ orgId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // ---- Payment settings
 const paymentSettingsSchema = z.object({
-  arUnappliedAccountId: z.string().uuid().nullable().optional(),
-  arDiscountAccountId: z.string().uuid().nullable().optional(),
-  apPrepaymentsAccountId: z.string().uuid().nullable().optional(),
-  apDiscountIncomeAccountId: z.string().uuid().nullable().optional(),
+  arUnappliedAccountId: z.number().int().nullable().optional(),
+  arDiscountAccountId: z.number().int().nullable().optional(),
+  apPrepaymentsAccountId: z.number().int().nullable().optional(),
+  apDiscountIncomeAccountId: z.number().int().nullable().optional(),
 
   // Stage 6: defaults for posting online payments
-  onlineCashAccountId: z.string().uuid().nullable().optional(),
-  onlinePaymentMethodId: z.string().uuid().nullable().optional()
+  onlineCashAccountId: z.number().int().nullable().optional(),
+  onlinePaymentMethodId: z.number().int().nullable().optional()
 });
 
 router.get("/payment-settings", requirePermission("payment_config.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getPaymentSettings({ orgId }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.put("/payment-settings", requirePermission("payment_config.manage"), async (req, res, next) => {
@@ -91,7 +91,7 @@ router.put("/payment-settings", requirePermission("payment_config.manage"), asyn
     const orgId = req.user.organization_id;
     const payload = validate(paymentSettingsSchema, req.body || {});
     res.json(await svc.upsertPaymentSettings({ orgId, payload }));
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

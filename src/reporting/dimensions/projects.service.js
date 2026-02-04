@@ -3,9 +3,9 @@ const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { normalizeCode, normalizeStatus } = require("../_util");
 
-const PROJECT_STATUS = ["active", "on_hold", "closed", "archived"];// archived is soft-delete
-const PHASE_STATUS = ["active", "closed", "archived"];
-const TASK_STATUS = ["active", "done", "archived"];
+const PROJECT_STATUS = ["active", "on_hold", "closed", "archived"]; // archived is soft-delete
+const PHASE_STATUS = ["active", "closed", "archived"]; 
+const TASK_STATUS = ["active", "done", "archived"]; 
 
 async function fetchProjectOrThrow({ orgId, projectId }) {
   const { rows } = await pool.query(
@@ -77,7 +77,7 @@ async function updateProject({ orgId, id, code, name, status, actorUserId, req }
 
   // Standard lifecycle rules:
   // - archived: immutable
-  // - closed: allow status change to archived only;block code/name edits
+  // - closed: allow status change to archived only; block code/name edits
   if (current.status === "archived") throw new AppError(409, "Project is archived and cannot be modified");
   if (current.status === "closed") {
     if (code !== undefined || name !== undefined) throw new AppError(409, "Closed projects are read-only");

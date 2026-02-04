@@ -30,7 +30,7 @@ router.post("/", requirePermission("rbac.roles.manage"), async (req, res, next) 
     });
 
     res.status(201).json(rows[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 router.get("/", requirePermission("rbac.roles.read"), async (req, res, next) => {
@@ -38,7 +38,7 @@ router.get("/", requirePermission("rbac.roles.read"), async (req, res, next) => 
     const orgId = req.user.organization_id;
     const { rows } = await pool.query(`SELECT * FROM roles WHERE organization_id=$1 ORDER BY name`, [orgId]);
     res.json(rows);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Matrix view: roles with permissions
@@ -63,7 +63,7 @@ router.get("/matrix", requirePermission("rbac.roles.read"), async (req, res, nex
       if (row.permission_code) map[row.role_id].permissions.push(row.permission_code);
     }
     res.json({ data: Object.values(map) });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Get role permissions
@@ -87,7 +87,7 @@ router.get("/:id/permissions", requirePermission("rbac.roles.read"), async (req,
     );
 
     res.json({ role: r[0], permissions: perms });
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Update role (rename)
@@ -119,7 +119,7 @@ router.patch("/:id", requirePermission("rbac.roles.manage"), async (req, res, ne
     });
 
     res.json(after[0]);
-  } catch (e) { next(e);}
+  } catch (e) { next(e); }
 });
 
 // Detach permissions from role: { permissionCodes: ["..."] }
@@ -157,7 +157,7 @@ router.delete("/:id/permissions", requirePermission("rbac.roles.manage"), async 
 
     res.json({ roleId, detached: codes });
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     next(e);
   } finally {
     client.release();
@@ -253,7 +253,7 @@ router.post("/templates", requirePermission("rbac.roles.manage"), async (req, re
 
     res.status(201).json({ roleId, roleName: preset.name, permissionCount: permRows.length });
   } catch (e) {
-    try { await client.query("ROLLBACK");} catch (_) {}
+    try { await client.query("ROLLBACK"); } catch (_) {}
     next(e);
   } finally {
     client.release();

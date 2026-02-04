@@ -1,6 +1,6 @@
 /**
  * Partner Management API (Tier 2)
- * DB-backed interface. Tier 3 uses this;it must not import Tier 2 services.
+ * DB-backed interface. Tier 3 uses this; it must not import Tier 2 services.
  */
 const { pool } = require("../db/pool");
 const { AppError } = require("../shared/errors/AppError");
