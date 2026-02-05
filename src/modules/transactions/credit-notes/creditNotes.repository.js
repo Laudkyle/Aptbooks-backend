@@ -1,13 +1,18 @@
 const { AppError } = require("../../../shared/errors/AppError");
 
-/**
- * Repository for Credit Notes.
- * Convention: caller handles transactions by passing `client`.
- */
+
 
 async function getById({ orgId, id, client }) {
   const { rows } = await client.query(
-    `SELECT * FROM credit_notes WHERE organization_id=$1 AND id=$2`,
+    `SELECT 
+      cn.*,
+      bp.name as customer_name,
+      bp.code as customer_code,
+      bp.email as customer_email,
+      bp.phone as customer_phone
+     FROM credit_notes cn
+     LEFT JOIN business_partners bp ON cn.customer_id = bp.id
+     WHERE cn.organization_id=$1 AND cn.id=$2`,
     [orgId, id]
   );
   return rows[0] || null;
@@ -97,19 +102,35 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
 
 async function list({ orgId, query, client }) {
   const params = [orgId];
-  const where = ["organization_id=$1"]; 
+  const where = ["cn.organization_id=$1"];
   let i = 2;
-  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
-  if (query?.customerId) { where.push(`customer_id=$${i++}`); params.push(query.customerId); }
+  
+  if (query?.status) { 
+    where.push(`cn.status=$${i++}`); 
+    params.push(query.status); 
+  }
+  
+  if (query?.customer_id) { 
+    where.push(`cn.customer_id=$${i++}`); 
+    params.push(query.customer_id); 
+  }
+
   const { rows } = await client.query(
-    `SELECT * FROM credit_notes WHERE ${where.join(" AND ")}
-     ORDER BY credit_note_date DESC, created_at DESC
+    `SELECT 
+      cn.*,
+      bp.name as customer_name,
+      bp.code as customer_code,
+      bp.email as customer_email,
+      bp.phone as customer_phone
+     FROM credit_notes cn
+     LEFT JOIN business_partners bp ON cn.customer_id = bp.id
+     WHERE ${where.join(" AND ")}
+     ORDER BY cn.credit_note_date DESC, cn.created_at DESC
      LIMIT 200`,
     params
   );
   return rows;
 }
-
 async function setIssued({ orgId, id, periodId, journalEntryId, actorUserId, client }) {
   const { rows } = await client.query(
     `UPDATE credit_notes

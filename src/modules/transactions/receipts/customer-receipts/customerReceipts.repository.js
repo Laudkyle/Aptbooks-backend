@@ -76,7 +76,6 @@ async function recordAllocationEvent(client, { orgId, customerReceiptId, actorUs
     [orgId, customerReceiptId, actorUserId || null, action, before || null, after || null]
   );
 }
-
 async function getCustomerReceiptById(orgId, receiptId) {
   const { rows } = await pool.query(
     `SELECT 
@@ -90,10 +89,15 @@ async function getCustomerReceiptById(orgId, receiptId) {
       addr.city as customer_address_city,
       addr.region as customer_address_region,
       addr.postal_code as customer_address_postal_code,
-      addr.country as customer_address_country
+      addr.country as customer_address_country,
+      pm.name as payment_method_name,
+      coa.name as cash_account_name,
+      coa.code as cash_account_code
      FROM customer_receipts cr
      LEFT JOIN business_partners bp ON cr.customer_id = bp.id
      LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     LEFT JOIN payment_methods pm ON cr.payment_method_id = pm.id
+     LEFT JOIN chart_of_accounts coa ON cr.cash_account_id = coa.id
      WHERE cr.organization_id=$1 AND cr.id=$2`,
     [orgId, receiptId]
   );

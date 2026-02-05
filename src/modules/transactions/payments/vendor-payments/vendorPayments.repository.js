@@ -45,6 +45,49 @@ async function upsertAllocation(client, { vendorPaymentId, billId, amountApplied
   );
 }
 
+async function listVendorPayments({ orgId, query }) {
+  const params = [orgId];
+  const where = ["vp.organization_id=$1"];
+  let i = 2;
+
+  if (query?.status) { 
+    where.push(`vp.status=$${i++}`); 
+    params.push(query.status); 
+  }
+  if (query?.vendor_id) { 
+    where.push(`vp.vendor_id=$${i++}`); 
+    params.push(query.vendor_id); 
+  }
+
+  const { rows } = await pool.query(
+    `SELECT 
+      vp.*,
+      bp.name as vendor_name,
+      addr.line1 as vendor_address_line1,
+      addr.city as vendor_address_city,
+      addr.country as vendor_address_country,
+      pm.name as payment_method_name,
+      coa.name as cash_account_name,
+      coa.code as cash_account_code
+     FROM vendor_payments vp
+     LEFT JOIN business_partners bp ON vp.vendor_id = bp.id
+     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     LEFT JOIN payment_methods pm ON vp.payment_method_id = pm.id
+     LEFT JOIN chart_of_accounts coa ON vp.cash_account_id = coa.id
+     WHERE ${where.join(" AND ")} 
+     ORDER BY vp.payment_date DESC, vp.created_at DESC`,
+    params
+  );
+  return rows;
+}
+
+async function getAllocations(vendorPaymentId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM vendor_payment_allocations WHERE vendor_payment_id=$1 ORDER BY created_at ASC`,
+    [vendorPaymentId]
+  );
+  return rows;
+}
 async function getVendorPaymentById(orgId, id) {
   const { rows } = await pool.query(
     `SELECT 
@@ -58,24 +101,20 @@ async function getVendorPaymentById(orgId, id) {
       addr.city as vendor_address_city,
       addr.region as vendor_address_region,
       addr.postal_code as vendor_address_postal_code,
-      addr.country as vendor_address_country
+      addr.country as vendor_address_country,
+      pm.name as payment_method_name,
+      coa.name as cash_account_name,
+      coa.code as cash_account_code
      FROM vendor_payments vp
      LEFT JOIN business_partners bp ON vp.vendor_id = bp.id
      LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     LEFT JOIN payment_methods pm ON vp.payment_method_id = pm.id
+     LEFT JOIN chart_of_accounts coa ON vp.cash_account_id = coa.id
      WHERE vp.organization_id=$1 AND vp.id=$2`,
     [orgId, id]
   );
   return rows[0] || null;
 }
-
-async function getAllocations(vendorPaymentId) {
-  const { rows } = await pool.query(
-    `SELECT * FROM vendor_payment_allocations WHERE vendor_payment_id=$1 ORDER BY created_at ASC`,
-    [vendorPaymentId]
-  );
-  return rows;
-}
-
 async function listVendorPayments({ orgId, query }) {
   const params = [orgId];
   const where = ["vp.organization_id=$1"];
@@ -85,9 +124,9 @@ async function listVendorPayments({ orgId, query }) {
     where.push(`vp.status=$${i++}`); 
     params.push(query.status); 
   }
-  if (query?.vendorId) { 
+  if (query?.vendor_id) { 
     where.push(`vp.vendor_id=$${i++}`); 
-    params.push(query.vendorId); 
+    params.push(query.vendor_id); 
   }
 
   const { rows } = await pool.query(
@@ -96,10 +135,12 @@ async function listVendorPayments({ orgId, query }) {
       bp.name as vendor_name,
       addr.line1 as vendor_address_line1,
       addr.city as vendor_address_city,
-      addr.country as vendor_address_country
+      addr.country as vendor_address_country,
+      pm.name as payment_method_name
      FROM vendor_payments vp
      LEFT JOIN business_partners bp ON vp.vendor_id = bp.id
      LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
+     LEFT JOIN payment_methods pm ON vp.payment_method_id = pm.id
      WHERE ${where.join(" AND ")} 
      ORDER BY vp.payment_date DESC, vp.created_at DESC`,
     params

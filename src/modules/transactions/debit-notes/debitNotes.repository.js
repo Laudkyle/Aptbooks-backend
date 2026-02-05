@@ -2,12 +2,19 @@ const { AppError } = require("../../../shared/errors/AppError");
 
 async function getById({ orgId, id, client }) {
   const { rows } = await client.query(
-    `SELECT * FROM debit_notes WHERE organization_id=$1 AND id=$2`,
+    `SELECT 
+      dn.*,
+      bp.name as vendor_name,
+      bp.code as vendor_code,
+      bp.email as vendor_email,
+      bp.phone as vendor_phone
+     FROM debit_notes dn
+     LEFT JOIN business_partners bp ON dn.vendor_id = bp.id
+     WHERE dn.organization_id=$1 AND dn.id=$2`,
     [orgId, id]
   );
   return rows[0] || null;
 }
-
 async function getLines({ id, client }) {
   const { rows } = await client.query(
     `SELECT * FROM debit_note_lines WHERE debit_note_id=$1 ORDER BY line_no`,
@@ -92,19 +99,35 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
 
 async function list({ orgId, query, client }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["dn.organization_id=$1"];
   let i = 2;
-  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
-  if (query?.vendorId) { where.push(`vendor_id=$${i++}`); params.push(query.vendorId); }
+  
+  if (query?.status) { 
+    where.push(`dn.status=$${i++}`); 
+    params.push(query.status); 
+  }
+  
+  if (query?.vendor_id) { 
+    where.push(`dn.vendor_id=$${i++}`); 
+    params.push(query.vendor_id); 
+  }
+
   const { rows } = await client.query(
-    `SELECT * FROM debit_notes WHERE ${where.join(" AND ")}
-     ORDER BY debit_note_date DESC, created_at DESC
+    `SELECT 
+      dn.*,
+      bp.name as vendor_name,
+      bp.code as vendor_code,
+      bp.email as vendor_email,
+      bp.phone as vendor_phone
+     FROM debit_notes dn
+     LEFT JOIN business_partners bp ON dn.vendor_id = bp.id
+     WHERE ${where.join(" AND ")}
+     ORDER BY dn.debit_note_date DESC, dn.created_at DESC
      LIMIT 200`,
     params
   );
   return rows;
 }
-
 async function setIssued({ orgId, id, periodId, journalEntryId, actorUserId, client }) {
   const { rows } = await client.query(
     `UPDATE debit_notes
