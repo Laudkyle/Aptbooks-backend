@@ -1,9 +1,5 @@
 const { pool } = require("../../../db/pool");
 
-/**
- * Currencies are global reference data (not organization-scoped).
- * Table: currencies(code CHAR(3) PRIMARY KEY, name TEXT NOT NULL)
- */
 async function listCurrencies({ q, limit } = {}) {
   const safeLimit = Math.min(Number.parseInt(String(limit || "500"), 10) || 500, 1000);
   const query = (q || "").toString().trim();

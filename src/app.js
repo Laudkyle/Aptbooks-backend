@@ -36,6 +36,7 @@ const dimensionSecurityRoutes = require("./core/foundation/dimension-security/di
 const accrualRoutes = require("./core/accounting/accruals/accruals.routes");
 const notificationsRoutes = require("./notifications/notifications.routes");
 const searchRoutes = require("./search/search.routes");
+const referenceRoutes = require("./core/foundation/reference/reference.routes");
 
 // Tier 10: Documents & Workflow
 const documentsWorkflowRoutes = require("./workflow/documents/documents.routes");
@@ -129,6 +130,7 @@ app.use("/core/settings", settingsRoutes);
 app.use("/core/dimension-security", dimensionSecurityRoutes);
 app.use("/core/api-keys", require("./core/foundation/api-keys/apiKeys.routes"));
 app.use("/core/accounting/accruals", accrualRoutes);
+app.use("/core/reference", referenceRoutes);
 
 app.use("/core/accounting/accounts", coaRoutes);
 app.use("/core/accounting/periods", periodRoutes);
