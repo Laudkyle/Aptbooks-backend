@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS documents (
   entity_ref TEXT,
   workflow_state_code TEXT NOT NULL DEFAULT 'DRAFT' REFERENCES workflow_states(code),
   current_version_no INT NOT NULL DEFAULT 0,
-  created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

@@ -5,6 +5,7 @@ const { requirePermission } = require("../../../middleware/permission.middleware
 const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const notificationsSvc = require("../../../notifications/notifications.service");
 
 const {
   createLeaveTypeSchema,
@@ -126,7 +127,24 @@ router.post(
   requirePermission("hr.leave.manage"),
   async (req, res, next) => {
     try {
-      res.json(await svc.submitLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, audit: req.audit, writeAudit }));
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const out = await svc.submitLeaveRequest({ orgId, actorUserId, requestId: req.params.id, audit: req.audit, writeAudit });
+
+      await notificationsSvc.createNotification({
+        orgId,
+        actorUserId,
+        payload: {
+          type: "approval",
+          severity: "info",
+          title: "Leave request submitted for approval",
+          body: `A leave request has been submitted and is awaiting approval. (Leave Request ID: ${req.params.id})`,
+          entityType: "hr_leave_requests",
+          entityId: req.params.id
+        }
+      });
+
+      res.json(out);
     } catch (e) { next(e); }
   }
 );

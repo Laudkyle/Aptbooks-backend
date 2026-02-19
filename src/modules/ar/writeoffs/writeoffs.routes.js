@@ -1,6 +1,7 @@
 const express = require('express');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const svc = require('./writeoffs.service');
+const notificationsSvc = require('../../../notifications/notifications.service');
 
 const router = express.Router();
 
@@ -67,7 +68,22 @@ router.post('/', requirePermission('writeoffs.manage'), async (req, res, next) =
 router.post('/:id/submit', requirePermission('writeoffs.manage'), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
-    res.json({ data: await svc.submit({ orgId, id: Number(req.params.id), actorUserId }) });
+    const data = await svc.submit({ orgId, id: Number(req.params.id), actorUserId });
+
+    await notificationsSvc.createNotification({
+      orgId,
+      actorUserId,
+      payload: {
+        type: 'approval',
+        severity: 'info',
+        title: 'Write-off submitted for approval',
+        body: `A write-off has been submitted and is awaiting approval. (Write-off ID: ${req.params.id})`,
+        entityType: 'writeoffs',
+        entityId: req.params.id
+      }
+    });
+
+    res.json({ data });
   } catch (e) { next(e); }
 });
 

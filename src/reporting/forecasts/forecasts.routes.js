@@ -2,6 +2,7 @@ const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./forecasts.service");
+const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
 
@@ -112,6 +113,20 @@ router.post(
     try {
       const { organization_id: orgId, id: actorUserId } = req.user;
       const data = await svc.submitVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+
+      await notificationsSvc.createNotification({
+        orgId,
+        actorUserId,
+        payload: {
+          type: "approval",
+          severity: "info",
+          title: "Forecast submitted for approval",
+          body: `A forecast version has been submitted and is awaiting approval. (Forecast ID: ${req.params.id}, Version ID: ${req.params.versionId})`,
+          entityType: "forecast_versions",
+          entityId: req.params.versionId
+        }
+      });
+
       res.json({ data });
     } catch (err) {
       next(err);

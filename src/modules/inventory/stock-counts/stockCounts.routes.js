@@ -3,6 +3,7 @@ const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { idempotency } = require("../../../middleware/idempotency.middleware");
 const svc = require("./stockCounts.service");
+const notificationsSvc = require("../../../notifications/notifications.service");
 
 router.use(authRequired);
 
@@ -33,7 +34,24 @@ router.post("/:id/lines", idempotency({ required: true }), requirePermission("in
 
 router.post("/:id/submit", idempotency({ required: true }), requirePermission("inventory.transactions.manage"), async (req, res, next) => {
   try {
-    res.json(await svc.submitStockCount({ orgId: req.user.organization_id, actorUserId: req.user.id, id: req.params.id }));
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const out = await svc.submitStockCount({ orgId, actorUserId, id: req.params.id });
+
+    await notificationsSvc.createNotification({
+      orgId,
+      actorUserId,
+      payload: {
+        type: "approval",
+        severity: "info",
+        title: "Stock count submitted for approval",
+        body: `A stock count has been submitted and is awaiting approval. (Stock Count ID: ${req.params.id})`,
+        entityType: "inventory_stock_counts",
+        entityId: req.params.id
+      }
+    });
+
+    res.json(out);
   } catch (e) { next(e); }
 });
 

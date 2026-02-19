@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
   email CITEXT NOT NULL UNIQUE, 
   password_hash TEXT NOT NULL,
+ full_name TEXT NOT NULL, 
   is_system BOOLEAN NOT NULL DEFAULT FALSE,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -2,6 +2,7 @@ const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./budgets.service");
+const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
 
@@ -45,12 +46,69 @@ router.put("/:id", requirePermission("reporting.budgets.manage"), idempotency({ 
   }
 });
 
+// Budget status management endpoints
+router.post("/:id/archive", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.updateBudget({ 
+      orgId, 
+      actorUserId, 
+      req, 
+      id: req.params.id, 
+      status: "archived" 
+    });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/:id/activate", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.updateBudget({ 
+      orgId, 
+      actorUserId, 
+      req, 
+      id: req.params.id, 
+      status: "active" 
+    });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Versions
 router.post("/:id/versions", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await svc.createVersion({ orgId, budgetId: req.params.id, actorUserId, req, ...req.body });
     res.status(201).json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get all versions for a budget
+router.get("/:id/versions", requirePermission("reporting.budgets.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    // Assuming there's a service method to list versions
+    // If not, you'll need to add it to the service
+    const data = await svc.listVersions({ orgId, budgetId: req.params.id });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get a specific version
+router.get("/:id/versions/:versionId", requirePermission("reporting.budgets.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const data = await svc.getVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId });
+    res.json({ data });
   } catch (err) {
     next(err);
   }
@@ -97,10 +155,7 @@ router.post(
   }
 );
 
-
 // Distribute annual amounts across periods (standard budgeting helper)
-// POST /reporting/budgets/:id/versions/:versionId/distribute
-// body: { items: [{ accountId, annualAmount, method: 'even'|'weighted'|'custom', periodIds?, weights?, amounts?, dimensionJson? }] }
 router.post(
   "/:id/versions/:versionId/distribute",
   requirePermission("reporting.budgets.manage"),
@@ -124,7 +179,6 @@ router.post(
 );
 
 // Finalize a draft budget version (locks it for edits)
-// POST /reporting/budgets/:id/versions/:versionId/finalize
 router.post(
   "/:id/versions/:versionId/finalize",
   requirePermission("reporting.budgets.manage"),
@@ -155,6 +209,20 @@ router.post(
     try {
       const { organization_id: orgId, id: actorUserId } = req.user;
       const data = await svc.submitVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+
+      await notificationsSvc.createNotification({
+        orgId,
+        actorUserId,
+        payload: {
+          type: "approval",
+          severity: "info",
+          title: "Budget submitted for approval",
+          body: `A budget version has been submitted and is awaiting approval. (Budget ID: ${req.params.id}, Version ID: ${req.params.versionId})`,
+          entityType: "budget_versions",
+          entityId: req.params.versionId
+        }
+      });
+
       res.json({ data });
     } catch (err) {
       next(err);
@@ -260,6 +328,16 @@ router.get("/:id/alerts", requirePermission("reporting.budgets.read"), async (re
   }
 });
 
+router.get("/:id/alerts/:ruleId", requirePermission("reporting.budgets.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const data = await svc.getAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post("/:id/alerts", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
@@ -285,8 +363,22 @@ router.put(
   }
 );
 
+router.delete(
+  "/:id/alerts/:ruleId",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const { organization_id: orgId, id: actorUserId } = req.user;
+      const data = await svc.deleteAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Variance (Budget vs Actual)
-// GET /reporting/budgets/:id/versions/:versionId/variance?periodId=<accounting_period_id>
 router.get("/:id/versions/:versionId/variance", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;

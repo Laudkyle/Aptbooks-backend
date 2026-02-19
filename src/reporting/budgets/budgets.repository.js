@@ -26,11 +26,45 @@ async function createBudget({ orgId, name, fiscalYear, currencyCode, status }) {
 }
 
 async function getBudget({ orgId, id }) {
-  const { rows } = await pool.query(
+  // Fetch the budget
+  const { rows: budgetRows } = await pool.query(
     `SELECT * FROM budgets WHERE organization_id=$1 AND id=$2 LIMIT 1`,
     [orgId, id]
   );
-  return rows.length ? rows[0] : null;
+  
+  if (!budgetRows.length) {
+    return null;
+  }
+  
+  const budget = budgetRows[0];
+  
+  // Fetch versions for this budget
+  const { rows: versionRows } = await pool.query(
+    `SELECT * FROM budget_versions WHERE budget_id=$1 AND organization_id=$2 ORDER BY version_no DESC`,
+    [id, orgId]
+  );
+  
+  // Fetch lines for each version (if needed)
+  const versionsWithLines = await Promise.all(
+    versionRows.map(async (version) => {
+      const { rows: lineRows } = await pool.query(
+        `SELECT * FROM budget_lines WHERE budget_version_id=$1 AND organization_id=$2`,
+        [version.id, orgId]
+      );
+      
+      return {
+        ...version,
+        lines: lineRows
+      };
+    })
+  );
+  
+  return {
+    ...budget,
+    versions: versionsWithLines,
+    // You might want to flatten lines for easier access
+    lines: versionsWithLines.flatMap(v => v.lines)
+  };
 }
 
 async function updateBudget({ orgId, id, name, fiscalYear, currencyCode, status }) {

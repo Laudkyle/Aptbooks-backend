@@ -16,6 +16,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 
 const journalAPI = require("../../../interfaces/journalPosting.interface");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
+const notificationsSvc = require("../../../notifications/notifications.service");
 
 router.use(authRequired);
 
@@ -245,6 +246,20 @@ router.post("/:id/submit", requirePermission("accounting.journal.submit"), async
       userAgent: req.audit?.userAgent,
       before,
       after
+    });
+
+    // Broadcast notification so admins/approvers see it in Notifications.
+    await notificationsSvc.createNotification({
+      orgId,
+      actorUserId,
+      payload: {
+        type: "approval",
+        severity: "info",
+        title: "Journal submitted for approval",
+        body: `A journal entry has been submitted and is awaiting approval. (Journal ID: ${req.params.id})`,
+        entityType: "journal_entries",
+        entityId: req.params.id
+      }
     });
 
     res.json(out);

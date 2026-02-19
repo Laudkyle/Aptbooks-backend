@@ -7,6 +7,7 @@ const { idempotency } = require("../../middleware/idempotency.middleware");
 const { validate } = require("../../shared/validators/validate");
 const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
+const notificationsSvc = require("../../notifications/notifications.service");
 const { env } = require("../../config/env");
 const entityResolver = require("../../interfaces/entityResolver.interface");
 
@@ -223,6 +224,20 @@ router.post("/:id/submit", idempotency({ required: true }), requirePermission("d
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { state: "SUBMITTED" }
+    });
+
+    // Broadcast notification so approvers/admins see it in Notifications.
+    await notificationsSvc.createNotification({
+      orgId,
+      actorUserId: req.user.id,
+      payload: {
+        type: "approval",
+        severity: "info",
+        title: "Document submitted for approval",
+        body: `A document has been submitted and is awaiting approval. (Document ID: ${req.params.id})`,
+        entityType: "documents",
+        entityId: req.params.id
+      }
     });
 
     res.json(result);
