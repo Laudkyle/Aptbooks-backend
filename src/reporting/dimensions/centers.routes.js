@@ -5,6 +5,40 @@ const svc = require("./centers.service");
 
 const router = express.Router();
 
+// Get all centers across all types (cost, profit, investment)
+router.get("/all", requirePermission("reporting.centers.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { status, includeArchived, grouped } = req.query;
+    
+    // Parse boolean query parameters
+    const parsedIncludeArchived = includeArchived === 'true';
+    const parsedGrouped = grouped === 'true';
+    
+    let data;
+    if (parsedGrouped) {
+      // Return centers grouped by type
+      data = await svc.getAllCentersGrouped({ 
+        orgId, 
+        status, 
+        includeArchived: parsedIncludeArchived 
+      });
+    } else {
+      // Return flat list of all centers
+      data = await svc.getAllCenters({ 
+        orgId, 
+        status, 
+        includeArchived: parsedIncludeArchived 
+      });
+    }
+    
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get centers by type (existing)
 router.get("/:type", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
@@ -17,6 +51,36 @@ router.get("/:type", requirePermission("reporting.centers.read"), async (req, re
   }
 });
 
+// Get center by ID across all types (auto-detects type)
+router.get("/by-id/:id", requirePermission("reporting.centers.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { id } = req.params;
+    const data = await svc.getCenterById({ orgId, id });
+    
+    if (!data) {
+      return res.status(404).json({ error: "Center not found" });
+    }
+    
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get usage for a center by ID (auto-detects type)
+router.get("/by-id/:id/usage", requirePermission("reporting.centers.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { id } = req.params;
+    const data = await svc.getCenterUsage({ orgId, id });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Get usage for a center by type and ID (existing)
 router.get("/:type/:id/usage", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
@@ -28,6 +92,7 @@ router.get("/:type/:id/usage", requirePermission("reporting.centers.read"), asyn
   }
 });
 
+// Create center (existing)
 router.post("/:type", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
@@ -39,6 +104,7 @@ router.post("/:type", requirePermission("reporting.centers.manage"), idempotency
   }
 });
 
+// Update center (existing)
 router.put("/:type/:id", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
@@ -50,6 +116,7 @@ router.put("/:type/:id", requirePermission("reporting.centers.manage"), idempote
   }
 });
 
+// Archive center (existing)
 router.delete("/:type/:id", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;

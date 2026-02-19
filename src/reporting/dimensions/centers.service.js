@@ -38,13 +38,102 @@ async function listCenters({ orgId, type, status }) {
             valid_to AS "validTo",
             is_blocked AS "isBlocked",
             blocked_reason AS "blockedReason",
-            created_at, updated_at
+            created_at, updated_at,
+            $2 AS "centerType"
        FROM ${table}
        ${where}
        ORDER BY code`,
-    params
+    [orgId, type, ...(status ? [status] : [])]
   );
   return rows;
+}
+
+/**
+ * Get all centers across all types (cost, profit, investment)
+ * @param {Object} params
+ * @param {string} params.orgId - Organization ID
+ * @param {string} [params.status] - Optional status filter (active, inactive, archived)
+ * @param {boolean} [params.includeArchived] - Whether to include archived centers (default: false)
+ * @returns {Promise<Array>} Combined list of all centers with type information
+ */
+async function getAllCenters({ orgId, status, includeArchived = false }) {
+  const allCenters = [];
+  
+  // Query each center type table
+  for (const type of CENTER_TYPES) {
+    const table = tableForType(type);
+    const params = [orgId];
+    let where = "WHERE organization_id=$1";
+    
+    // Apply status filter if provided
+    if (status) {
+      params.push(status);
+      where += ` AND status=$${params.length}`;
+    } else if (!includeArchived) {
+      // Default to excluding archived if not explicitly included
+      params.push('archived');
+      where += ` AND status != $${params.length}`;
+    }
+    
+    const { rows } = await pool.query(
+      `SELECT 
+        id, 
+        code, 
+        name, 
+        status,
+        parent_id AS "parentId",
+        valid_from AS "validFrom",
+        valid_to AS "validTo",
+        is_blocked AS "isBlocked",
+        blocked_reason AS "blockedReason",
+        created_at, 
+        updated_at,
+        $2 AS "centerType"
+       FROM ${table}
+       ${where}
+       ORDER BY code`,
+      params
+    );
+    
+    allCenters.push(...rows);
+  }
+  
+  // Sort combined results by name/code
+  return allCenters.sort((a, b) => {
+    // Sort by type first, then by name
+    if (a.centerType !== b.centerType) {
+      return a.centerType.localeCompare(b.centerType);
+    }
+    return (a.name || a.code || '').localeCompare(b.name || b.code || '');
+  });
+}
+
+/**
+ * Get all centers as a flat list with type information
+ * Useful for dropdowns, search, and cross-type reporting
+ */
+async function getAllCentersFlat({ orgId, status, includeArchived = false }) {
+  return getAllCenters({ orgId, status, includeArchived });
+}
+
+/**
+ * Get centers grouped by type
+ * Returns an object with cost, profit, and investment arrays
+ */
+async function getAllCentersGrouped({ orgId, status, includeArchived = false }) {
+  const allCenters = await getAllCenters({ orgId, status, includeArchived });
+  
+  const grouped = {
+    cost: [],
+    profit: [],
+    investment: []
+  };
+  
+  allCenters.forEach(center => {
+    grouped[center.centerType].push(center);
+  });
+  
+  return grouped;
 }
 
 async function createCenter({ orgId, type, code, name, status, parentId, validFrom, validTo, isBlocked, blockedReason, actorUserId, req }) {
@@ -95,8 +184,29 @@ async function createCenter({ orgId, type, code, name, status, parentId, validFr
 
 async function getCenter({ orgId, type, id }) {
   const table = tableForType(type);
-  const { rows } = await pool.query(`SELECT * FROM ${table} WHERE organization_id=$1 AND id=$2 LIMIT 1`, [orgId, id]);
+  const { rows } = await pool.query(
+    `SELECT *, 
+            $2 AS "centerType" 
+     FROM ${table} 
+     WHERE organization_id=$1 AND id=$3 
+     LIMIT 1`, 
+    [orgId, type, id]
+  );
   return rows[0] || null;
+}
+
+/**
+ * Get a center by ID across all types (auto-detects type)
+ * Useful when you don't know which type table the center belongs to
+ */
+async function getCenterById({ orgId, id }) {
+  for (const type of CENTER_TYPES) {
+    const center = await getCenter({ orgId, type, id });
+    if (center) {
+      return center;
+    }
+  }
+  return null;
 }
 
 async function usageForCenter({ orgId, type, id }) {
@@ -117,6 +227,22 @@ async function usageForCenter({ orgId, type, id }) {
   // profit/investment centers currently have no references in this repo.
   // Keep a stable shape for clients.
   return { centerId: id, type, usage };
+}
+
+/**
+ * Get usage for a center across all modules (auto-detects type)
+ */
+async function getCenterUsage({ orgId, id }) {
+  const center = await getCenterById({ orgId, id });
+  if (!center) {
+    throw new AppError(404, "Center not found");
+  }
+  
+  return usageForCenter({ 
+    orgId, 
+    type: center.centerType, 
+    id 
+  });
 }
 
 function ensureNotArchived(before) {
@@ -243,8 +369,16 @@ async function archiveCenter({ orgId, type, id, actorUserId, req }) {
 
 module.exports = {
   listCenters,
+  getAllCenters,
+  getAllCentersFlat,
+  getAllCentersGrouped,
   createCenter,
+  getCenter,
+  getCenterById,
   updateCenter,
   archiveCenter,
   usageForCenter,
+  getCenterUsage,
+  CENTER_TYPES,
+  CENTER_STATUSES
 };
