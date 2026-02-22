@@ -62,6 +62,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_forecast_version_lines
 CREATE INDEX IF NOT EXISTS ix_forecast_versions_forecast
   ON forecast_versions (organization_id, forecast_id);
 
+
+-- Drop existing constraint
+ALTER TABLE forecast_lines 
+DROP CONSTRAINT forecast_lines_forecast_id_account_id_period_id_key;
+
+-- Add new constraint including version_id
+ALTER TABLE forecast_lines 
+ADD CONSTRAINT forecast_lines_forecast_id_forcast_version_id_account_id_period_id_key 
+UNIQUE (forecast_id, forecast_version_id, account_id, period_id);
 -- updated_at trigger
 DO $$
 BEGIN

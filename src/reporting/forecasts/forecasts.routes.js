@@ -6,6 +6,7 @@ const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
 
+// Existing GET endpoint for listing forecasts
 router.get("/", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
@@ -22,6 +23,117 @@ router.get("/", requirePermission("reporting.forecasts.read"), async (req, res, 
   }
 });
 
+// NEW: GET single forecast by ID with all versions and lines
+router.get("/:id", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const { includeLines } = req.query; // Optional query param to control if lines are included
+    
+    const data = await svc.getForecast({ 
+      orgId, 
+      forecastId: req.params.id, 
+      actorUserId, 
+      req,
+      includeLines: includeLines === 'true' // Convert string to boolean
+    });
+    
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// NEW: GET a specific forecast version with its lines
+router.get("/:id/versions/:versionId", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    
+    const data = await svc.getForecastVersion({ 
+      orgId, 
+      forecastId: req.params.id, 
+      versionId: req.params.versionId,
+      actorUserId, 
+      req
+    });
+    
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// NEW: GET all versions for a forecast (lightweight, without lines)
+router.get("/:id/versions", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    
+    const versions = await svc.listForecastVersions({ 
+      orgId, 
+      forecastId: req.params.id
+    });
+    
+    res.json({ data: versions });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// NEW: GET lines for a specific version (useful for pagination/lazy loading)
+router.get("/:id/versions/:versionId/lines", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { limit, offset, accountId, periodId } = req.query;
+    
+    const lines = await svc.listForecastLines({ 
+      orgId, 
+      forecastId: req.params.id,
+      versionId: req.params.versionId,
+      limit: limit ? Number(limit) : 100,
+      offset: offset ? Number(offset) : 0,
+      accountId: accountId || undefined,
+      periodId: periodId || undefined
+    });
+    
+    res.json({ data: lines });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// NEW: GET forecast summary with key metrics
+router.get("/:id/summary", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    
+    const summary = await svc.getForecastSummary({ 
+      orgId, 
+      forecastId: req.params.id
+    });
+    
+    res.json({ data: summary });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// NEW: GET workflow history for a forecast version
+router.get("/:id/versions/:versionId/history", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    
+    const history = await svc.getVersionWorkflowHistory({ 
+      orgId, 
+      forecastId: req.params.id,
+      versionId: req.params.versionId
+    });
+    
+    res.json({ data: history });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST endpoints remain the same below this line...
 router.post(
   "/",
   requirePermission("reporting.forecasts.manage"),
@@ -314,7 +426,6 @@ router.post(
     }
   }
 );
-
 
 // Variance (Forecast vs Actual)
 // GET /reporting/forecasts/:id/variance?periodId=<period>&versionId=<optional>

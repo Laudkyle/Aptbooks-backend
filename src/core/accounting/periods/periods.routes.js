@@ -40,8 +40,15 @@ router.post("/", requirePermission("accounting.period.manage"), async (req, res,
 router.get("/", requirePermission("accounting.period.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await periodAPI.listPeriods({ orgId });
-    res.json(out);
+    const { fiscalYear, status } = req.query;
+    
+    const periods = await periodAPI.listPeriods({ 
+      orgId, 
+      fiscalYear: fiscalYear ? parseInt(fiscalYear) : undefined,
+      status 
+    });
+    
+    res.json(periods);
   } catch (e) {
     next(e);
   }

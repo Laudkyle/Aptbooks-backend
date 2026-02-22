@@ -64,15 +64,17 @@ async function getAllCenters({ orgId, status, includeArchived = false }) {
     const table = tableForType(type);
     const params = [orgId];
     let where = "WHERE organization_id=$1";
+    let paramIndex = 1; // Track the current parameter index
     
     // Apply status filter if provided
     if (status) {
+      paramIndex++;
       params.push(status);
-      where += ` AND status=$${params.length}`;
+      where += ` AND status=$${paramIndex}`;
     } else if (!includeArchived) {
-      // Default to excluding archived if not explicitly included
+      paramIndex++;
       params.push('archived');
-      where += ` AND status != $${params.length}`;
+      where += ` AND status != $${paramIndex}`;
     }
     
     const { rows } = await pool.query(
@@ -88,11 +90,11 @@ async function getAllCenters({ orgId, status, includeArchived = false }) {
         blocked_reason AS "blockedReason",
         created_at, 
         updated_at,
-        $2 AS "centerType"
+        $${paramIndex + 1} AS "centerType"
        FROM ${table}
        ${where}
        ORDER BY code`,
-      params
+      [...params, type] // Add type as the last parameter
     );
     
     allCenters.push(...rows);
@@ -107,7 +109,6 @@ async function getAllCenters({ orgId, status, includeArchived = false }) {
     return (a.name || a.code || '').localeCompare(b.name || b.code || '');
   });
 }
-
 /**
  * Get all centers as a flat list with type information
  * Useful for dropdowns, search, and cross-type reporting

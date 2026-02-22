@@ -149,6 +149,231 @@ async function upsertLines({ orgId, forecastId, versionId = null, lines, actorUs
 
   return { forecastId, forecastVersionId: v.id, lines: saved };
 }
+async function getForecast({ orgId, forecastId, actorUserId, req}) {
+  assertUuid(forecastId, "forecastId");
+  const includeLines = req?.query?.includeLines === 'true'; 
+  const forecast = await repo.getForecast({ orgId, id: forecastId });
+  if (!forecast) throw new AppError(404, "Forecast not found");
+
+  // Get all versions for this forecast
+  const versions = await repo.listVersions({ orgId, forecastId });
+  console.log(`Forecast ${forecastId} has ${versions.length} versions and the includeLines flag is ${includeLines}  `);
+  // Get lines for each version if requested
+  const versionsWithLines = includeLines 
+    ? await Promise.all(
+        versions.map(async (version) => {
+          const lines = await repo.listLines({ 
+            orgId, 
+            forecastId, 
+            forecastVersionId: version.id 
+          });
+          console.log(`Version ${version.id} has ${lines.length} lines`);
+          return {
+            ...version,
+            lines
+          };
+        })
+      )
+    : versions;
+
+  // Write audit log for viewing
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.view",
+    entityType: "forecast",
+    entityId: forecastId,
+    ip: req?.ip,
+    userAgent: req?.headers?.["user-agent"],
+    before: null,
+    after: null,
+  });
+
+  return {
+    ...forecast,
+    versions: versionsWithLines
+  };
+}
+
+async function getForecastVersion({ orgId, forecastId, versionId, actorUserId, req }) {
+  assertUuid(forecastId, "forecastId");
+  assertUuid(versionId, "versionId");
+  
+  const version = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!version) throw new AppError(404, "Forecast version not found");
+
+  // Get lines for this version
+  const lines = await repo.listLines({ 
+    orgId, 
+    forecastId, 
+    forecastVersionId: version.id 
+  });
+
+  // Write audit log for viewing
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.view",
+    entityType: "forecast_version",
+    entityId: versionId,
+    ip: req?.ip,
+    userAgent: req?.headers?.["user-agent"],
+    before: null,
+    after: null,
+  });
+
+  return {
+    ...version,
+    lines
+  };
+}
+
+async function listForecastVersions({ orgId, forecastId }) {
+  assertUuid(forecastId, "forecastId");
+  
+  const forecast = await repo.getForecast({ orgId, id: forecastId });
+  if (!forecast) throw new AppError(404, "Forecast not found");
+
+  return repo.listVersions({ orgId, forecastId });
+}
+
+async function listForecastLines({ orgId, forecastId, versionId, limit = 100, offset = 0, accountId, periodId }) {
+  assertUuid(forecastId, "forecastId");
+  assertUuid(versionId, "versionId");
+  
+  const version = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!version) throw new AppError(404, "Forecast version not found");
+
+  return repo.listLinesPaginated({ 
+    orgId, 
+    forecastId, 
+    forecastVersionId: versionId,
+    limit,
+    offset,
+    accountId,
+    periodId
+  });
+}
+
+async function getForecastSummary({ orgId, forecastId }) {
+  assertUuid(forecastId, "forecastId");
+  
+  const forecast = await repo.getForecast({ orgId, id: forecastId });
+  if (!forecast) throw new AppError(404, "Forecast not found");
+
+  const versions = await repo.listVersions({ orgId, forecastId });
+  
+  // Calculate summary metrics
+  const totalVersions = versions.length;
+  const draftVersions = versions.filter(v => v.workflow_status === 'draft').length;
+  const submittedVersions = versions.filter(v => v.workflow_status === 'in_review').length;
+  const approvedVersions = versions.filter(v => v.workflow_status === 'approved').length;
+  const rejectedVersions = versions.filter(v => v.workflow_status === 'rejected').length;
+  
+  // Get total lines count and sum across all versions
+  let totalLines = 0;
+  let totalAmount = 0;
+  
+  for (const version of versions) {
+    const lines = await repo.listLines({ orgId, forecastId, forecastVersionId: version.id });
+    totalLines += lines.length;
+    totalAmount += lines.reduce((sum, line) => sum + Number(line.amount || 0), 0);
+  }
+
+  return {
+    forecastId,
+    name: forecast.name,
+    fiscal_year: forecast.fiscal_year,
+    currency_code: forecast.currency_code,
+    status: forecast.status,
+    metrics: {
+      totalVersions,
+      draftVersions,
+      submittedVersions,
+      approvedVersions,
+      rejectedVersions,
+      totalLines,
+      totalAmount
+    },
+    versionBreakdown: {
+      draft: draftVersions,
+      in_review: submittedVersions,
+      approved: approvedVersions,
+      rejected: rejectedVersions
+    }
+  };
+}
+
+async function getVersionWorkflowHistory({ orgId, forecastId, versionId }) {
+  assertUuid(forecastId, "forecastId");
+  assertUuid(versionId, "versionId");
+  
+  const version = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!version) throw new AppError(404, "Forecast version not found");
+
+  // Get audit logs for this version
+  const auditLogs = await repo.getAuditLogs({ 
+    orgId, 
+    entityType: "forecast_version", 
+    entityId: versionId 
+  });
+
+  // Build workflow history timeline
+  const history = [
+    {
+      event: "created",
+      timestamp: version.created_at,
+      userId: version.created_by_user_id,
+      status: version.status
+    }
+  ];
+
+  if (version.submitted_at) {
+    history.push({
+      event: "submitted",
+      timestamp: version.submitted_at,
+      userId: version.submitted_by_user_id,
+      status: "in_review"
+    });
+  }
+
+  if (version.approved_at) {
+    history.push({
+      event: "approved",
+      timestamp: version.approved_at,
+      userId: version.approved_by_user_id,
+      status: "approved"
+    });
+  }
+
+  if (version.rejected_at) {
+    history.push({
+      event: "rejected",
+      timestamp: version.rejected_at,
+      userId: version.rejected_by_user_id,
+      reason: version.rejection_reason,
+      status: "rejected"
+    });
+  }
+
+  if (version.finalized_at) {
+    history.push({
+      event: "finalized",
+      timestamp: version.finalized_at,
+      status: "finalized"
+    });
+  }
+
+  // Sort by timestamp
+  history.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+  return {
+    versionId,
+    forecastId,
+    currentStatus: version.workflow_status || version.status,
+    history
+  };
+}
 
 async function getVariance({ orgId, forecastId, periodId, versionId = null }) {
   assertUuid(forecastId, "forecastId");
@@ -416,6 +641,12 @@ module.exports = {
   listForecasts,
   createForecast,
   createVersion,
+   getForecast,
+  getForecastVersion,
+  listForecastVersions,
+  listForecastLines,
+  getForecastSummary,
+  getVersionWorkflowHistory,
   upsertLines,
   getVariance,
   activateForecast,

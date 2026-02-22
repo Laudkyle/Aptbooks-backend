@@ -17,6 +17,104 @@ async function assertAccountWritable({ orgId, accountId }) {
   return { ok: true };
 }
 
+async function listLinesPaginated({ orgId, forecastId, forecastVersionId, limit = 100, offset = 0, accountId, periodId }) {
+  let query = `
+    SELECT 
+      fl.*
+    FROM forecast_lines fl
+    WHERE fl.organization_id = $1 
+      AND fl.forecast_id = $2 
+      AND fl.forecast_version_id = $3
+  `;
+  
+  const params = [orgId, forecastId, forecastVersionId];
+  let paramIndex = 4;
+  
+  if (accountId) {
+    query += ` AND fl.account_id = $${paramIndex}`;
+    params.push(accountId);
+    paramIndex++;
+  }
+  
+  if (periodId) {
+    query += ` AND fl.period_id = $${paramIndex}`;
+    params.push(periodId);
+    paramIndex++;
+  }
+  
+  query += ` ORDER BY fl.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+  params.push(limit, offset);
+  
+  const result = await pool.query(query, params);
+  
+  // Get total count for pagination metadata
+  const countResult = await pool.query(
+    `SELECT COUNT(*) as total 
+     FROM forecast_lines fl 
+     WHERE fl.org_id = $1 
+       AND fl.forecast_id = $2 
+       AND fl.forecast_version_id = $3`,
+    [orgId, forecastId, forecastVersionId]
+  );
+  
+  return {
+    items: result.rows,
+    pagination: {
+      total: parseInt(countResult.rows[0].total),
+      limit,
+      offset,
+      hasMore: offset + result.rows.length < parseInt(countResult.rows[0].total)
+    }
+  };
+}
+async function listLines({ orgId, forecastId, forecastVersionId, accountId, periodId }) {
+  let query = `
+    SELECT 
+      fl.*
+    FROM forecast_lines fl
+    WHERE fl.organization_id = $1 
+      AND fl.forecast_id = $2 
+      AND fl.forecast_version_id = $3
+  `;
+  
+  const params = [orgId, forecastId, forecastVersionId];
+  let paramIndex = 4;
+  
+  if (accountId) {
+    query += ` AND fl.account_id = $${paramIndex}`;
+    params.push(accountId);
+    paramIndex++;
+  }
+  
+  if (periodId) {
+    query += ` AND fl.period_id = $${paramIndex}`;
+    params.push(periodId);
+    paramIndex++;
+  }
+  
+  query += ` ORDER BY fl.created_at DESC`;
+  
+  const result = await pool.query(query, params);
+  console.log(`Found ${result.rows.length} lines for forecastVersionId ${forecastVersionId}`);
+  return result.rows;
+}
+async function getAuditLogs({ orgId, entityType, entityId }) {
+  const result = await pool.query(
+    `SELECT 
+      al.*,
+      u.email as user_email,
+      u.name as user_name
+    FROM audit_logs al
+    LEFT JOIN users u ON al.actor_user_id = u.id
+    WHERE al.organization_id = $1 
+      AND al.entity_type = $2 
+      AND al.entity_id = $3
+    ORDER BY al.created_at DESC`,
+    [orgId, entityType, entityId]
+  );
+  
+  return result.rows;
+}
 async function assertPeriodExists({ orgId, periodId }) {
   const { rows } = await pool.query(
     `SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2 LIMIT 1`,
@@ -113,19 +211,35 @@ async function getVersion({ orgId, versionId }) {
   return rows.length ? rows[0] : null;
 }
 
-// Compatibility helper: some call-sites pass { id } and optionally { forecastId }
-async function getVersionById({ orgId, id, forecastId }) {
+// Get a specific version by ID with its lines
+async function getVersionById({ orgId, id, forecastId, includeLines = true }) {
   const params = [orgId, id];
   let sql = `SELECT * FROM forecast_versions WHERE organization_id=$1 AND id=$2`;
+  
   if (forecastId) {
     params.push(forecastId);
     sql += ` AND forecast_id=$3`;
   }
   sql += ` LIMIT 1`;
+  
   const { rows } = await pool.query(sql, params);
-  return rows[0] || null;
+  const version = rows[0] || null;
+  
+  if (!version) return null;
+  
+  // If includeLines is true, fetch the lines for this version
+  if (includeLines) {
+    const linesResult = await pool.query(
+      `SELECT * FROM forecast_lines 
+       WHERE organization_id=$1 AND forecast_id=$2 AND forecast_version_id=$3 
+       ORDER BY created_at DESC`,
+      [orgId, version.forecast_id, version.id]
+    );
+    version.lines = linesResult.rows;
+  }
+  
+  return version;
 }
-
 async function getLatestDraftVersion({ orgId, forecastId }) {
   const { rows } = await pool.query(
     `
@@ -529,4 +643,7 @@ module.exports = {
   finalizeVersion,
   upsertLine,
   getVariance,
+  listLines,
+  listLinesPaginated,
+  getAuditLogs,
 };

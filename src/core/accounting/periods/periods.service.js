@@ -105,11 +105,26 @@ async function createPeriod({ orgId, payload }) {
   return rows[0];
 }
 
-async function listPeriods({ orgId }) {
-  const { rows } = await pool.query(
-    `SELECT * FROM accounting_periods WHERE organization_id=$1 ORDER BY start_date`,
-    [orgId]
-  );
+async function listPeriods({ orgId, fiscalYear, status }) {
+  let query = `SELECT * FROM accounting_periods WHERE organization_id=$1`;
+  const params = [orgId];
+  let paramIndex = 2;
+
+  if (fiscalYear) {
+    query += ` AND EXTRACT(YEAR FROM start_date) = $${paramIndex}`;
+    params.push(fiscalYear);
+    paramIndex++;
+  }
+
+  if (status) {
+    query += ` AND status = $${paramIndex}`;
+    params.push(status);
+    paramIndex++;
+  }
+
+  query += ` ORDER BY start_date`;
+
+  const { rows } = await pool.query(query, params);
   return rows;
 }
 
