@@ -8,6 +8,7 @@ const { parseCsvText } = require("../../shared/utils/csv");
 const FORECAST_STATUS = ["draft", "active", "archived"];
 // Forecast versions are "scenarios". We keep lifecycle simple and enforce edit locks.
 const VERSION_STATUS = ["draft", "active", "archived"];
+const SCENARIO_STATUS = ["active", "inactive"];
 
 function assertEditableWorkflow(version) {
   if (!version) throw new AppError(404, "Forecast version not found");
@@ -20,6 +21,411 @@ function assertEditableWorkflow(version) {
 function assertName(name, field = "name") {
   if (!name || typeof name !== "string" || !name.trim()) throw new AppError(400, `${field} is required`);
 }
+
+// ============================
+// Scenario Management
+// ============================
+
+async function listScenarios({ orgId, includeInactive = false }) {
+  return repo.listScenarios({ orgId, includeInactive });
+}
+
+async function getScenario({ orgId, scenarioId }) {
+  assertUuid(scenarioId, "scenarioId");
+  const scenario = await repo.getScenarioById({ orgId, scenarioId });
+  if (!scenario) throw new AppError(404, "Scenario not found");
+  return scenario;
+}
+
+async function getScenarioByCode({ orgId, code }) {
+  if (!code || typeof code !== "string" || !code.trim()) {
+    throw new AppError(400, "Scenario code is required");
+  }
+  const scenario = await repo.getScenarioByCode({ orgId, code: code.trim() });
+  if (!scenario) throw new AppError(404, "Scenario not found");
+  return scenario;
+}
+
+async function createScenario({ orgId, code, name, description, isDefault = false, isActive = true, metadata = {}, actorUserId, req }) {
+  // Validate required fields
+  if (!code || typeof code !== "string" || !code.trim()) {
+    throw new AppError(400, "Scenario code is required");
+  }
+  if (!name || typeof name !== "string" || !name.trim()) {
+    throw new AppError(400, "Scenario name is required");
+  }
+
+  // Normalize code to uppercase
+  const normalizedCode = code.trim().toUpperCase();
+
+  // Check for duplicate code
+  const existing = await repo.getScenarioByCode({ orgId, code: normalizedCode });
+  if (existing) {
+    throw new AppError(409, `Scenario with code '${normalizedCode}' already exists`);
+  }
+
+  const created = await repo.createScenario({
+    orgId,
+    code: normalizedCode,
+    name: name.trim(),
+    description: description?.trim(),
+    isDefault,
+    isActive,
+    metadata: metadata || {},
+    createdByUserId: actorUserId
+  });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.scenario.create",
+    entityType: "scenario",
+    entityId: created.id,
+    ip: req?.ip,
+    userAgent: req?.headers?.["user-agent"],
+    before: null,
+    after: created
+  });
+
+  return created;
+}
+
+async function updateScenario({ orgId, scenarioId, patch, actorUserId, req }) {
+  assertUuid(scenarioId, "scenarioId");
+  
+  // Get existing scenario for audit and validation
+  const existing = await repo.getScenarioById({ orgId, scenarioId });
+  if (!existing) throw new AppError(404, "Scenario not found");
+
+  // Validate at least one field to update
+  if (Object.keys(patch).length === 0) {
+    throw new AppError(400, "At least one field required for update");
+  }
+
+  // Check code uniqueness if changing
+  if (patch.code && patch.code.trim().toUpperCase() !== existing.code) {
+    const normalizedCode = patch.code.trim().toUpperCase();
+    const duplicate = await repo.getScenarioByCode({ orgId, code: normalizedCode });
+    if (duplicate && duplicate.id !== scenarioId) {
+      throw new AppError(409, `Scenario with code '${normalizedCode}' already exists`);
+    }
+    patch.code = normalizedCode;
+  }
+
+  // Validate name if provided
+  if (patch.name !== undefined) {
+    if (!patch.name || typeof patch.name !== "string" || !patch.name.trim()) {
+      throw new AppError(400, "Scenario name cannot be empty");
+    }
+    patch.name = patch.name.trim();
+  }
+
+  // Prevent deactivating the default scenario
+  if (existing.is_default && patch.isActive === false) {
+    throw new AppError(409, "Cannot deactivate the default scenario");
+  }
+
+  const updated = await repo.updateScenario({
+    orgId,
+    scenarioId,
+    patch,
+    updatedByUserId: actorUserId
+  });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.scenario.update",
+    entityType: "scenario",
+    entityId: scenarioId,
+    ip: req?.ip,
+    userAgent: req?.headers?.["user-agent"],
+    before: existing,
+    after: updated
+  });
+
+  return updated;
+}
+
+async function deleteScenario({ orgId, scenarioId, actorUserId, req }) {
+  assertUuid(scenarioId, "scenarioId");
+  
+  const existing = await repo.getScenarioById({ orgId, scenarioId });
+  if (!existing) throw new AppError(404, "Scenario not found");
+
+  // Prevent deletion of default scenario
+  if (existing.is_default) {
+    throw new AppError(409, "Cannot delete the default scenario");
+  }
+
+  // Check if scenario is in use
+  const usageCount = await repo.getScenarioUsageCount({ orgId, scenarioId });
+  if (usageCount > 0) {
+    // Soft delete by marking inactive instead
+    const updated = await repo.updateScenario({
+      orgId,
+      scenarioId,
+      patch: { isActive: false },
+      updatedByUserId: actorUserId
+    });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "reporting.forecast.scenario.soft_delete",
+      entityType: "scenario",
+      entityId: scenarioId,
+      ip: req?.ip,
+      userAgent: req?.headers?.["user-agent"],
+      before: existing,
+      after: updated
+    });
+
+    return { ...updated, softDeleted: true, message: "Scenario deactivated as it is in use" };
+  }
+
+  // Hard delete if not used
+  const deleted = await repo.hardDeleteScenario({ orgId, scenarioId });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.scenario.delete",
+    entityType: "scenario",
+    entityId: scenarioId,
+    ip: req?.ip,
+    userAgent: req?.headers?.["user-agent"],
+    before: existing,
+    after: null
+  });
+
+  return deleted;
+}
+
+async function getScenariosWithStats({ orgId }) {
+  return repo.getScenariosWithStats({ orgId });
+}
+
+async function setDefaultScenario({ orgId, scenarioId, actorUserId, req }) {
+  assertUuid(scenarioId, "scenarioId");
+  
+  const scenario = await repo.getScenarioById({ orgId, scenarioId });
+  if (!scenario) throw new AppError(404, "Scenario not found");
+  if (!scenario.is_active) throw new AppError(409, "Cannot set an inactive scenario as default");
+
+  // Update the scenario to be default (the repository trigger will handle unsetting others)
+  const updated = await repo.updateScenario({
+    orgId,
+    scenarioId,
+    patch: { isDefault: true },
+    updatedByUserId: actorUserId
+  });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.scenario.set_default",
+    entityType: "scenario",
+    entityId: scenarioId,
+    ip: req?.ip,
+    userAgent: req?.headers?.["user-agent"],
+    before: scenario,
+    after: updated
+  });
+
+  return updated;
+}
+
+// ============================
+// Modified Version Functions
+// ============================
+
+async function createVersion({ orgId, forecastId, versionNo, name, scenarioId, probabilityWeight = 1, status = "draft", actorUserId, req }) {
+  assertUuid(forecastId, "forecastId");
+  if (!Number.isInteger(versionNo) || versionNo <= 0) throw new AppError(400, "versionNo must be a positive integer");
+  
+  const f = await repo.getForecast({ orgId, id: forecastId });
+  if (!f) throw new AppError(404, "Forecast not found");
+  if (f.status === "archived") throw new AppError(409, "Forecast is archived");
+
+  // Validate scenario if provided
+  if (scenarioId) {
+    const scenario = await repo.getScenarioById({ orgId, scenarioId });
+    if (!scenario) throw new AppError(404, "Scenario not found");
+    if (!scenario.is_active) throw new AppError(409, "Scenario is inactive");
+  }
+
+  // Validate probability weight
+  if (probabilityWeight !== undefined) {
+    if (typeof probabilityWeight !== 'number' || probabilityWeight < 0 || probabilityWeight > 1) {
+      throw new AppError(400, "probability_weight must be a number between 0 and 1");
+    }
+  }
+
+  const created = await repo.createVersion({
+    orgId,
+    forecastId,
+    versionNo,
+    name: (name || `Version ${versionNo}`).trim(),
+    scenarioId,
+    probabilityWeight,
+    status: normalizeStatus(status, VERSION_STATUS, "status"),
+    createdByUserId: actorUserId,
+  });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.create",
+    entityType: "forecast_version",
+    entityId: created.id,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: created,
+  });
+
+  return created;
+}
+
+async function updateForecastVersion({ orgId, forecastId, versionId, patch, actorUserId, req }) {
+  assertUuid(forecastId, "forecastId");
+  assertUuid(versionId, "versionId");
+  
+  // Get existing version for audit and validation
+  const existing = await repo.getVersionById({ orgId, id: versionId, forecastId });
+  if (!existing) throw new AppError(404, "Forecast version not found");
+  
+  // Validate forecast exists and is not archived
+  const forecast = await repo.getForecast({ orgId, id: forecastId });
+  if (!forecast) throw new AppError(404, "Forecast not found");
+  if (forecast.status === "archived") throw new AppError(409, "Forecast is archived");
+  
+  // Check editability based on workflow status
+  if (patch.status || patch.version_no || patch.name || patch.scenarioId || patch.probability_weight || patch.dimension_json) {
+    assertEditableWorkflow(existing);
+  }
+  
+  // Validate scenario if provided
+  if (patch.scenarioId) {
+    const scenario = await repo.getScenarioById({ orgId, scenarioId: patch.scenarioId });
+    if (!scenario) throw new AppError(404, "Scenario not found");
+    if (!scenario.is_active) throw new AppError(409, "Scenario is inactive");
+  }
+  
+  // Validate status if provided
+  if (patch.status) {
+    patch.status = normalizeStatus(patch.status, VERSION_STATUS, "status");
+    
+    // Prevent changing from finalized/archived in certain ways
+    if (existing.status === "finalized" && patch.status !== "finalized") {
+      throw new AppError(409, "Finalized versions cannot be changed to draft/active");
+    }
+  }
+  
+  // Validate version number if provided
+  if (patch.version_no !== undefined) {
+    if (!Number.isInteger(patch.version_no) || patch.version_no <= 0) {
+      throw new AppError(400, "version_no must be a positive integer");
+    }
+    
+    // Check for duplicate version number
+    const versions = await repo.listVersions({ orgId, forecastId });
+    const duplicate = versions.find(v => 
+      v.id !== versionId && v.version_no === patch.version_no
+    );
+    if (duplicate) {
+      throw new AppError(409, `Version number ${patch.version_no} already exists for this forecast`);
+    }
+  }
+  
+  // Validate probability weight if provided
+  if (patch.probability_weight !== undefined) {
+    if (typeof patch.probability_weight !== 'number' || 
+        patch.probability_weight < 0 || 
+        patch.probability_weight > 1) {
+      throw new AppError(400, "probability_weight must be a number between 0 and 1");
+    }
+  }
+  
+  // Validate dimension JSON if provided
+  if (patch.dimension_json !== undefined) {
+    patch.dimension_json = await validateDimensionJson({ 
+      orgId, 
+      dimensionJson: patch.dimension_json || {} 
+    });
+  }
+  
+  const updated = await repo.updateForecastVersion({ 
+    orgId, 
+    forecastId, 
+    versionId, 
+    patch 
+  });
+  
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.update",
+    entityType: "forecast_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: existing,
+    after: updated,
+  });
+  
+  return updated;
+}
+
+async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, name, scenarioId, probabilityWeight, actorUserId, req }) {
+  const src = await repo.getVersionById({ orgId, id: sourceVersionId, forecastId });
+  if (!src) throw new AppError(404, "Source forecast version not found");
+  if (!Number.isInteger(newVersionNo) || newVersionNo <= 0) throw new AppError(400, "newVersionNo must be a positive integer");
+
+  // Validate scenario if provided
+  if (scenarioId) {
+    const scenario = await repo.getScenarioById({ orgId, scenarioId });
+    if (!scenario) throw new AppError(404, "Scenario not found");
+    if (!scenario.is_active) throw new AppError(409, "Scenario is inactive");
+  }
+
+  // Validate probability weight
+  if (probabilityWeight !== undefined) {
+    if (typeof probabilityWeight !== 'number' || probabilityWeight < 0 || probabilityWeight > 1) {
+      throw new AppError(400, "probability_weight must be a number between 0 and 1");
+    }
+  }
+
+  const created = await repo.copyVersion({
+    orgId,
+    forecastId,
+    sourceVersionId,
+    newVersionNo,
+    name,
+    scenarioId,
+    probabilityWeight,
+    createdByUserId: actorUserId,
+  });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.version.copy",
+    entityType: "forecast_version",
+    entityId: created?.id || null,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: null,
+    after: { sourceVersionId, created },
+  });
+
+  return created;
+}
+
+// ============================
+// Existing Functions (Unchanged)
+// ============================
 
 async function listForecasts({ orgId, status, limit = 100, offset = 0 }) {
   const st = status ? normalizeStatus(status, FORECAST_STATUS) : null;
@@ -56,37 +462,6 @@ async function createForecast({ orgId, name, currencyCode, status = "draft", act
     ...created.forecast,
     default_version: created.version,
   };
-}
-
-async function createVersion({ orgId, forecastId, versionNo, name, status = "draft", actorUserId, req }) {
-  assertUuid(forecastId, "forecastId");
-  if (!Number.isInteger(versionNo) || versionNo <= 0) throw new AppError(400, "versionNo must be a positive integer");
-  const f = await repo.getForecast({ orgId, id: forecastId });
-  if (!f) throw new AppError(404, "Forecast not found");
-  if (f.status === "archived") throw new AppError(409, "Forecast is archived");
-
-  const created = await repo.createVersion({
-    orgId,
-    forecastId,
-    versionNo,
-    name: (name || `Version ${versionNo}`).trim(),
-    status: normalizeStatus(status, VERSION_STATUS, "status"),
-    createdByUserId: actorUserId,
-  });
-
-  await writeAudit({
-    organizationId: orgId,
-    actorUserId,
-    action: "reporting.forecast.version.create",
-    entityType: "forecast_version",
-    entityId: created.id,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
-    before: null,
-    after: created,
-  });
-
-  return created;
 }
 
 async function upsertLines({ orgId, forecastId, versionId = null, lines, actorUserId, req }) {
@@ -149,6 +524,7 @@ async function upsertLines({ orgId, forecastId, versionId = null, lines, actorUs
 
   return { forecastId, forecastVersionId: v.id, lines: saved };
 }
+
 async function getForecast({ orgId, forecastId, actorUserId, req}) {
   assertUuid(forecastId, "forecastId");
   const includeLines = req?.query?.includeLines === 'true'; 
@@ -157,7 +533,6 @@ async function getForecast({ orgId, forecastId, actorUserId, req}) {
 
   // Get all versions for this forecast
   const versions = await repo.listVersions({ orgId, forecastId });
-  console.log(`Forecast ${forecastId} has ${versions.length} versions and the includeLines flag is ${includeLines}  `);
   // Get lines for each version if requested
   const versionsWithLines = includeLines 
     ? await Promise.all(
@@ -167,7 +542,6 @@ async function getForecast({ orgId, forecastId, actorUserId, req}) {
             forecastId, 
             forecastVersionId: version.id 
           });
-          console.log(`Version ${version.id} has ${lines.length} lines`);
           return {
             ...version,
             lines
@@ -458,7 +832,7 @@ async function finalizeVersion({ orgId, forecastId, versionId, actorUserId, req 
   if (!v) throw new AppError(404, "Forecast version not found");
   if (v.status !== "draft") throw new AppError(409, "Only draft versions can be finalised");
 
-  const updated = await repo.finalizeVersion({ orgId, forecastId, versionId });
+  const updated = await repo.finalizeVersion({ orgId, forecastId, versionId,actorUserId });
   await writeAudit({
     organizationId: orgId,
     actorUserId,
@@ -473,7 +847,6 @@ async function finalizeVersion({ orgId, forecastId, versionId, actorUserId, req 
   return updated;
 }
 
-// Stage 2 workflows
 async function submitVersion({ orgId, forecastId, versionId, actorUserId, req }) {
   assertUuid(forecastId, "forecastId");
   assertUuid(versionId, "versionId");
@@ -560,34 +933,6 @@ async function rejectVersion({ orgId, forecastId, versionId, reason, actorUserId
   return updated;
 }
 
-async function copyVersion({ orgId, forecastId, sourceVersionId, newVersionNo, name, scenarioKey, probabilityWeight, actorUserId, req }) {
-  const src = await repo.getVersionById({ orgId, id: sourceVersionId, forecastId });
-  if (!src) throw new AppError(404, "Source forecast version not found");
-  if (!Number.isInteger(newVersionNo) || newVersionNo <= 0) throw new AppError(400, "newVersionNo must be a positive integer");
-  const created = await repo.copyVersion({
-    orgId,
-    forecastId,
-    sourceVersionId,
-    newVersionNo,
-    name,
-    scenarioKey,
-    probabilityWeight,
-    createdByUserId: actorUserId,
-  });
-  await writeAudit({
-    organizationId: orgId,
-    actorUserId,
-    action: "reporting.forecast.version.copy",
-    entityType: "forecast_version",
-    entityId: created?.id || null,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
-    before: null,
-    after: { sourceVersionId, created },
-  });
-  return created;
-}
-
 async function compareVersions({ orgId, forecastId, baseVersionId, compareVersionId, periodId }) {
   assertUuid(forecastId, "forecastId");
   assertUuid(baseVersionId, "baseVersionId");
@@ -613,7 +958,49 @@ async function forecastVsBudget({ orgId, forecastVersionId, budgetVersionId, per
   return { periodId, forecastVersionId, budgetVersionId, totals, lines: rows };
 }
 
-
+async function updateForecast({ orgId, forecastId, patch, actorUserId, req }) {
+  assertUuid(forecastId, "forecastId");
+  
+  // Get existing forecast for audit and validation
+  const existing = await repo.getForecast({ orgId, id: forecastId });
+  if (!existing) throw new AppError(404, "Forecast not found");
+  
+  // Validate status if provided
+  if (patch.status) {
+    patch.status = normalizeStatus(patch.status, FORECAST_STATUS, "status");
+  }
+  
+  // Validate currency if provided
+  if (patch.currency_code && typeof patch.currency_code !== "string") {
+    throw new AppError(400, "currency_code must be a string");
+  }
+  
+  // Validate name if provided
+  if (patch.name !== undefined) {
+    assertName(patch.name, "name");
+  }
+  
+  // Don't allow updating archived forecasts
+  if (existing.status === "archived" && patch.status !== "archived") {
+    throw new AppError(409, "Archived forecasts cannot be modified");
+  }
+  
+  const updated = await repo.updateForecast({ orgId, forecastId, patch });
+  
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.forecast.update",
+    entityType: "forecast",
+    entityId: forecastId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before: existing,
+    after: updated,
+  });
+  
+  return updated;
+}
 
 async function importLinesCsv({ orgId, forecastId, versionId, csvText, actorUserId, req }) {
   const rows = parseCsvText(csvText);
@@ -637,26 +1024,49 @@ async function importLinesCsv({ orgId, forecastId, versionId, csvText, actorUser
 
   return upsertLines({ orgId, forecastId, versionId, lines, actorUserId, req });
 }
+
+// ============================
+// Module Exports
+// ============================
 module.exports = {
+  // Forecasts
   listForecasts,
   createForecast,
-  createVersion,
-   getForecast,
-  getForecastVersion,
-  listForecastVersions,
-  listForecastLines,
-  getForecastSummary,
-  getVersionWorkflowHistory,
-  upsertLines,
-  getVariance,
+  getForecast,
+  updateForecast,
   activateForecast,
   archiveForecast,
+  getForecastSummary,
+  
+  // Versions
+  createVersion,
+  getForecastVersion,
+  listForecastVersions,
+  updateForecastVersion,
   finalizeVersion,
   submitVersion,
   approveVersion,
   rejectVersion,
   copyVersion,
+  
+  // Lines
+  upsertLines,
+  listForecastLines,
+  importLinesCsv,
+  
+  // Comparisons & Analysis
   compareVersions,
   forecastVsBudget,
-  importLinesCsv,
+  getVariance,
+  getVersionWorkflowHistory,
+  
+  // Scenarios
+  listScenarios,
+  getScenario,
+  getScenarioByCode,
+  createScenario,
+  updateScenario,
+  deleteScenario,
+  getScenariosWithStats,
+  setDefaultScenario,
 };

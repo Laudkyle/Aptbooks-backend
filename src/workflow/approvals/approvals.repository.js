@@ -258,7 +258,7 @@ async function listInbox({ orgId, limit = 50, offset = 0, documentTypeId = null,
         fv.updated_at,
         fv.submitted_by_user_id AS requested_by_user_id,
         u.full_name AS requested_by_name,
-        jsonb_build_object('kind','forecast_version','forecast_id', fv.forecast_id, 'version_no', fv.version_no, 'scenario_key', fv.scenario_key, 'probability_weight', fv.probability_weight) AS meta
+        jsonb_build_object('kind','forecast_version','forecast_id', fv.forecast_id, 'version_no', fv.version_no, 'scenario_key', fv.scenario_id, 'probability_weight', fv.probability_weight) AS meta
       FROM forecast_versions fv
       JOIN forecasts f ON f.id = fv.forecast_id
       LEFT JOIN users u ON u.id = fv.submitted_by_user_id
