@@ -14,6 +14,7 @@ router.use(authRequired);
 /**
  * Leases
  */
+
 router.get(
   "/leases",
   requirePermission("compliance.ifrs16.read"),

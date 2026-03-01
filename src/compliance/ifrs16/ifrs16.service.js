@@ -129,9 +129,23 @@ async function recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType
 async function assertLeaseInOrg({ orgId, leaseId }) {
   const { rows } = await pool.query(
     `
-    SELECT *
-    FROM leases
-    WHERE id=$1 AND organization_id=$2
+    SELECT 
+      l.*,
+      coa_cash.name         AS cash_account_name,
+      coa_rou.name          AS rou_asset_account_name,
+      coa_ll.name           AS lease_liability_account_name,
+      coa_ad.name           AS accumulated_depreciation_account_name,
+      coa_de.name           AS depreciation_expense_account_name,
+      coa_ie.name           AS interest_expense_account_name
+    FROM leases l
+    LEFT JOIN chart_of_accounts coa_cash ON coa_cash.id = l.cash_account_id
+    LEFT JOIN chart_of_accounts coa_rou  ON coa_rou.id  = l.rou_asset_account_id
+    LEFT JOIN chart_of_accounts coa_ll   ON coa_ll.id   = l.lease_liability_account_id
+    LEFT JOIN chart_of_accounts coa_ad   ON coa_ad.id   = l.accumulated_depreciation_account_id
+    LEFT JOIN chart_of_accounts coa_de   ON coa_de.id   = l.depreciation_expense_account_id
+    LEFT JOIN chart_of_accounts coa_ie   ON coa_ie.id   = l.interest_expense_account_id
+    WHERE l.id = $1
+      AND l.organization_id = $2
     LIMIT 1
     `,
     [leaseId, orgId]
