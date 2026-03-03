@@ -30,18 +30,18 @@ CREATE TABLE IF NOT EXISTS forecast_versions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   deleted_at TIMESTAMP WITH TIME ZONE,
   archived_at TIMESTAMP WITH TIME ZONE,
-finalized_at TIMESTAMP WITH TIME ZONE,
+  finalized_at TIMESTAMP WITH TIME ZONE,
   UNIQUE (forecast_id, version_no)
 );
 
--- 3) Attach lines to versions (while keeping backward compatibility)
+-- 3) First add scenario_key column to forecast_versions for backward compatibility
+ALTER TABLE forecast_versions 
+  ADD COLUMN IF NOT EXISTS scenario_key TEXT;
+
+-- 4) Attach lines to versions (while keeping backward compatibility)
 ALTER TABLE forecast_lines
   ADD COLUMN IF NOT EXISTS forecast_version_id UUID NULL REFERENCES forecast_versions(id) ON DELETE CASCADE;
--- Add composite unique constraint to forecast_lines
 
-ALTER TABLE forecast_lines 
-ADD CONSTRAINT uq_forecast_lines_version_account_period 
-UNIQUE (forecast_version_id, account_id, period_id);
 -- Create a default v1 for any existing forecast and attach existing lines.
 WITH ins AS (
   INSERT INTO forecast_versions (organization_id, forecast_id, version_no, name, status)
@@ -67,15 +67,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_forecast_version_lines
 CREATE INDEX IF NOT EXISTS ix_forecast_versions_forecast
   ON forecast_versions (organization_id, forecast_id);
 
-
 -- Drop existing constraint
 ALTER TABLE forecast_lines 
-DROP CONSTRAINT forecast_lines_forecast_id_account_id_period_id_key;
+DROP CONSTRAINT IF EXISTS forecast_lines_forecast_id_account_id_period_id_key;
 
 -- Add new constraint including version_id
 ALTER TABLE forecast_lines 
 ADD CONSTRAINT forecast_lines_forecast_id_forcast_version_id_account_id_period_id_key 
 UNIQUE (forecast_id, forecast_version_id, account_id, period_id);
+
 -- updated_at trigger
 
 -- Create the updated_at trigger function if it doesn't exist
@@ -88,7 +88,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create scenarios table
-CREATE TABLE scenarios (
+CREATE TABLE IF NOT EXISTS scenarios (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     code VARCHAR(50) NOT NULL,
@@ -105,20 +105,21 @@ CREATE TABLE scenarios (
 );
 
 -- Create indexes (including partial unique indexes instead of constraints with WHERE)
-CREATE UNIQUE INDEX idx_scenarios_org_code_unique 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scenarios_org_code_unique 
     ON scenarios(organization_id, code) 
     WHERE deleted_at IS NULL;
 
-CREATE UNIQUE INDEX idx_scenarios_org_default_unique 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scenarios_org_default_unique 
     ON scenarios(organization_id, is_default) 
     WHERE is_default = true AND deleted_at IS NULL;
 
-CREATE INDEX idx_scenarios_organization_id ON scenarios(organization_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_scenarios_is_active ON scenarios(is_active) WHERE deleted_at IS NULL;
-CREATE INDEX idx_scenarios_code ON scenarios(code) WHERE deleted_at IS NULL;
-CREATE INDEX idx_scenarios_deleted_at ON scenarios(deleted_at) WHERE deleted_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_scenarios_organization_id ON scenarios(organization_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_scenarios_is_active ON scenarios(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_scenarios_code ON scenarios(code) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_scenarios_deleted_at ON scenarios(deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- Add trigger for updated_at
+DROP TRIGGER IF EXISTS update_scenarios_updated_at ON scenarios;
 CREATE TRIGGER update_scenarios_updated_at
     BEFORE UPDATE ON scenarios
     FOR EACH ROW
@@ -140,6 +141,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS ensure_single_default_scenario ON scenarios;
 CREATE TRIGGER ensure_single_default_scenario
     BEFORE INSERT OR UPDATE OF is_default ON scenarios
     FOR EACH ROW
@@ -148,10 +150,10 @@ CREATE TRIGGER ensure_single_default_scenario
 
 -- Modify forecast_versions table to reference scenarios
 ALTER TABLE forecast_versions 
-ADD COLUMN scenario_id UUID REFERENCES scenarios(id) ON DELETE SET NULL;
+ADD COLUMN IF NOT EXISTS scenario_id UUID REFERENCES scenarios(id) ON DELETE SET NULL;
 
 -- Create index for the new foreign key
-CREATE INDEX idx_forecast_versions_scenario_id ON forecast_versions(scenario_id) WHERE scenario_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_forecast_versions_scenario_id ON forecast_versions(scenario_id) WHERE scenario_id IS NOT NULL;
 
 -- Migrate existing scenario_key data to scenarios table
 INSERT INTO scenarios (organization_id, code, name, is_default, created_at)
@@ -180,8 +182,8 @@ WHERE fv.organization_id = s.organization_id
   AND fv.scenario_key IS NOT NULL
   AND s.deleted_at IS NULL;
 
--- Drop the old scenario_key column after migration
-ALTER TABLE forecast_versions DROP COLUMN scenario_key;
+-- Now we can safely drop the scenario_key column after data migration
+ALTER TABLE forecast_versions DROP COLUMN IF EXISTS scenario_key;
 
 -- Add comments
 COMMENT ON TABLE scenarios IS 'Forecast scenarios for scenario planning and what-if analysis';
@@ -209,10 +211,12 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create trigger on organizations table
+DROP TRIGGER IF EXISTS after_organization_create ON organizations;
 CREATE TRIGGER after_organization_create
     AFTER INSERT ON organizations
     FOR EACH ROW
     EXECUTE FUNCTION create_default_scenarios();
+
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'set_updated_at') THEN

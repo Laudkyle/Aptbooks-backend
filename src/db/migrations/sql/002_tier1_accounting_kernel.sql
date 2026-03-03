@@ -114,8 +114,8 @@ CREATE TABLE IF NOT EXISTS general_ledger_balances (
   account_id UUID NOT NULL REFERENCES chart_of_accounts(id) ON DELETE CASCADE,
   debit_total NUMERIC(18,2) NOT NULL DEFAULT 0,
   credit_total NUMERIC(18,2) NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (organization_id, period_id, account_id)
 );
 
@@ -134,8 +134,8 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
   to_currency CHAR(3) NOT NULL REFERENCES currencies(code),
   rate NUMERIC(18,6) NOT NULL,
   effective_date DATE NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, rate_type_id, from_currency, to_currency, effective_date)
 );
 
