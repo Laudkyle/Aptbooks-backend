@@ -83,79 +83,208 @@ async function createTemplate({ orgId, statementType, name, description }) {
     `
     INSERT INTO statement_templates(organization_id, name, statement_type, description, is_default, status)
     VALUES ($1,$2,$3,$4,true,'active')
-    RETURNING *
+    RETURNING id, organization_id, name, statement_type, description, is_default, status, created_at, updated_at
     `,
     [orgId, name, statementType, description || null]
   );
   return rows[0];
 }
-
 async function bulkInsertLines({ orgId, templateId, lines }) {
   if (!lines.length) return [];
+  
+  console.log('bulkInsertLines - lines data:', JSON.stringify(lines, null, 2));
+  
   const values = [];
   const params = [];
   let i = 1;
+  
   for (const ln of lines) {
-    params.push(orgId, templateId, ln.line_no, ln.label, ln.line_type, ln.account_id || null, ln.expression || null, ln.sort_order || 0, ln.parent_line_id || null, ln.is_visible ?? true, ln.dr_cr_normal || null, ln.section_code || null);
-    values.push(`($${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++})`);
+    console.log(`Processing line ${i}:`, {
+      line_no: ln.line_no,
+      line_type: ln.line_type,
+      label: ln.label,
+      parent_line_id: ln.parent_line_id
+    });
+    
+    // Log each parameter with its expected type
+    const lineParams = [
+      { value: orgId, type: 'uuid' },
+      { value: templateId, type: 'uuid' },
+      { value: ln.line_no, type: 'integer' },
+      { value: ln.label, type: 'text' },
+      { value: ln.line_type, type: 'text' },
+      { value: ln.expression || null, type: 'text' },
+      { value: ln.sort_order || 0, type: 'integer' },
+      { value: ln.parent_line_id || null, type: 'uuid' },
+      { value: ln.is_visible ?? true, type: 'boolean' },
+      { value: ln.dr_cr_normal || null, type: 'text' },
+      { value: ln.section_code || null, type: 'text' }
+    ];
+    
+    lineParams.forEach((p, idx) => {
+      console.log(`  Param ${i + idx}:`, p);
+    });
+    
+    params.push(
+      orgId,
+      templateId,
+      ln.line_no,
+      ln.label,
+      ln.line_type,
+      ln.expression || null,
+      ln.sort_order || 0,
+      ln.parent_line_id || null,
+      ln.is_visible ?? true,
+      ln.dr_cr_normal || null,
+      ln.section_code || null
+    );
+    
+    values.push(`($${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++},$${i++})`);
   }
-  const { rows } = await pool.query(
-    `
+  
+  const query = `
     INSERT INTO statement_lines(
-      organization_id, template_id, line_no, label, line_type, account_id, expression, sort_order,
-      parent_line_id, is_visible, dr_cr_normal, section_code
+      organization_id, 
+      template_id, 
+      line_no, 
+      label, 
+      line_type, 
+      expression, 
+      sort_order,
+      parent_line_id, 
+      is_visible, 
+      dr_cr_normal, 
+      section_code
     )
     VALUES ${values.join(",")}
-    RETURNING *
-    `,
-    params
-  );
-  return rows;
+    RETURNING id, line_no, template_id, label, line_type
+  `;
+  
+  console.log('Final query:', query);
+  console.log('Parameters:', params.map((p, idx) => `$${idx+1}: ${p} (${typeof p})`).join('\n'));
+  
+  try {
+    const { rows } = await pool.query(query, params);
+    console.log(`Successfully inserted ${rows.length} lines`);
+    return rows;
+  } catch (error) {
+    console.error('Error in bulkInsertLines:', error);
+    console.error('Failed query:', query);
+    console.error('Failed params:', params);
+    throw error;
+  }
 }
 
 async function bulkInsertLineAccounts({ mappings }) {
-  if (!mappings.length) return;
+  if (!mappings.length) {
+    console.log('No mappings to insert');
+    return;
+  }
+  
+  console.log(`Inserting ${mappings.length} account mappings`);
+  
   const values = [];
   const params = [];
   let i = 1;
+  
   for (const m of mappings) {
-    params.push(m.line_id, m.account_id, m.weight ?? 1, m.sign_override || null);
-    values.push(`($${i++},$${i++},$${i++},$${i++})`);
+    // Validate that line_id is a valid UUID
+    if (!m.organization_id) {
+      console.error('Invalid mapping - missing organzation_id:', m);
+      continue;
+    }
+    if (!m.line_id) {
+      console.error('Invalid mapping - missing line_id:', m);
+      continue;
+    }
+    
+    params.push(
+      m.organization_id,
+      m.line_id,           // $i: line_id
+      m.account_id,        // $i+1: account_id
+      m.weight ?? 1,       // $i+2: weight
+      m.sign_override || null  // $i+3: sign_override
+    );
+    values.push(`($${i++},$${i++},$${i++},$${i++},$${i++})`);
   }
-  await pool.query(
-    `
-    INSERT INTO statement_line_accounts(line_id, account_id, weight, sign_override)
+  
+  if (values.length === 0) {
+    console.log('No valid mappings to insert');
+    return;
+  }
+  
+  const query = `
+    INSERT INTO statement_line_accounts( organization_id,line_id, account_id, weight, sign_override)
     VALUES ${values.join(",")}
     ON CONFLICT (line_id, account_id) DO UPDATE
-      SET weight=EXCLUDED.weight, sign_override=EXCLUDED.sign_override
-    `,
-    params
-  );
+      SET weight = EXCLUDED.weight, 
+          sign_override = EXCLUDED.sign_override
+    RETURNING line_id, account_id
+  `;
+  
+  try {
+    const { rows } = await pool.query(query, params);
+    console.log(`Successfully inserted ${rows.length} account mappings`);
+    return rows;
+  } catch (error) {
+    console.error('Error in bulkInsertLineAccounts:', error);
+    throw error;
+  }
 }
-
 async function getTemplateGraph({ orgId, templateId }) {
+  // Explicitly select columns - don't use SELECT *
   const { rows: lines } = await pool.query(
     `
-    SELECT *
+    SELECT 
+      id,
+      organization_id,
+      template_id,
+      line_no,
+      label,
+      line_type,
+      expression,
+      sort_order,
+      parent_line_id,
+      is_visible,
+      dr_cr_normal,
+      section_code,
+      created_at,
+      updated_at
     FROM statement_lines
     WHERE organization_id=$1 AND template_id=$2
     ORDER BY sort_order, line_no
     `,
     [orgId, templateId]
   );
-  if (!lines.length) return { lines: [], mappings: [] };
+  
+  if (!lines.length) {
+    console.log(`No lines found for template ${templateId}`);
+    return { lines: [], mappings: [] };
+  }
+  
+  const lineIds = lines.map((l) => l.id);
+  console.log(`Found ${lines.length} lines, fetching mappings for ${lineIds.length} line IDs`);
+  
   const { rows: maps } = await pool.query(
     `
-    SELECT sla.line_id, sla.account_id, sla.weight, sla.sign_override,
-           coa.code AS account_code, coa.name AS account_name,
-           at.normal_balance
+    SELECT 
+      sla.line_id, 
+      sla.account_id, 
+      sla.weight, 
+      sla.sign_override,
+      coa.code AS account_code, 
+      coa.name AS account_name,
+      at.normal_balance
     FROM statement_line_accounts sla
     JOIN chart_of_accounts coa ON coa.id = sla.account_id
     JOIN account_types at ON at.id = coa.account_type_id
     WHERE coa.organization_id=$1 AND sla.line_id = ANY($2::uuid[])
     `,
-    [orgId, lines.map((l) => l.id)]
+    [orgId, lineIds]
   );
+  
+  console.log(`Found ${maps.length} mappings`);
+  
   return { lines, mappings: maps };
 }
 

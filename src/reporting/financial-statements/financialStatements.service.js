@@ -177,12 +177,9 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     orgId,
     statementType,
     name: `Default ${statementType.replace(/_/g, " ")}`,
-    description: "Auto-generated default template"
+    description: "System-generated default template"
   });
 
-  // Build a minimal but production-safe structure. It is intentionally conservative:
-  // - uses account categories where possible
-  // - falls back to account_type grouping
   const { rows: accounts } = await pool.query(
     `
     SELECT
@@ -190,181 +187,225 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
       coa.code,
       coa.name,
       at.code AS account_type,
-      at.normal_balance,
-      ac.name AS category_name
+      at.normal_balance
     FROM chart_of_accounts coa
     JOIN account_types at ON at.id = coa.account_type_id
-    LEFT JOIN account_categories ac ON ac.id = coa.category_id
     WHERE coa.organization_id=$1 AND coa.status='active'
     ORDER BY coa.code
     `,
     [orgId]
   );
 
-  let lines = [];
-  let mappings = [];
-  let lineNo = 10;
-  const addSection = (label, sectionCode) => {
-    const section = {
-      line_no: lineNo,
-      label,
-      line_type: "section",
-      sort_order: lineNo,
-      parent_line_id: null,
-      is_visible: true,
-      dr_cr_normal: "auto",
-      section_code: sectionCode
-    };
-    lineNo += 10;
-    lines.push(section);
-    return section;
-  };
-  const addAccountGroupLine = (parent, label, sectionCode, accountFilterFn, normalOverride) => {
-    const ln = {
-      line_no: lineNo,
-      label,
-      line_type: "account",
-      sort_order: lineNo,
-      parent_line_id: null, // filled after insert
-      is_visible: true,
-      dr_cr_normal: normalOverride || "auto",
-      section_code: sectionCode
-    };
-    lineNo += 10;
-    lines.push({ ...ln, _parent_tmp: parent.line_no });
-    const accts = accounts.filter(accountFilterFn);
-    // mappings will be resolved to line_id after insert
-    mappings.push({ _line_no: ln.line_no, accounts: accts, normalOverride });
-  };
-
-  if (statementType === "income_statement") {
-    const rev = addSection("Revenue", "REV");
-    addAccountGroupLine(rev, "Revenue", "REV", (a) => a.account_type === "REVENUE", "credit");
-
-    const cogs = addSection("Cost of sales", "COGS");
-    addAccountGroupLine(
-      cogs,
-      "Cost of sales",
-      "COGS",
-      (a) => a.account_type === "EXPENSE" && /cogs|cost of sales|cost of goods/i.test(a.category_name || a.name || ""),
-      "debit"
-    );
-
-    const opex = addSection("Operating expenses", "OPEX");
-    addAccountGroupLine(
-      opex,
-      "Operating expenses",
-      "OPEX",
-      (a) => a.account_type === "EXPENSE" && !/cogs|cost of sales|cost of goods/i.test(a.category_name || a.name || ""),
-      "debit"
-    );
-
-    const other = addSection("Other income/expenses", "OTHER");
-    // Basic heuristic: any expense category/name containing 'interest'/'finance' considered other expense
-    addAccountGroupLine(
-      other,
-      "Other income",
-      "OTHER_INCOME",
-      (a) => a.account_type === "REVENUE" && /other|interest|finance/i.test(a.category_name || a.name || ""),
-      "credit"
-    );
-    addAccountGroupLine(
-      other,
-      "Other expenses",
-      "OTHER_EXP",
-      (a) => a.account_type === "EXPENSE" && /interest|finance|other/i.test(a.category_name || a.name || ""),
-      "debit"
-    );
-
-    // Net income as formula: L(revenue) - L(cogs) - L(opex) + L(other income) - L(other exp)
-    const netIncomeLine = {
-      line_no: lineNo,
-      label: "Net income",
-      line_type: "formula",
-      expression: `L${rev.line_no + 10} - L${cogs.line_no + 10} - L${opex.line_no + 10} + L${other.line_no + 10} - L${other.line_no + 20}`,
-      sort_order: lineNo,
-      parent_line_id: null,
-      is_visible: true,
-      dr_cr_normal: "auto",
-      section_code: "NET_INCOME"
-    };
-    lineNo += 10;
-    lines.push(netIncomeLine);
-  } else if (statementType === "balance_sheet") {
-    const assets = addSection("Assets", "ASSETS");
-    addAccountGroupLine(assets, "Assets", "ASSETS", (a) => a.account_type === "ASSET", "debit");
-    const liab = addSection("Liabilities", "LIAB");
-    addAccountGroupLine(liab, "Liabilities", "LIAB", (a) => a.account_type === "LIABILITY", "credit");
-    const eq = addSection("Equity", "EQUITY");
-    addAccountGroupLine(eq, "Equity", "EQUITY", (a) => a.account_type === "EQUITY", "credit");
-
-    const check = {
-      line_no: lineNo,
-      label: "Check (Assets - (Liabilities + Equity))",
-      line_type: "formula",
-      expression: `L${assets.line_no + 10} - (L${liab.line_no + 10} + L${eq.line_no + 10})`,
-      sort_order: lineNo,
-      parent_line_id: null,
-      is_visible: true,
-      dr_cr_normal: "auto",
-      section_code: "CHECK"
-    };
-    lineNo += 10;
-    lines.push(check);
-  } else if (statementType === "cash_flow") {
-    // Structure only. Amounts will be computed by cashFlowStatement().
-    addSection("Operating activities", "CFO");
-    addSection("Investing activities", "CFI");
-    addSection("Financing activities", "CFF");
-  } else {
-    throw new AppError(400, "Unsupported statementType");
+  if (!accounts.length) {
+    console.log("No active accounts found.");
+    return tpl;
   }
 
-  // Insert lines
+  let lineNo = 10;
+  const lines = [];
+  const mappings = [];
+
+  const createLine = ({
+    key,
+    label,
+    type,
+    parentKey = null,
+    sectionCode = null,
+    expression = null,
+    drCrNormal = "auto"
+  }) => {
+    const line = {
+      key,
+      line_no: lineNo,
+      label,
+      line_type: type,
+      sort_order: lineNo,
+      parentKey,
+      section_code: sectionCode,
+      expression,
+      dr_cr_normal: drCrNormal,
+      is_visible: true
+    };
+    lineNo += 10;
+    lines.push(line);
+    return line;
+  };
+
+  const createAccountLine = ({
+    key,
+    label,
+    parentKey,
+    sectionCode,
+    filterFn,
+    normalOverride
+  }) => {
+    const line = createLine({
+      key,
+      label,
+      type: "account",
+      parentKey,
+      sectionCode,
+      drCrNormal: normalOverride
+    });
+
+    const matched = accounts.filter(filterFn);
+
+    for (const acc of matched) {
+      mappings.push({
+        key,
+        account_id: acc.id,
+        weight: 1,
+        sign_override: normalOverride || null
+      });
+    }
+  };
+
+  /* =============================
+     INCOME STATEMENT
+  ============================== */
+  if (statementType === "income_statement") {
+    createLine({ key: "REV_SEC", label: "Revenue", type: "section", sectionCode: "REVENUE" });
+
+    createAccountLine({
+      key: "REV_TOTAL",
+      label: "Total Revenue",
+      parentKey: "REV_SEC",
+      sectionCode: "REVENUE",
+      filterFn: (a) => a.account_type === "INCOME",
+      normalOverride: "credit"
+    });
+
+    createLine({ key: "EXP_SEC", label: "Expenses", type: "section", sectionCode: "EXPENSES" });
+
+    createAccountLine({
+      key: "EXP_TOTAL",
+      label: "Total Expenses",
+      parentKey: "EXP_SEC",
+      sectionCode: "EXPENSES",
+      filterFn: (a) => a.account_type === "EXPENSE",
+      normalOverride: "debit"
+    });
+
+    createLine({
+      key: "NET_INC",
+      label: "Net Income",
+      type: "formula",
+      expression: "L20 - L40",
+      sectionCode: "NET_INCOME"
+    });
+  }
+
+  /* =============================
+     BALANCE SHEET
+  ============================== */
+  if (statementType === "balance_sheet") {
+    createLine({ key: "AST_SEC", label: "Assets", type: "section", sectionCode: "ASSETS" });
+
+    createAccountLine({
+      key: "AST_TOTAL",
+      label: "Total Assets",
+      parentKey: "AST_SEC",
+      sectionCode: "ASSETS",
+      filterFn: (a) => a.account_type === "ASSET",
+      normalOverride: "debit"
+    });
+
+    createLine({ key: "LIA_SEC", label: "Liabilities", type: "section", sectionCode: "LIABILITIES" });
+
+    createAccountLine({
+      key: "LIA_TOTAL",
+      label: "Total Liabilities",
+      parentKey: "LIA_SEC",
+      sectionCode: "LIABILITIES",
+      filterFn: (a) => a.account_type === "LIABILITY",
+      normalOverride: "credit"
+    });
+
+    createLine({ key: "EQ_SEC", label: "Equity", type: "section", sectionCode: "EQUITY" });
+
+    createAccountLine({
+      key: "EQ_TOTAL",
+      label: "Total Equity",
+      parentKey: "EQ_SEC",
+      sectionCode: "EQUITY",
+      filterFn: (a) => a.account_type === "EQUITY",
+      normalOverride: "credit"
+    });
+
+    createLine({
+      key: "BS_CHECK",
+      label: "Check (Assets - Liabilities - Equity)",
+      type: "formula",
+      expression: "L20 - L40 - L60",
+      sectionCode: "CHECK"
+    });
+  }
+
+  /* =============================
+     CASH FLOW TEMPLATE (Optional)
+  ============================== */
+  if (statementType === "cash_flow") {
+    createLine({ key: "CF_OP", label: "Operating Activities", type: "section", sectionCode: "OPERATING" });
+    createLine({ key: "CF_INV", label: "Investing Activities", type: "section", sectionCode: "INVESTING" });
+    createLine({ key: "CF_FIN", label: "Financing Activities", type: "section", sectionCode: "FINANCING" });
+  }
+
+  if (!lines.length) return tpl;
+
+  /* =============================
+     INSERT LINES
+  ============================== */
+
   const inserted = await repo.bulkInsertLines({
     orgId,
     templateId: tpl.id,
-    lines: lines.map((l, idx) => ({
-      ...l,
+    lines: lines.map(l => ({
       line_no: l.line_no,
-      // parent_line_id is resolved after insertion
-      parent_line_id: null
+      label: l.label,
+      line_type: l.line_type,
+      expression: l.expression,
+      sort_order: l.sort_order,
+      parent_line_id: null, // set later
+      is_visible: true,
+      dr_cr_normal: l.dr_cr_normal,
+      section_code: l.section_code
     }))
   });
 
-  const byLineNo = new Map(inserted.map((l) => [l.line_no, l]));
-
-  // Patch parent_line_id where needed
-  const parentUpdates = inserted
-    .map((l) => {
-      const original = lines.find((x) => x.line_no === l.line_no);
-      if (original && original._parent_tmp) {
-        const parent = byLineNo.get(original._parent_tmp);
-        if (parent) return { id: l.id, parentId: parent.id };
-      }
-      return null;
-    })
-    .filter(Boolean);
-
-  for (const u of parentUpdates) {
-    await pool.query(`UPDATE statement_lines SET parent_line_id=$2 WHERE id=$1`, [u.id, u.parentId]);
+  const keyToId = new Map();
+  for (let i = 0; i < lines.length; i++) {
+    keyToId.set(lines[i].key, inserted[i].id);
   }
 
-  // Insert line->accounts mappings
-  const lineAccounts = [];
-  for (const m of mappings) {
-    const ln = byLineNo.get(m._line_no);
-    if (!ln) continue;
-    for (const a of m.accounts) {
-      lineAccounts.push({
-        line_id: ln.id,
-        account_id: a.id,
-        weight: 1,
-        sign_override: m.normalOverride || null
-      });
+  /* =============================
+     FIX PARENTS
+  ============================== */
+
+  for (const l of lines) {
+    if (l.parentKey) {
+      await pool.query(
+        `UPDATE statement_lines SET parent_line_id=$1 WHERE id=$2`,
+        [keyToId.get(l.parentKey), keyToId.get(l.key)]
+      );
     }
   }
-  await repo.bulkInsertLineAccounts({ mappings: lineAccounts });
+
+  /* =============================
+     INSERT ACCOUNT MAPPINGS
+  ============================== */
+
+const finalMappings = mappings.map(m => ({
+  organization_id: orgId,        
+  line_id: keyToId.get(m.key),
+  account_id: m.account_id,
+  weight: m.weight,
+  sign_override: m.sign_override
+}));
+
+  if (finalMappings.length) {
+    await repo.bulkInsertLineAccounts({ mappings: finalMappings });
+  }
+
   return tpl;
 }
 
