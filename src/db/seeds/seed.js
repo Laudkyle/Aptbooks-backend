@@ -88,8 +88,8 @@ async function run() {
     if (covering.length) return covering[0].id;
 
     // 2) Otherwise, create a long open period for testing (idempotent by code)
-    const code = "TEST-OPEN";
-    const start = "2025-01-01";
+    const code = "2026 Accounting Period";
+    const start = "2026-01-01";
     const end = "2027-12-31";
 
     // Insert (or no-op if already exists)
