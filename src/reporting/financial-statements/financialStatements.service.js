@@ -271,7 +271,7 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
       label: "Total Revenue",
       parentKey: "REV_SEC",
       sectionCode: "REVENUE",
-      filterFn: (a) => a.account_type === "INCOME",
+      filterFn: (a) => a.account_type === "REVENUE",
       normalOverride: "credit"
     });
 
@@ -432,6 +432,7 @@ async function buildTemplateStatement({ orgId, statementType, periodId, compareP
     const r = computeLineAmounts({ line, lineAccounts, tbMap, ctx });
     childResults.set(line.id, { ...r, id: line.id, amount: r.amount });
   }
+  console.log(childResults)
 
   const roll = (node) => {
     for (const c of node.children || []) roll(c);
