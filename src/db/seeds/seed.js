@@ -5,6 +5,7 @@ const { env } = require("../../config/env");
 async function run() {
   const client = await pool.connect();
 
+  
   // Helpers
   const upsertPermission = async (code, description) => {
     await client.query(
