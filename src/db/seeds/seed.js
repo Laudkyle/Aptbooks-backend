@@ -5,7 +5,7 @@ const { env } = require("../../config/env");
 async function run() {
   const client = await pool.connect();
 
-  
+
   // Helpers
   const upsertPermission = async (code, description) => {
     await client.query(
@@ -14,6 +14,7 @@ async function run() {
     );
   };
 
+  
   const getOrCreateOrg = async (name, baseCurrencyCode = "GHS") => {
     const { rows: existing } = await client.query(
       `SELECT id FROM organizations WHERE name=$1 LIMIT 1`,
