@@ -53,10 +53,7 @@ app.set("trust proxy", env.TRUST_PROXY);
 // Liveness / readiness / comprehensive health report
 app.use("/", healthRouter);
 
-// Trust reverse proxy headers (set TRUST_PROXY=true when behind a proxy / load balancer)
-if (env.TRUST_PROXY) {
-  app.set("trust proxy", 1);
-}
+
 const swaggerUi = require("swagger-ui-express");
 const { swaggerDocument } = require("./docs/swagger");
 
@@ -108,7 +105,7 @@ app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
 app.use(express.json({
-  limit: "1mb",
+  limit: "10mb",
   verify: (req, res, buf) => {
     // Needed for webhook signature verification (e.g., Paystack)
     req.rawBody = buf;
