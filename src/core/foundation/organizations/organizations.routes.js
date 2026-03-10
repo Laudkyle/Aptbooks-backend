@@ -7,24 +7,50 @@ const { writeAudit } = require("../audit-logs/audit.service");
 const { parseMultipart } = require("../../../shared/http/multipart");
 const docsRepo = require("../../../workflow/documents/documents.repository");
 const docsSvc = require("../../../workflow/documents/documents.service");
+const initializeOrganizationDefaults = require('./organizations.service')
+
+
 
 router.post("/", async (req, res, next) => {
+ const client = await pool.connect();
+  console.log("Create organization done")
   try {
-    // If you want org creation locked down, add an admin bootstrap rule later.
-    const { name, baseCurrencyCode } = req.body || {};
-    if (!name) throw new AppError(400, "name required");
-
-    const currencyCode = (baseCurrencyCode || "GHS").toUpperCase();
-    const { rows: cRows } = await pool.query(`SELECT code FROM currencies WHERE code=$1`, [currencyCode]);
-    if (!cRows.length) throw new AppError(400, "Invalid baseCurrencyCode");
-
-    const { rows } = await pool.query(
-      `INSERT INTO organizations(name, base_currency_code) VALUES ($1,$2) RETURNING *`,
-      [name, currencyCode]
+    await client.query("BEGIN");
+    
+    // 1. Create the organization
+    const { rows: orgRows } = await client.query(
+      `INSERT INTO organizations(name, base_currency_code) 
+       VALUES ($1, $2) RETURNING id`,
+      [req.body.name, req.body.baseCurrencyCode || "GHS"]
     );
-    res.status(201).json(rows[0]);
-  } catch (e) { next(e); }
-});
+    const orgId = orgRows[0].id;
+    
+    // 2. Initialize all organization defaults
+    const defaults = await initializeOrganizationDefaults({
+      client,
+      orgId,
+      adminEmail: req.body.adminEmail,
+      adminPassword: req.body.adminPassword,
+      baseCurrencyCode: req.body.baseCurrencyCode || "GHS"
+    });
+    
+    await client.query("COMMIT");
+    
+    res.status(201).json({
+      message: "Organization created successfully",
+      organization: {
+        id: orgId,
+        name: req.body.name,
+        ...defaults
+      }
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+})
 
 // Org-scoped reads should be authenticated
 router.get("/me", authRequired, async (req, res, next) => {

@@ -1,6 +1,8 @@
 const router = require("express").Router();
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
+const { initializeOrganizationDefaults } = require("../organizations/organizations.service");
+
 const jwt = require("jsonwebtoken");
 const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
@@ -308,41 +310,39 @@ router.post("/register", async (req, res, next) => {
     );
     const org = orgRows[0];
 
-    // 2) Create Admin role
-    const { rows: roleRows } = await client.query(
-      `INSERT INTO roles(organization_id, name) VALUES ($1,'Admin') RETURNING id, name`,
-      [org.id]
-    );
-    const role = roleRows[0];
+    // 2) Initialize all organization defaults (COA, periods, payment config, partners, inventory, banking, etc.)
+    // This replaces steps 2-5 and adds all the additional defaults from your seed script
+    const defaults = await initializeOrganizationDefaults({
+      client,
+      orgId: org.id,
+      adminEmail: email,
+      adminPassword: password,
+      baseCurrencyCode: currencyCode
+    });
 
-    // 3) Grant all permissions to Admin role
-    await client.query(
-      `
-      INSERT INTO role_permissions(role_id, permission_id)
-      SELECT $1, p.id FROM permissions p
-      ON CONFLICT DO NOTHING
-      `,
-      [role.id]
-    );
+    // Note: initializeOrganizationDefaults already:
+    // - Creates Admin role and assigns all permissions
+    // - Creates the user with the provided email/password
+    // - Creates system user
+    // - Creates chart of accounts
+    // - Creates open accounting period
+    // - Creates payment terms and methods
+    // - Creates demo customer and vendor
+    // - Sets up inventory defaults (units, warehouse, categories, demo item)
+    // - Creates bank account
+    // - Sets inventory cost method default
 
-    // 4) Create user
-    const passwordHash = await bcrypt.hash(password, env.BCRYPT_ROUNDS);
+    // Get the user that was created by initializeOrganizationDefaults
     const { rows: userRows } = await client.query(
-      `INSERT INTO users(organization_id, email, password_hash, status)
-       VALUES ($1,$2,$3,'active')
-       RETURNING id, email, organization_id, status, created_at`,
-      [org.id, email, passwordHash]
+      `SELECT id, email, organization_id, status, created_at FROM users WHERE organization_id=$1 AND email=$2`,
+      [org.id, email]
     );
     const user = userRows[0];
 
-    // 5) Membership + role assignment
+    // Ensure user_organizations entry exists (should be created by initializeOrganizationDefaults)
     await client.query(
       `INSERT INTO user_organizations(user_id, organization_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
       [user.id, org.id]
-    );
-    await client.query(
-      `INSERT INTO user_roles(user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-      [user.id, role.id]
     );
 
     await client.query("COMMIT");
@@ -355,7 +355,18 @@ router.post("/register", async (req, res, next) => {
       entityId: org.id,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
-      after: { organization: org, user: { id: user.id, email: user.email } }
+      after: { 
+        organization: org, 
+        user: { id: user.id, email: user.email },
+        defaults: {
+          accounts: defaults.accounts,
+          periodId: defaults.periodId,
+          demoCustomerId: defaults.demoCustomerId,
+          demoVendorId: defaults.demoVendorId,
+          inventory: defaults.inventory,
+          banking: defaults.banking
+        }
+      }
     });
 
     // Auto-login after registration
@@ -372,10 +383,19 @@ router.post("/register", async (req, res, next) => {
       userAgent: req.audit?.userAgent
     });
 
+    // Return enhanced response with defaults info
     res.status(201).json({
       organization: org,
       user: { id: user.id, email: user.email, organization_id: user.organization_id },
-      tokens: { accessToken, refreshToken: refresh.token }
+      tokens: { accessToken, refreshToken: refresh.token },
+      defaults: {
+        accounts: defaults.accounts,
+        periodId: defaults.periodId,
+        demoCustomerId: defaults.demoCustomerId,
+        demoVendorId: defaults.demoVendorId,
+        inventory: defaults.inventory,
+        banking: defaults.banking
+      }
     });
   } catch (e) {
     await client.query("ROLLBACK");
