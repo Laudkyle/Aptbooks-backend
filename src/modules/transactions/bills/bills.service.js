@@ -304,10 +304,10 @@ async function submitBillForApproval({ orgId, actorUserId, billId }) {
       userId: actorUserId,
       originalFilename: `bill-${bill.bill_no}.json`,
       mimeType: "application/json",
-      buffer: buf
+      buffer: buf,client
     });
 
-    const submitted = await documentsSvc.submitDocument({ orgId, documentId });
+    const submitted = await documentsSvc.submitDocument({ orgId, documentId,client });
     return submitted.document;
   });
 }

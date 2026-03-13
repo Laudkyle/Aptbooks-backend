@@ -1,0 +1,44 @@
+{
+  "invoice": {
+    "id": "6dd09d0b-f4f6-4a06-a234-2b695884c453",
+    "organization_id": "3bd720cd-c26f-4166-b637-ed85cac914ba",
+    "customer_id": "ed5fed1c-da27-42f5-a425-41406c344dd3",
+    "invoice_no": "INV-000002",
+    "invoice_date": "2026-03-13T00:00:00.000Z",
+    "due_date": "2026-03-13T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "fdahhh",
+    "subtotal": "32.00",
+    "total": "32.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-03-13T15:25:25.592Z",
+    "updated_at": "2026-03-13T15:25:25.592Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "c4229674-2b0b-4bf6-bfd5-60b5f29f1370",
+      "invoice_id": "6dd09d0b-f4f6-4a06-a234-2b695884c453",
+      "line_no": 1,
+      "description": "gfdasf",
+      "quantity": "1.0000",
+      "unit_price": "32.00",
+      "line_total": "32.00",
+      "revenue_account_id": "6ba07a94-2448-40e4-8a42-4a317a54b3b9",
+      "created_at": "2026-03-13T15:25:25.592Z",
+      "tax_code_id": null,
+      "tax_amount": "0.00"
+    }
+  ],
+  "snapshot_at": "2026-03-13T15:25:42.433Z"
+}
