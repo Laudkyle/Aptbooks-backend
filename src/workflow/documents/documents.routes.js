@@ -112,7 +112,13 @@ router.put("/types/:typeId/approval-levels", requirePermission("documents.manage
     res.json(result);
   } catch (e) { next(e); }
 });
-
+router.get("/types/:typeId/approval-levels", requirePermission("documents.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const ladder = await svc.getDocumentTypeLadder({ orgId, documentTypeId: req.params.typeId });
+    res.json(ladder);
+  } catch (e) { next(e); }
+});
 // Create document metadata (DRAFT)
 router.post("/", idempotency({ required: true }), requirePermission("documents.create"), async (req, res, next) => {
   try {

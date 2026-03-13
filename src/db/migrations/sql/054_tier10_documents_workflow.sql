@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS documents (
   entity_ref TEXT,
   workflow_state_code TEXT NOT NULL DEFAULT 'DRAFT' REFERENCES workflow_states(code),
   current_version_no INT NOT NULL DEFAULT 0,
-  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -149,3 +149,19 @@ DROP TRIGGER IF EXISTS trg_documents_updated_at ON documents;
 CREATE TRIGGER trg_documents_updated_at
 BEFORE UPDATE ON documents
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+
+CREATE OR REPLACE FUNCTION create_default_approval_levels()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO approval_levels (organization_id, code, name, sequence, is_active)
+  VALUES (NEW.id, 'DEFAULT_APPROVE', 'Default Approver', 1, TRUE)
+  ON CONFLICT (organization_id, code) DO NOTHING;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_create_default_approval_levels
+AFTER INSERT ON organizations
+FOR EACH ROW
+EXECUTE FUNCTION create_default_approval_levels();

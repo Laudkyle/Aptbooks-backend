@@ -27,14 +27,13 @@ async function createDocument({ orgId, userId, payload }) {
 }
 
 async function getDocumentById({ orgId, documentId, client = null, forUpdate = false }) {
-  const lock = forUpdate ? " FOR UPDATE" : "";
-  const r = await q(client).query(
+const lock = forUpdate ? " FOR UPDATE NOWAIT" : "";  const r = await q(client).query(
     `SELECT * FROM documents WHERE organization_id=$1 AND id=$2${lock}`,
     [orgId, documentId]
   );
+  console.log(r.rows[0])
   return r.rows[0] || null;
 }
-
 async function listDocuments({ orgId, query }) {
   const limit = query.limit || 50;
   const offset = query.offset || 0;

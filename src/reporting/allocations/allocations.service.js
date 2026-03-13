@@ -396,7 +396,6 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
     const baseAmount = Number(allocation.payloadJson?.base_amount ?? 0);
     if (Number.isNaN(baseAmount)) throw new AppError(500, "Allocation base amount is invalid");
 
-    console.log("reached poset",baseAmount)
   // If base amount is 0, mark as posted without creating journal
   if (baseAmount === 0) {
     await pool.query(

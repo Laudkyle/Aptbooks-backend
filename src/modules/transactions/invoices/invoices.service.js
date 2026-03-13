@@ -370,7 +370,7 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
           entity_type: "invoice",
           entity_id: invoice.id,
           entity_ref: invoice.invoice_no
-        }
+        },client
       });
       documentId = doc.id;
 
@@ -379,7 +379,7 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
         [orgId, invoiceId, documentId]
       );
     }
-    console.log("reached",documentId)
+   
 
     // Snapshot current invoice + lines into version 1 (JSON)
     const { rows: lines } = await client.query(
@@ -399,10 +399,11 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
       userId: actorUserId,
       originalFilename: `invoice-${invoice.invoice_no}.json`,
       mimeType: "application/json",
-      buffer: buf
+      buffer: buf,
+      client
     });
 
-    const submitted = await documentsSvc.submitDocument({ orgId, documentId });
+    const submitted = await documentsSvc.submitDocument({ orgId, documentId,client });
     console.log("submitted")
     return submitted.document;
   });
