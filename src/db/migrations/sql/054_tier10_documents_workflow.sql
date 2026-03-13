@@ -63,7 +63,8 @@ CREATE TABLE IF NOT EXISTS approval_levels (
 CREATE TABLE IF NOT EXISTS document_type_approval_levels (
   document_type_id UUID NOT NULL REFERENCES document_types(id) ON DELETE CASCADE,
   approval_level_id UUID NOT NULL REFERENCES approval_levels(id) ON DELETE CASCADE,
-  PRIMARY KEY (document_type_id, approval_level_id)
+  position INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (document_type_id, approval_level_id,position)
 );
 
 -- -----------------------------------------------------------------------------
@@ -135,6 +136,16 @@ CREATE TABLE IF NOT EXISTS document_approvals (
 CREATE INDEX IF NOT EXISTS idx_document_approvals_document_seq ON document_approvals(document_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_document_approvals_pending ON document_approvals(status);
 
+
+CREATE TABLE IF NOT EXISTS approval_level_users (
+  approval_level_id UUID NOT NULL REFERENCES approval_levels(id) ON DELETE CASCADE,
+  user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  assigned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (approval_level_id, user_id)
+);
+ 
+CREATE INDEX IF NOT EXISTS idx_approval_level_users_level ON approval_level_users(approval_level_id);
+CREATE INDEX IF NOT EXISTS idx_approval_level_users_user  ON approval_level_users(user_id);
 -- -----------------------------------------------------------------------------
 -- Update trigger: documents.updated_at
 -- -----------------------------------------------------------------------------

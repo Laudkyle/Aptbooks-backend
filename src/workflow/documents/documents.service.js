@@ -174,7 +174,14 @@ async function approveDocument({ orgId, documentId, userId, comment }) {
     const cur = await repo.getCurrentPendingApproval({ documentId, client });
     if (!cur)
       throw new AppError(409, "No pending approval step for this document");
-
+    const assignees = await repo.listApprovalLevelUsers({
+      orgId,
+      levelId: cur.approval_level_id,
+    });
+    const isAssigned =
+      assignees.length === 0 || assignees.some((a) => a.id === userId);
+    if (!isAssigned)
+      throw new AppError(403, "You are not assigned to approve this level");
     const { updated, next } = await repo.approveCurrentLevel({
       documentId,
       approverUserId: userId,
@@ -201,7 +208,15 @@ async function approveDocument({ orgId, documentId, userId, comment }) {
     };
   });
 }
+async function getApprovalLevelUsers({ orgId, levelId }) {
+  return repo.listApprovalLevelUsers({ orgId, levelId });
+}
 
+async function setApprovalLevelUsers({ orgId, levelId, userIds }) {
+  const ok = await repo.replaceApprovalLevelUsers({ orgId, levelId, userIds });
+  if (!ok) throw new AppError(404, "Approval level not found");
+  return { ok: true };
+}
 async function rejectDocument({ orgId, documentId, userId, comment }) {
   return withTransaction(async (client) => {
     const doc = await repo.getDocumentById({
@@ -259,6 +274,8 @@ module.exports = {
   rejectDocument,
   getVersionStream,
   getDocumentTypeLadder,
+  getApprovalLevelUsers,
+  setApprovalLevelUsers,
 };
 
 async function createDocumentType({ orgId, payload }) {

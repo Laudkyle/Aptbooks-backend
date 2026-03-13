@@ -139,6 +139,66 @@ async function setDocumentState({ orgId, documentId, stateCode, client = null })
   return r.rows[0] || null;
 }
 
+async function listApprovalLevelUsers({ orgId, levelId }) {
+  // Join through approval_levels to enforce org scoping
+  const r = await pool.query(
+    `
+    SELECT u.id, u.email, u.first_name, u.last_name, alu.assigned_at
+    FROM approval_level_users alu
+    JOIN users u ON u.id = alu.user_id
+    JOIN approval_levels al ON al.id = alu.approval_level_id
+    WHERE al.organization_id = $1 AND alu.approval_level_id = $2
+    ORDER BY u.first_name ASC, u.last_name ASC
+    `,
+    [orgId, levelId]
+  );
+  return r.rows;
+}
+ 
+async function replaceApprovalLevelUsers({ orgId, levelId, userIds }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+ 
+    // Ensure the level belongs to this org
+    const al = await client.query(
+      `SELECT id FROM approval_levels WHERE id = $1 AND organization_id = $2`,
+      [levelId, orgId]
+    );
+    if (!al.rows[0]) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+ 
+    // Wipe existing assignees then re-insert
+    await client.query(
+      `DELETE FROM approval_level_users WHERE approval_level_id = $1`,
+      [levelId]
+    );
+ 
+    for (const userId of userIds) {
+      // Only insert users that actually belong to this org
+      await client.query(
+        `
+        INSERT INTO approval_level_users (approval_level_id, user_id)
+        SELECT $1, u.id FROM users u
+        JOIN user_organizations ou ON ou.user_id = u.id
+        WHERE u.id = $2 AND ou.organization_id = $3
+        ON CONFLICT DO NOTHING
+        `,
+        [levelId, userId, orgId]
+      );
+    }
+ 
+    await client.query("COMMIT");
+    return true;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
 async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client = null }) {
   const r = await q(client).query(
     `
@@ -147,7 +207,7 @@ async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client
     JOIN approval_levels al ON al.id = dtal.approval_level_id
     JOIN document_types dt ON dt.id = dtal.document_type_id
     WHERE dt.organization_id=$1 AND dt.id=$2 AND al.is_active=TRUE
-    ORDER BY al.sequence ASC
+    ORDER BY dtal.position ASC 
     `,
     [orgId, documentTypeId]
   );
@@ -261,7 +321,9 @@ module.exports = {
   createApprovals,
   getCurrentPendingApproval,
   approveCurrentLevel,
-  rejectCurrentLevel
+  rejectCurrentLevel,
+  replaceApprovalLevelUsers,
+  listApprovalLevelUsers
 };
 
 async function createDocumentType({ orgId, payload }) {
@@ -322,16 +384,13 @@ async function replaceDocumentTypeApprovalLevels({ orgId, documentTypeId, approv
       `DELETE FROM document_type_approval_levels WHERE document_type_id=$1`,
       [documentTypeId]
     );
-    for (const levelId of approvalLevelIds) {
-      // ensure level belongs to org
-      await client.query(
-        `
-        INSERT INTO document_type_approval_levels (document_type_id, approval_level_id)
-        SELECT $1, id FROM approval_levels WHERE id=$2 AND organization_id=$3
-        `,
-        [documentTypeId, levelId, orgId]
-      );
-    }
+   for (let i = 0; i < approvalLevelIds.length; i++) {
+  await client.query(
+    `INSERT INTO document_type_approval_levels (document_type_id, approval_level_id, position)
+     SELECT $1, id, $3 FROM approval_levels WHERE id=$2 AND organization_id=$4`,
+    [documentTypeId, approvalLevelIds[i], i, orgId]
+  );
+}
     await client.query("COMMIT");
     return true;
   } catch (e) {
