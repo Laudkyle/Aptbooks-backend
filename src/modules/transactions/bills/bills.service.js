@@ -4,6 +4,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentsSvc = require("../../../workflow/documents/documents.service");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 
 const {
@@ -217,45 +218,14 @@ async function issueBill({ orgId, actorUserId, billId }) {
 // Stage 5: Bill approval workflow integration (Tier 10 Documents)
 // -----------------------------------------------------------------------------
 
-async function ensureDocumentType({ orgId, code, name, client }) {
-  const { rows } = await client.query(
-    `SELECT id FROM document_types WHERE organization_id=$1 AND code=$2 AND is_active=TRUE`,
-    [orgId, code]
-  );
-  if (rows.length) return rows[0].id;
-  const created = await documentsSvc.createDocumentType({
-    orgId,
-    payload: { code, name, description: `${name} approvals` }
-  });
-  return created.id;
-}
-
 async function assertBillApprovalStateAllowsIssue({ orgId, bill, client }) {
-  const db = client || pool;
-  const { rows: dtRows } = await db.query(
-    `SELECT id FROM document_types WHERE organization_id=$1 AND code='BILL' AND is_active=TRUE`,
-    [orgId]
-  );
-  if (!dtRows.length) return;
-
-  const dtId = dtRows[0].id;
-  const { rows: ladder } = await db.query(
-    `SELECT 1 FROM document_type_approval_levels WHERE document_type_id=$1 LIMIT 1`,
-    [dtId]
-  );
-  if (!ladder.length) return;
-
-  if (!bill.workflow_document_id) {
-    throw new AppError(409, "Bill requires approval before issue (missing workflow document)");
-  }
-  const { rows: docRows } = await db.query(
-    `SELECT workflow_state_code FROM documents WHERE organization_id=$1 AND id=$2`,
-    [orgId, bill.workflow_document_id]
-  );
-  if (!docRows.length) throw new AppError(409, "Bill workflow document not found");
-  if (docRows[0].workflow_state_code !== 'APPROVED') {
-    throw new AppError(409, `Bill requires approval before issue (current state: ${docRows[0].workflow_state_code})`);
-  }
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: "bill",
+    workflowDocumentId: bill.workflow_document_id,
+    client,
+    actionLabel: "issue"
+  });
 }
 
 async function submitBillForApproval({ orgId, actorUserId, billId }) {
@@ -268,47 +238,37 @@ async function submitBillForApproval({ orgId, actorUserId, billId }) {
     if (!rows.length) throw new AppError(404, "Bill not found");
     const bill = rows[0];
 
-    let documentId = bill.workflow_document_id;
-    if (!documentId) {
-      const documentTypeId = await ensureDocumentType({ orgId, code: "BILL", name: "Bill", client });
-      const doc = await documentsSvc.createDocument({
-        orgId,
-        userId: actorUserId,
-        payload: {
-          document_type_id: documentTypeId,
-          title: `Bill ${bill.bill_no}`,
-          description: bill.memo || null,
-          entity_type: "bill",
-          entity_id: bill.id,
-          entity_ref: bill.bill_no
-        }
-      });
-      documentId = doc.id;
-      await client.query(
-        `UPDATE bills SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-        [orgId, billId, documentId]
-      );
-    }
-
     const { rows: lines } = await client.query(
       `SELECT * FROM bill_lines WHERE bill_id=$1 ORDER BY line_no`,
       [billId]
     );
 
-    const snapshot = { bill, lines, snapshot_at: new Date().toISOString() };
-    const buf = Buffer.from(JSON.stringify(snapshot, null, 2), "utf8");
-
-    await documentsSvc.addVersionFromBuffer({
+    return documentableSvc.submitEntityForApproval({
       orgId,
-      documentId,
-      userId: actorUserId,
-      originalFilename: `bill-${bill.bill_no}.json`,
-      mimeType: "application/json",
-      buffer: buf,client
+      actorUserId,
+      entityType: "bill",
+      entity: bill,
+      workflowDocumentId: bill.workflow_document_id,
+      snapshot: {
+        header: bill,
+        lines,
+        totals: {
+          subtotal: bill.subtotal,
+          total: bill.total
+        },
+        meta: {
+          status: bill.status,
+          currency_code: bill.currency_code
+        }
+      },
+      client,
+      persistWorkflowDocumentId: async (documentId) => {
+        await client.query(
+          `UPDATE bills SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+          [orgId, billId, documentId]
+        );
+      }
     });
-
-    const submitted = await documentsSvc.submitDocument({ orgId, documentId,client });
-    return submitted.document;
   });
 }
 
@@ -316,16 +276,21 @@ async function approveBillWorkflow({ orgId, actorUserId, billId, comment }) {
   const { withTransaction } = require("../../../db/tx");
   return withTransaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT workflow_document_id FROM bills WHERE organization_id=$1 AND id=$2`,
+      `SELECT id, workflow_document_id, created_by FROM bills WHERE organization_id=$1 AND id=$2`,
       [orgId, billId]
     );
     if (!rows.length) throw new AppError(404, "Bill not found");
-    if (!rows[0].workflow_document_id) throw new AppError(409, "Bill has no workflow document");
-    const result = await documentsSvc.approveDocument({
+    const bill = rows[0];
+    if (!bill.workflow_document_id) throw new AppError(409, "Bill has no workflow document");
+
+    const result = await documentableSvc.approveEntityDocument({
       orgId,
-      documentId: rows[0].workflow_document_id,
-      userId: actorUserId,
-      comment: comment || null
+      actorUserId,
+      entityType: "bill",
+      workflowDocumentId: bill.workflow_document_id,
+      creatorUserId: bill.created_by || null,
+      comment: comment || null,
+      client
     });
     return result.document;
   });
@@ -335,16 +300,21 @@ async function rejectBillWorkflow({ orgId, actorUserId, billId, comment }) {
   const { withTransaction } = require("../../../db/tx");
   return withTransaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT workflow_document_id FROM bills WHERE organization_id=$1 AND id=$2`,
+      `SELECT id, workflow_document_id, created_by FROM bills WHERE organization_id=$1 AND id=$2`,
       [orgId, billId]
     );
     if (!rows.length) throw new AppError(404, "Bill not found");
-    if (!rows[0].workflow_document_id) throw new AppError(409, "Bill has no workflow document");
-    const result = await documentsSvc.rejectDocument({
+    const bill = rows[0];
+    if (!bill.workflow_document_id) throw new AppError(409, "Bill has no workflow document");
+
+    const result = await documentableSvc.rejectEntityDocument({
       orgId,
-      documentId: rows[0].workflow_document_id,
-      userId: actorUserId,
-      comment: comment || null
+      actorUserId,
+      entityType: "bill",
+      workflowDocumentId: bill.workflow_document_id,
+      creatorUserId: bill.created_by || null,
+      comment: comment || null,
+      client
     });
     return result.document;
   });

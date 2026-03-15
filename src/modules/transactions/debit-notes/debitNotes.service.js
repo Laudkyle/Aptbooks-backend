@@ -4,6 +4,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 const repo = require("./debitNotes.repository");
 
@@ -129,11 +130,113 @@ async function getDebitNoteDetails({ orgId, id }) {
   }
 }
 
+
+
+async function assertDebitNoteApprovalStateAllowsIssue({ orgId, debitNote, client }) {
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: "debit_note",
+    workflowDocumentId: debitNote.workflow_document_id,
+    client,
+    actionLabel: "issue"
+  });
+}
+
+async function submitDebitNoteForApproval({ orgId, actorUserId, id }) {
+  return withTransaction(async (client) => {
+    const docEntity = await repo.getById({ orgId, id, client });
+    if (!docEntity) throw new AppError(404, "Debit note not found");
+    const lines = await repo.getLines({ id, client });
+    const applications = await repo.getApplications ? await repo.getApplications({ orgId, id, client }) : [];
+    return documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "debit_note",
+      entity: docEntity,
+      workflowDocumentId: docEntity.workflow_document_id,
+      snapshot: {
+        header: docEntity,
+        lines,
+        applications,
+        totals: {
+          subtotal: docEntity.subtotal,
+          tax_total: docEntity.tax_total,
+          total: docEntity.total
+        },
+        meta: {
+          status: docEntity.status,
+          journal_entry_id: docEntity.journal_entry_id || null,
+          period_id: docEntity.period_id || null
+        }
+      },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(
+          `UPDATE debit_notes SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+          [orgId, id, workflowDocumentId]
+        );
+      }
+    });
+  });
+}
+
+async function approveDebitNoteWorkflow({ orgId, actorUserId, id, comment }) {
+  return withTransaction(async (client) => {
+    const docEntity = await repo.getById({ orgId, id, client });
+    if (!docEntity) throw new AppError(404, "Debit note not found");
+    if (!docEntity.workflow_document_id) throw new AppError(409, "Debit note has no workflow document");
+
+    const approved = await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "debit_note",
+      workflowDocumentId: docEntity.workflow_document_id,
+      creatorUserId: docEntity.created_by,
+      comment,
+      client
+    });
+
+    await client.query(
+      `UPDATE debit_notes SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, id, actorUserId]
+    );
+
+    return approved;
+  });
+}
+
+async function rejectDebitNoteWorkflow({ orgId, actorUserId, id, comment }) {
+  return withTransaction(async (client) => {
+    const docEntity = await repo.getById({ orgId, id, client });
+    if (!docEntity) throw new AppError(404, "Debit note not found");
+    if (!docEntity.workflow_document_id) throw new AppError(409, "Debit note has no workflow document");
+
+    const rejected = await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "debit_note",
+      workflowDocumentId: docEntity.workflow_document_id,
+      creatorUserId: docEntity.created_by,
+      comment,
+      client
+    });
+
+    await client.query(
+      `UPDATE debit_notes SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, id, actorUserId, comment || null]
+    );
+
+    return rejected;
+  });
+}
+
 async function issueDebitNote({ orgId, actorUserId, id }) {
   return withTransaction(async (client) => {
     const dn = await repo.getById({ orgId, id, client });
     if (!dn) throw new AppError(404, "Debit note not found");
-    if (dn.status !== 'draft') throw new AppError(409, "Only draft debit notes can be issued");
+    if (!['draft','approved'].includes(dn.status)) throw new AppError(409, "Only draft/approved debit notes can be issued");
+
+    await assertDebitNoteApprovalStateAllowsIssue({ orgId, debitNote: dn, client });
 
     const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: dn.vendor_id, client });
     if (vendor.type !== 'vendor') throw new AppError(400, "Partner is not a vendor");
@@ -275,6 +378,10 @@ module.exports = {
   createDraftDebitNote,
   listDebitNotes,
   getDebitNoteDetails,
+  submitDebitNoteForApproval,
+  approveDebitNoteWorkflow,
+  rejectDebitNoteWorkflow,
+  assertDebitNoteApprovalStateAllowsIssue,
   issueDebitNote,
   applyDebitNote,
   voidDebitNote

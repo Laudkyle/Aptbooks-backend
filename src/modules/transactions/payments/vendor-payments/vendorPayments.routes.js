@@ -99,6 +99,39 @@ router.post("/:id/reallocate", idempotency({ required: true }), requirePermissio
   } catch (e) { next(e); }
 });
 
+
+router.post("/:id/submit-for-approval", idempotency({ required: true }), requirePermission("transactions.vendor_payment.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const doc = await svc.submitVendorPaymentForApproval({ orgId, actorUserId, id: req.params.id });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "vendor_payment.submitted_for_approval", entityType: "vendor_payments", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+    res.json(doc);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/approve", idempotency({ required: true }), requirePermission("approvals.act"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const comment = req.body?.comment;
+    const doc = await svc.approveVendorPaymentWorkflow({ orgId, actorUserId, id: req.params.id, comment });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "vendor_payment.approved", entityType: "vendor_payments", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+    res.json(doc);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/reject", idempotency({ required: true }), requirePermission("approvals.act"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const comment = req.body?.comment;
+    const doc = await svc.rejectVendorPaymentWorkflow({ orgId, actorUserId, id: req.params.id, comment });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "vendor_payment.rejected", entityType: "vendor_payments", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+    res.json(doc);
+  } catch (e) { next(e); }
+});
+
 router.post("/:id/post", idempotency({ required: true }), requirePermission("transactions.vendor_payment.post"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

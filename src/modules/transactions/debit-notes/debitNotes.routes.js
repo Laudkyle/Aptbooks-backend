@@ -2,6 +2,7 @@ const router = require("express").Router();
 
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 
@@ -49,6 +50,54 @@ router.get("/:id", requirePermission("transactions.debit_note.read"), async (req
     res.json(await svc.getDebitNoteDetails({ orgId, id: req.params.id }));
   } catch (e) { next(e); }
 });
+
+
+router.post(
+  "/:id/submit-for-approval",
+  idempotency({ required: true }),
+  requirePermission("transactions.debit_note.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const doc = await svc.submitDebitNoteForApproval({ orgId, actorUserId, id: req.params.id });
+      await writeAudit({ organizationId: orgId, actorUserId, action: "debit_note.submitted_for_approval", entityType: "debit_notes", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/approve",
+  idempotency({ required: true }),
+  requirePermission("approvals.act"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const comment = req.body?.comment;
+      const doc = await svc.approveDebitNoteWorkflow({ orgId, actorUserId, id: req.params.id, comment });
+      await writeAudit({ organizationId: orgId, actorUserId, action: "debit_note.approved", entityType: "debit_notes", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/reject",
+  idempotency({ required: true }),
+  requirePermission("approvals.act"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const comment = req.body?.comment;
+      const doc = await svc.rejectDebitNoteWorkflow({ orgId, actorUserId, id: req.params.id, comment });
+      await writeAudit({ organizationId: orgId, actorUserId, action: "debit_note.rejected", entityType: "debit_notes", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+      res.json(doc);
+    } catch (e) { next(e); }
+  }
+);
 
 router.post("/:id/issue", requirePermission("transactions.debit_note.issue"), async (req, res, next) => {
   try {

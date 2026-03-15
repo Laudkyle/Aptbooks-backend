@@ -18,6 +18,7 @@ router.get(
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
+      console.log(orgId,"This -- is the orgId for listing settings")
       const prefix = (req.query.prefix || "").toString();
       const limit = Math.min(Number.parseInt(String(req.query.limit || "200"), 10) || 200, 500);
 
@@ -107,17 +108,18 @@ router.put(
   }
 );
 
-router.get("/:key", requirePermission("settings.read"), async (req, res, next) => {
-  try {
-    const orgId = req.user.organization_id;
-    const { rows } = await pool.query(
-      `SELECT key, value_json FROM system_settings WHERE organization_id=$1 AND key=$2`,
-      [orgId, req.params.key]
-    );
-    if (!rows.length) throw new AppError(404, "Setting not found");
-    res.json(rows[0]);
-  } catch (e) { next(e); }
-});
+// router.get("/:key", requirePermission("settings.read"), async (req, res, next) => {
+//   try {
+//     const orgId = req.user.organization_id;
+//     console.log(orgId,"This is the orgId for getting a setting----=-")
+//     const { rows } = await pool.query(
+//       `SELECT key, value_json FROM system_settings WHERE organization_id=$1 AND key=$2`,
+//       [orgId, req.params.key]
+//     );
+//     if (!rows.length) throw new AppError(404, "Setting not found");
+//     res.json(rows[0]);
+//   } catch (e) { next(e); }
+// });
 
 router.put("/:key", requirePermission("settings.manage"), async (req, res, next) => {
   try {
@@ -239,7 +241,6 @@ router.get(
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
-
       const { rows } = await pool.query(
         `SELECT ${DWS_COLUMNS}
          FROM document_workflow_statics
@@ -252,6 +253,7 @@ router.get(
       );
 
       res.json({ ok: true, data: rows });
+      console.log(rows, "This is the list of workflow rules");
     } catch (e) { next(e); }
   }
 );
@@ -342,47 +344,77 @@ router.post(
       const entityType     = req.body.entity_type      || null;
       const fields         = extractRuleFields(req.body);
 
-      const { rows } = await pool.query(
-        `INSERT INTO document_workflow_statics
-           (organization_id, document_type_id, entity_type,
-            creator_can_approve, creator_can_post, allow_self_approval,
-            require_comment_on_rejection,
-            notify_creator_on_approval, notify_creator_on_rejection,
-            created_by_user_id, updated_by_user_id)
-         VALUES
-           ($1, $2, $3,
-            $4, $5, $6,
-            $7,
-            $8, $9,
-            $10, $10)
-         RETURNING ${DWS_COLUMNS}`,
-        [
-          orgId,
-          documentTypeId,
-          entityType,
-          fields.creator_can_approve          ?? false,
-          fields.creator_can_post             ?? false,
-          fields.allow_self_approval          ?? false,
-          fields.require_comment_on_rejection ?? true,
-          fields.notify_creator_on_approval   ?? true,
-          fields.notify_creator_on_rejection  ?? true,
-          req.user.id
-        ]
-      );
+      // Start a transaction to ensure data consistency
+      const client = await pool.connect();
+      
+      try {
+        await client.query('BEGIN');
 
-      await writeAudit({
-        organizationId: orgId,
-        actorUserId: req.user.id,
-        action: "workflow_static.created",
-        entityType: "document_workflow_statics",
-        entityId: rows[0].id,
-        ip: req.audit?.ip,
-        userAgent: req.audit?.userAgent,
-        after: rows[0]
-      });
+        // First, delete all existing rules with the same scope
+        await client.query(
+          `DELETE FROM document_workflow_statics
+           WHERE organization_id = $1
+             AND (
+               (document_type_id IS NULL AND $2::uuid IS NULL AND $3::text IS NULL) OR
+               (document_type_id = $2 AND entity_type IS NULL AND $3::text IS NULL) OR
+               (document_type_id IS NULL AND $2::uuid IS NULL AND entity_type = $3) OR
+               (document_type_id = $2 AND entity_type = $3)
+             )`,
+          [orgId, documentTypeId, entityType]
+        );
 
-      res.status(201).json(rows[0]);
+        // Then insert the new rule
+        const { rows } = await client.query(
+          `INSERT INTO document_workflow_statics
+             (organization_id, document_type_id, entity_type,
+              creator_can_approve, creator_can_post, allow_self_approval,
+              require_comment_on_rejection,
+              notify_creator_on_approval, notify_creator_on_rejection,
+              created_by_user_id, updated_by_user_id)
+           VALUES
+             ($1, $2, $3,
+              $4, $5, $6,
+              $7,
+              $8, $9,
+              $10, $10)
+           RETURNING ${DWS_COLUMNS}`,
+          [
+            orgId,
+            documentTypeId,
+            entityType,
+            fields.creator_can_approve          ?? false,
+            fields.creator_can_post             ?? false,
+            fields.allow_self_approval          ?? false,
+            fields.require_comment_on_rejection ?? true,
+            fields.notify_creator_on_approval   ?? true,
+            fields.notify_creator_on_rejection  ?? true,
+            req.user.id
+          ]
+        );
+
+        await client.query('COMMIT');
+
+        await writeAudit({
+          organizationId: orgId,
+          actorUserId: req.user.id,
+          action: "workflow_static.created",
+          entityType: "document_workflow_statics",
+          entityId: rows[0].id,
+          ip: req.audit?.ip,
+          userAgent: req.audit?.userAgent,
+          after: rows[0]
+        });
+
+        res.status(201).json(rows[0]);
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
     } catch (e) {
+      // Note: The 23505 (unique violation) error won't occur anymore since we delete first,
+      // but we'll keep this for safety in case something else triggers it
       if (e?.code === "23505") {
         return next(new AppError(409, "A rule already exists for this organisation / document type / entity type combination"));
       }

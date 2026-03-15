@@ -4,8 +4,8 @@ function q(client) {
   return client || pool;
 }
 
-async function createDocument({ orgId, userId, payload }) {
-  const r = await pool.query(
+async function createDocument({ orgId, userId, payload, client = null }) {
+  const r = await q(client).query(
     `
     INSERT INTO documents
       (organization_id, document_type_id, title, description, entity_type, entity_id, entity_ref, created_by_user_id)
@@ -27,14 +27,15 @@ async function createDocument({ orgId, userId, payload }) {
 }
 
 async function getDocumentById({ orgId, documentId, client = null, forUpdate = false }) {
-const lock = forUpdate ? " FOR UPDATE NOWAIT" : "";  const r = await q(client).query(
+  const lock = forUpdate ? " FOR UPDATE NOWAIT" : "";
+  const r = await q(client).query(
     `SELECT * FROM documents WHERE organization_id=$1 AND id=$2${lock}`,
     [orgId, documentId]
   );
-  console.log(r.rows[0])
   return r.rows[0] || null;
 }
-async function listDocuments({ orgId, query }) {
+
+async function listDocuments({ orgId, query, client = null }) {
   const limit = query.limit || 50;
   const offset = query.offset || 0;
 
@@ -55,7 +56,7 @@ async function listDocuments({ orgId, query }) {
   params.push(limit);
   params.push(offset);
 
-  const r = await pool.query(
+  const r = await q(client).query(
     `
     SELECT *
     FROM documents
@@ -68,14 +69,14 @@ async function listDocuments({ orgId, query }) {
   return r.rows;
 }
 
-async function getDocumentDetails({ orgId, documentId }) {
-  const doc = await getDocumentById({ orgId, documentId });
+async function getDocumentDetails({ orgId, documentId, client = null }) {
+  const doc = await getDocumentById({ orgId, documentId, client });
   if (!doc) return null;
-  const versions = await pool.query(
+  const versions = await q(client).query(
     `SELECT * FROM document_versions WHERE document_id=$1 ORDER BY version_no DESC`,
     [documentId]
   );
-  const approvals = await pool.query(
+  const approvals = await q(client).query(
     `
     SELECT da.*, al.code as approval_level_code, al.name as approval_level_name
     FROM document_approvals da
@@ -88,16 +89,17 @@ async function getDocumentDetails({ orgId, documentId }) {
   return { document: doc, versions: versions.rows, approvals: approvals.rows };
 }
 
-async function getNextVersionNo({ documentId }) {
-  const r = await pool.query(
+async function getNextVersionNo({ documentId, client = null }) {
+  const r = await q(client).query(
     `SELECT COALESCE(MAX(version_no), 0) AS max_no FROM document_versions WHERE document_id=$1`,
     [documentId]
   );
   return (r.rows[0]?.max_no || 0) + 1;
 }
 
-async function insertVersion({ documentId, versionNo, originalFilename, mimeType, sizeBytes, checksum, relpath, userId }) {
-  const r = await pool.query(
+async function insertVersion({ documentId, versionNo, originalFilename, mimeType, sizeBytes, checksum, relpath, userId, client = null }) {
+  const db = q(client);
+  const r = await db.query(
     `
     INSERT INTO document_versions
       (document_id, version_no, original_filename, mime_type, size_bytes, checksum_sha256, storage_relpath, created_by_user_id)
@@ -106,16 +108,15 @@ async function insertVersion({ documentId, versionNo, originalFilename, mimeType
     `,
     [documentId, versionNo, originalFilename, mimeType || null, sizeBytes, checksum, relpath, userId || null]
   );
-  await pool.query(
+  await db.query(
     `UPDATE documents SET current_version_no=$2 WHERE id=$1`,
     [documentId, versionNo]
   );
   return r.rows[0];
 }
 
-async function getVersion({ orgId, documentId, versionId }) {
-  // ensure org scoping via join
-  const r = await pool.query(
+async function getVersion({ orgId, documentId, versionId, client = null }) {
+  const r = await q(client).query(
     `
     SELECT dv.*
     FROM document_versions dv
@@ -139,9 +140,8 @@ async function setDocumentState({ orgId, documentId, stateCode, client = null })
   return r.rows[0] || null;
 }
 
-async function listApprovalLevelUsers({ orgId, levelId }) {
-  // Join through approval_levels to enforce org scoping
-  const r = await pool.query(
+async function listApprovalLevelUsers({ orgId, levelId, client = null }) {
+  const r = await q(client).query(
     `
     SELECT u.id, u.email, u.first_name, u.last_name, alu.assigned_at
     FROM approval_level_users alu
@@ -155,30 +155,28 @@ async function listApprovalLevelUsers({ orgId, levelId }) {
   return r.rows;
 }
  
-async function replaceApprovalLevelUsers({ orgId, levelId, userIds }) {
-  const client = await pool.connect();
+async function replaceApprovalLevelUsers({ orgId, levelId, userIds, client = null }) {
+  const ownsClient = !client;
+  const db = client || await pool.connect();
   try {
-    await client.query("BEGIN");
+    if (ownsClient) await db.query("BEGIN");
  
-    // Ensure the level belongs to this org
-    const al = await client.query(
+    const al = await db.query(
       `SELECT id FROM approval_levels WHERE id = $1 AND organization_id = $2`,
       [levelId, orgId]
     );
     if (!al.rows[0]) {
-      await client.query("ROLLBACK");
+      if (ownsClient) await db.query("ROLLBACK");
       return null;
     }
  
-    // Wipe existing assignees then re-insert
-    await client.query(
+    await db.query(
       `DELETE FROM approval_level_users WHERE approval_level_id = $1`,
       [levelId]
     );
  
     for (const userId of userIds) {
-      // Only insert users that actually belong to this org
-      await client.query(
+      await db.query(
         `
         INSERT INTO approval_level_users (approval_level_id, user_id)
         SELECT $1, u.id FROM users u
@@ -190,15 +188,16 @@ async function replaceApprovalLevelUsers({ orgId, levelId, userIds }) {
       );
     }
  
-    await client.query("COMMIT");
+    if (ownsClient) await db.query("COMMIT");
     return true;
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (ownsClient) await db.query("ROLLBACK");
     throw e;
   } finally {
-    client.release();
+    if (ownsClient) db.release();
   }
 }
+
 async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client = null }) {
   const r = await q(client).query(
     `
@@ -245,52 +244,53 @@ async function getCurrentPendingApproval({ documentId, client = null }) {
 }
 
 async function approveCurrentLevel({ documentId, approverUserId, comment, client = null }) {
-  const cur = await q(client).query(
-      `SELECT * FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
-      [documentId]
-    );
-    const current = cur.rows[0];
-    if (!current) {
-      return { updated: null, next: null };
-    }
-    const updated = await q(client).query(
-      `
+  const db = q(client);
+  const cur = await db.query(
+    `SELECT * FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
+    [documentId]
+  );
+  const current = cur.rows[0];
+  if (!current) {
+    return { updated: null, next: null };
+  }
+  const updated = await db.query(
+    `
       UPDATE document_approvals
       SET status='APPROVED', acted_by_user_id=$2, acted_at=NOW(), comment=COALESCE($3, comment)
       WHERE id=$1
       RETURNING *
       `,
-      [current.id, approverUserId || null, comment || null]
-    );
+    [current.id, approverUserId || null, comment || null]
+  );
 
-    const nxt = await q(client).query(
-      `
+  const nxt = await db.query(
+    `
       SELECT * FROM document_approvals
       WHERE document_id=$1 AND status='QUEUED'
       ORDER BY sequence ASC
       LIMIT 1
       FOR UPDATE
       `,
-      [documentId]
+    [documentId]
+  );
+  const next = nxt.rows[0] || null;
+  if (next) {
+    await db.query(
+      `UPDATE document_approvals SET status='PENDING' WHERE id=$1`,
+      [next.id]
     );
-    const next = nxt.rows[0] || null;
-    if (next) {
-      await q(client).query(
-        `UPDATE document_approvals SET status='PENDING' WHERE id=$1`,
-        [next.id]
-      );
-    }
-    return { updated: updated.rows[0], next };
+  }
+  return { updated: updated.rows[0], next };
 }
 
 async function rejectCurrentLevel({ documentId, approverUserId, comment, client = null }) {
-  // Lock current PENDING row to prevent races
-  const cur = await q(client).query(
+  const db = q(client);
+  const cur = await db.query(
     `SELECT id FROM document_approvals WHERE document_id=$1 AND status='PENDING' ORDER BY sequence ASC LIMIT 1 FOR UPDATE`,
     [documentId]
   );
   if (!cur.rows.length) return null;
-  const r = await q(client).query(
+  const r = await db.query(
     `
     UPDATE document_approvals
     SET status='REJECTED', acted_by_user_id=$2, acted_at=NOW(), comment=$3
@@ -302,11 +302,97 @@ async function rejectCurrentLevel({ documentId, approverUserId, comment, client 
   return r.rows[0] || null;
 }
 
+async function createDocumentType({ orgId, payload, client = null }) {
+  const r = await q(client).query(
+    `
+    INSERT INTO document_types (organization_id, code, name, description, is_active)
+    VALUES ($1,$2,$3,$4,COALESCE($5, TRUE))
+    RETURNING *
+    `,
+    [orgId, payload.code, payload.name, payload.description || null, payload.is_active]
+  );
+  return r.rows[0];
+}
+
+async function listDocumentTypes({ orgId, client = null }) {
+  const r = await q(client).query(
+    `SELECT * FROM document_types WHERE organization_id=$1 OR organization_id IS NULL ORDER BY code ASC`,
+    [orgId]
+  );
+  return r.rows;
+}
+
+async function getDocumentTypeByCode({ orgId, code, client = null, includeGlobal = true }) {
+  const scope = includeGlobal
+    ? `AND (organization_id=$1 OR organization_id IS NULL)`
+    : `AND organization_id=$1`;
+  const r = await q(client).query(
+    `SELECT * FROM document_types WHERE code=$2 ${scope} AND is_active=TRUE ORDER BY organization_id NULLS LAST LIMIT 1`,
+    [orgId, code]
+  );
+  return r.rows[0] || null;
+}
+
+async function createApprovalLevel({ orgId, payload, client = null }) {
+  const r = await q(client).query(
+    `
+    INSERT INTO approval_levels (organization_id, code, name, sequence, is_active)
+    VALUES ($1,$2,$3,$4,COALESCE($5, TRUE))
+    RETURNING *
+    `,
+    [orgId, payload.code, payload.name, payload.sequence, payload.is_active]
+  );
+  return r.rows[0];
+}
+
+async function listApprovalLevels({ orgId, client = null }) {
+  const r = await q(client).query(
+    `SELECT * FROM approval_levels WHERE organization_id=$1 ORDER BY sequence ASC`,
+    [orgId]
+  );
+  return r.rows;
+}
+
+async function replaceDocumentTypeApprovalLevels({ orgId, documentTypeId, approvalLevelIds, client = null }) {
+  const ownsClient = !client;
+  const db = client || await pool.connect();
+  try {
+    if (ownsClient) await db.query("BEGIN");
+    const dt = await db.query(
+      `SELECT id FROM document_types WHERE id=$1 AND (organization_id=$2 OR organization_id IS NULL)`,
+      [documentTypeId, orgId]
+    );
+    if (!dt.rows[0]) {
+      if (ownsClient) await db.query("ROLLBACK");
+      return null;
+    }
+
+    await db.query(
+      `DELETE FROM document_type_approval_levels WHERE document_type_id=$1`,
+      [documentTypeId]
+    );
+    for (let i = 0; i < approvalLevelIds.length; i++) {
+      await db.query(
+        `INSERT INTO document_type_approval_levels (document_type_id, approval_level_id, position)
+         SELECT $1, id, $3 FROM approval_levels WHERE id=$2 AND organization_id=$4`,
+        [documentTypeId, approvalLevelIds[i], i, orgId]
+      );
+    }
+    if (ownsClient) await db.query("COMMIT");
+    return true;
+  } catch (e) {
+    if (ownsClient) await db.query("ROLLBACK");
+    throw e;
+  } finally {
+    if (ownsClient) db.release();
+  }
+}
+
 module.exports = {
   createDocument,
-  // configuration
   createDocumentType,
   listDocumentTypes,
+  getDocumentTypeByCode,
   createApprovalLevel,
   listApprovalLevels,
   replaceDocumentTypeApprovalLevels,
@@ -325,78 +411,3 @@ module.exports = {
   replaceApprovalLevelUsers,
   listApprovalLevelUsers
 };
-
-async function createDocumentType({ orgId, payload }) {
-  const r = await pool.query(
-    `
-    INSERT INTO document_types (organization_id, code, name, description, is_active)
-    VALUES ($1,$2,$3,$4,COALESCE($5, TRUE))
-    RETURNING *
-    `,
-    [orgId, payload.code, payload.name, payload.description || null, payload.is_active]
-  );
-  return r.rows[0];
-}
-
-async function listDocumentTypes({ orgId }) {
-  const r = await pool.query(
-    `SELECT * FROM document_types WHERE organization_id=$1 OR organization_id IS NULL ORDER BY code ASC`,
-    [orgId]
-  );
-  return r.rows;
-}
-
-async function createApprovalLevel({ orgId, payload }) {
-  const r = await pool.query(
-    `
-    INSERT INTO approval_levels (organization_id, code, name, sequence, is_active)
-    VALUES ($1,$2,$3,$4,COALESCE($5, TRUE))
-    RETURNING *
-    `,
-    [orgId, payload.code, payload.name, payload.sequence, payload.is_active]
-  );
-  return r.rows[0];
-}
-
-async function listApprovalLevels({ orgId }) {
-  const r = await pool.query(
-    `SELECT * FROM approval_levels WHERE organization_id=$1 ORDER BY sequence ASC`,
-    [orgId]
-  );
-  return r.rows;
-}
-
-async function replaceDocumentTypeApprovalLevels({ orgId, documentTypeId, approvalLevelIds }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    // ensure document type belongs to org
-    const dt = await client.query(
-      `SELECT id FROM document_types WHERE id=$1 AND (organization_id=$2 OR organization_id IS NULL)`,
-      [documentTypeId, orgId]
-    );
-    if (!dt.rows[0]) {
-      await client.query("ROLLBACK");
-      return null;
-    }
-
-    await client.query(
-      `DELETE FROM document_type_approval_levels WHERE document_type_id=$1`,
-      [documentTypeId]
-    );
-   for (let i = 0; i < approvalLevelIds.length; i++) {
-  await client.query(
-    `INSERT INTO document_type_approval_levels (document_type_id, approval_level_id, position)
-     SELECT $1, id, $3 FROM approval_levels WHERE id=$2 AND organization_id=$4`,
-    [documentTypeId, approvalLevelIds[i], i, orgId]
-  );
-}
-    await client.query("COMMIT");
-    return true;
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
-}

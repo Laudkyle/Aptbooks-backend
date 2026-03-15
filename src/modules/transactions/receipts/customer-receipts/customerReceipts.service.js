@@ -5,6 +5,7 @@ const periodIF = require("../../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../../interfaces/journalPosting.interface");
 const partnerIF = require("../../../../interfaces/partnerManagement.interface");
 const paymentIF = require("../../../../interfaces/paymentConfig.interface");
+const documentableSvc = require("../../../../workflow/documents/documentable.service");
 
 const {
   parseDecimalToBigInt,
@@ -351,9 +352,130 @@ async function reallocateCustomerReceipt({ orgId, actorUserId, id, allocations }
   return getCustomerReceiptDetails({ orgId, id });
 }
 
+
+
+async function assertCustomerReceiptApprovalStateAllowsPost({ orgId, customerReceipt, client = null }) {
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: "payment_in",
+    workflowDocumentId: customerReceipt.workflow_document_id,
+    client,
+    actionLabel: "post"
+  });
+}
+
+async function submitCustomerReceiptForApproval({ orgId, actorUserId, id }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Customer receipt not found");
+    const cr = rows[0];
+    const allocations = await repo.getAllocations(id);
+
+    const doc = await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "payment_in",
+      entity: cr,
+      workflowDocumentId: cr.workflow_document_id,
+      snapshot: {
+        header: cr,
+        allocations,
+        totals: {
+          amount_total: cr.amount_total,
+          unapplied_amount: cr.unapplied_amount || null,
+          settlement_amount: cr.settlement_amount || null,
+          discount_amount: cr.discount_amount || null,
+        },
+        meta: {
+          status: cr.status,
+          journal_entry_id: cr.journal_entry_id || null,
+          period_id: cr.period_id || null,
+        }
+      },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE customer_receipts SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, workflowDocumentId]);
+      }
+    });
+
+    await client.query(`UPDATE customer_receipts SET status='submitted', submitted_at=NOW(), submitted_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId]);
+    await client.query("COMMIT");
+    return doc;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function approveCustomerReceiptWorkflow({ orgId, actorUserId, id, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Customer receipt not found");
+    const cr = rows[0];
+    if (!cr.workflow_document_id) throw new AppError(409, "Customer receipt has no workflow document");
+
+    const approved = await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "payment_in",
+      workflowDocumentId: cr.workflow_document_id,
+      creatorUserId: cr.created_by || null,
+      comment,
+      client
+    });
+
+    await client.query(`UPDATE customer_receipts SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId]);
+    await client.query("COMMIT");
+    return approved;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function rejectCustomerReceiptWorkflow({ orgId, actorUserId, id, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Customer receipt not found");
+    const cr = rows[0];
+    if (!cr.workflow_document_id) throw new AppError(409, "Customer receipt has no workflow document");
+
+    const rejected = await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "payment_in",
+      workflowDocumentId: cr.workflow_document_id,
+      creatorUserId: cr.created_by || null,
+      comment,
+      client
+    });
+
+    await client.query(`UPDATE customer_receipts SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId, comment || null]);
+    await client.query("COMMIT");
+    return rejected;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 async function postCustomerReceipt({ orgId, actorUserId, id }) {
   const { customerReceipt: cr, allocations } = await getCustomerReceiptDetails({ orgId, id });
-  if (cr.status !== "draft") throw new AppError(409, "Only draft customer receipts can be posted");
+  if (!["draft","approved"].includes(cr.status)) throw new AppError(409, "Only draft/approved customer receipts can be posted");
+
+  await assertCustomerReceiptApprovalStateAllowsPost({ orgId, customerReceipt: cr, client: pool });
 
   const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: cr.customer_id });
   if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
@@ -553,6 +675,10 @@ module.exports = {
   listCustomerReceipts,
   autoAllocateCustomerReceipt,
   reallocateCustomerReceipt,
+  submitCustomerReceiptForApproval,
+  approveCustomerReceiptWorkflow,
+  rejectCustomerReceiptWorkflow,
+  assertCustomerReceiptApprovalStateAllowsPost,
   postCustomerReceipt,
   voidCustomerReceipt
 };

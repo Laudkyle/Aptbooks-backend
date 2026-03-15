@@ -59,14 +59,14 @@ async function listInbox({ orgId, limit = 50, offset = 0, documentTypeId = null,
         NULL::timestamptz AS submitted_at,
         d.created_at,
         d.updated_at,
-        d.created_by AS requested_by_user_id,
+        d.created_by_user_id AS requested_by_user_id,
         u.full_name AS requested_by_name,
         jsonb_build_object('kind','document') AS meta
       FROM document_approvals da
       JOIN documents d ON d.id = da.document_id
       JOIN document_types dt ON dt.id = d.document_type_id
       JOIN approval_levels al ON al.id = da.approval_level_id
-      LEFT JOIN users u ON u.id = d.created_by
+      LEFT JOIN users u ON u.id = d.created_by_user_id
       ${docWhere}
 
       UNION ALL

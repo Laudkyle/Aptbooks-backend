@@ -44,6 +44,51 @@ const RESOLVERS = {
     return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Bill" };
   },
 
+  journal_entry: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, COALESCE(entry_no::text, id::text) AS entity_ref FROM journal_entries WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Journal Entry" };
+  },
+
+  credit_note: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, credit_note_no AS entity_ref FROM credit_notes WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Credit Note" };
+  },
+
+  debit_note: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, debit_note_no AS entity_ref FROM debit_notes WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Debit Note" };
+  },
+
+  payment_out: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, payment_no AS entity_ref FROM vendor_payments WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Payment Out" };
+  },
+
+  payment_in: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, receipt_no AS entity_ref FROM customer_receipts WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Payment In" };
+  },
+
   fixed_asset: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, code AS entity_ref FROM fixed_assets WHERE organization_id=$1 AND id=$2`,

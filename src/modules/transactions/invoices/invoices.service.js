@@ -5,6 +5,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentsSvc = require("../../../workflow/documents/documents.service");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 
 const {
@@ -218,33 +219,13 @@ async function assertCustomerCreditPolicyAllowsIssue({ orgId, customerId, invoic
 }
 
 async function assertInvoiceApprovalStateAllowsIssue({ orgId, invoice, client }) {
-  // Only enforce if an approval ladder exists for the INVOICE document type.
-  const db = client || pool;
-  const { rows: dtRows } = await db.query(
-    `SELECT id FROM document_types WHERE organization_id=$1 AND code='INVOICE' AND is_active=TRUE`,
-    [orgId]
-  );
-  if (!dtRows.length) return; // No doc type configured => no enforcement
-
-  const dtId = dtRows[0].id;
-  const { rows: ladder } = await db.query(
-    `SELECT 1 FROM document_type_approval_levels WHERE document_type_id=$1 LIMIT 1`,
-    [dtId]
-  );
-  if (!ladder.length) return; // No ladder => no enforcement
-
-  if (!invoice.workflow_document_id) {
-    throw new AppError(409, "Invoice requires approval before issue (missing workflow document)");
-  }
-
-  const { rows: docRows } = await db.query(
-    `SELECT workflow_state_code FROM documents WHERE organization_id=$1 AND id=$2`,
-    [orgId, invoice.workflow_document_id]
-  );
-  if (!docRows.length) throw new AppError(409, "Invoice workflow document not found");
-  if (docRows[0].workflow_state_code !== 'APPROVED') {
-    throw new AppError(409, `Invoice requires approval before issue (current state: ${docRows[0].workflow_state_code})`);
-  }
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: "invoice",
+    workflowDocumentId: invoice.workflow_document_id,
+    client,
+    actionLabel: "issue"
+  });
 }
 
 async function issueInvoice({ orgId, actorUserId, invoiceId }) {
@@ -332,20 +313,6 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
 // Stage 5: Invoice approval workflow integration (Tier 10 Documents)
 // -----------------------------------------------------------------------------
 
-async function ensureDocumentType({ orgId, code, name, client }) {
-  // Attempt to find, otherwise create (no ladder is created automatically)
-  const { rows } = await client.query(
-    `SELECT id FROM document_types WHERE organization_id=$1 AND code=$2 AND is_active=TRUE`,
-    [orgId, code]
-  );
-  if (rows.length) return rows[0].id;
-  const created = await documentsSvc.createDocumentType({
-    orgId,
-    payload: { code, name, description: `${name} approvals` }
-  });
-  return created.id;
-}
-
 async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
   return withTransaction(async (client) => {
     const { rows } = await client.query(
@@ -355,73 +322,58 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
     if (!rows.length) throw new AppError(404, "Invoice not found");
     const invoice = rows[0];
 
-    // Create or reuse a workflow document
-    let documentId = invoice.workflow_document_id;
-
-    if (!documentId) {
-      const documentTypeId = await ensureDocumentType({ orgId, code: "INVOICE", name: "Invoice", client });
-      const doc = await documentsSvc.createDocument({
-        orgId,
-        userId: actorUserId,
-        payload: {
-          document_type_id: documentTypeId,
-          title: `Invoice ${invoice.invoice_no}`,
-          description: invoice.memo || null,
-          entity_type: "invoice",
-          entity_id: invoice.id,
-          entity_ref: invoice.invoice_no
-        },client
-      });
-      documentId = doc.id;
-
-      await client.query(
-        `UPDATE invoices SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-        [orgId, invoiceId, documentId]
-      );
-    }
-   
-
-    // Snapshot current invoice + lines into version 1 (JSON)
     const { rows: lines } = await client.query(
       `SELECT * FROM invoice_lines WHERE invoice_id=$1 ORDER BY line_no`,
       [invoiceId]
     );
-    const snapshot = {
-      invoice,
-      lines,
-      snapshot_at: new Date().toISOString()
-    };
 
-    const buf = Buffer.from(JSON.stringify(snapshot, null, 2), "utf8");
-    await documentsSvc.addVersionFromBuffer({
+    return documentableSvc.submitEntityForApproval({
       orgId,
-      documentId,
-      userId: actorUserId,
-      originalFilename: `invoice-${invoice.invoice_no}.json`,
-      mimeType: "application/json",
-      buffer: buf,
-      client
+      actorUserId,
+      entityType: "invoice",
+      entity: invoice,
+      workflowDocumentId: invoice.workflow_document_id,
+      snapshot: {
+        header: invoice,
+        lines,
+        totals: {
+          subtotal: invoice.subtotal,
+          total: invoice.total
+        },
+        meta: {
+          status: invoice.status,
+          currency_code: invoice.currency_code
+        }
+      },
+      client,
+      persistWorkflowDocumentId: async (documentId) => {
+        await client.query(
+          `UPDATE invoices SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+          [orgId, invoiceId, documentId]
+        );
+      }
     });
-
-    const submitted = await documentsSvc.submitDocument({ orgId, documentId,client });
-    console.log("submitted")
-    return submitted.document;
   });
 }
 
 async function approveInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment }) {
   return withTransaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT workflow_document_id FROM invoices WHERE organization_id=$1 AND id=$2`,
+      `SELECT id, workflow_document_id, created_by FROM invoices WHERE organization_id=$1 AND id=$2`,
       [orgId, invoiceId]
     );
     if (!rows.length) throw new AppError(404, "Invoice not found");
-    if (!rows[0].workflow_document_id) throw new AppError(409, "Invoice has no workflow document");
-    const result = await documentsSvc.approveDocument({
+    const invoice = rows[0];
+    if (!invoice.workflow_document_id) throw new AppError(409, "Invoice has no workflow document");
+
+    const result = await documentableSvc.approveEntityDocument({
       orgId,
-      documentId: rows[0].workflow_document_id,
-      userId: actorUserId,
-      comment: comment || null
+      actorUserId,
+      entityType: "invoice",
+      workflowDocumentId: invoice.workflow_document_id,
+      creatorUserId: invoice.created_by || null,
+      comment: comment || null,
+      client
     });
     return result.document;
   });
@@ -430,16 +382,21 @@ async function approveInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment }
 async function rejectInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment }) {
   return withTransaction(async (client) => {
     const { rows } = await client.query(
-      `SELECT workflow_document_id FROM invoices WHERE organization_id=$1 AND id=$2`,
+      `SELECT id, workflow_document_id, created_by FROM invoices WHERE organization_id=$1 AND id=$2`,
       [orgId, invoiceId]
     );
     if (!rows.length) throw new AppError(404, "Invoice not found");
-    if (!rows[0].workflow_document_id) throw new AppError(409, "Invoice has no workflow document");
-    const result = await documentsSvc.rejectDocument({
+    const invoice = rows[0];
+    if (!invoice.workflow_document_id) throw new AppError(409, "Invoice has no workflow document");
+
+    const result = await documentableSvc.rejectEntityDocument({
       orgId,
-      documentId: rows[0].workflow_document_id,
-      userId: actorUserId,
-      comment: comment || null
+      actorUserId,
+      entityType: "invoice",
+      workflowDocumentId: invoice.workflow_document_id,
+      creatorUserId: invoice.created_by || null,
+      comment: comment || null,
+      client
     });
     return result.document;
   });

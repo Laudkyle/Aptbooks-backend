@@ -5,6 +5,7 @@ const periodIF = require("../../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../../interfaces/journalPosting.interface");
 const partnerIF = require("../../../../interfaces/partnerManagement.interface");
 const paymentIF = require("../../../../interfaces/paymentConfig.interface");
+const documentableSvc = require("../../../../workflow/documents/documentable.service");
 
 const {
   parseDecimalToBigInt,
@@ -334,6 +335,125 @@ async function listVendorPayments({ orgId, query }) {
   return repo.listVendorPayments({ orgId, query });
 }
 
+
+
+async function assertVendorPaymentApprovalStateAllowsPost({ orgId, vendorPayment, client = null }) {
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: "payment_out",
+    workflowDocumentId: vendorPayment.workflow_document_id,
+    client,
+    actionLabel: "post"
+  });
+}
+
+async function submitVendorPaymentForApproval({ orgId, actorUserId, id }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Vendor payment not found");
+    const vp = rows[0];
+    const allocations = await repo.getAllocations(id);
+
+    const doc = await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "payment_out",
+      entity: vp,
+      workflowDocumentId: vp.workflow_document_id,
+      snapshot: {
+        header: vp,
+        allocations,
+        totals: {
+          amount_total: vp.amount_total,
+          unapplied_amount: vp.unapplied_amount || null,
+          settlement_amount: vp.settlement_amount || null,
+          discount_amount: vp.discount_amount || null,
+        },
+        meta: {
+          status: vp.status,
+          journal_entry_id: vp.journal_entry_id || null,
+          period_id: vp.period_id || null,
+        }
+      },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE vendor_payments SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, workflowDocumentId]);
+      }
+    });
+
+    await client.query(`UPDATE vendor_payments SET status='submitted', submitted_at=NOW(), submitted_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId]);
+    await client.query("COMMIT");
+    return doc;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function approveVendorPaymentWorkflow({ orgId, actorUserId, id, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Vendor payment not found");
+    const vp = rows[0];
+    if (!vp.workflow_document_id) throw new AppError(409, "Vendor payment has no workflow document");
+
+    const approved = await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "payment_out",
+      workflowDocumentId: vp.workflow_document_id,
+      creatorUserId: vp.created_by || null,
+      comment,
+      client
+    });
+
+    await client.query(`UPDATE vendor_payments SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId]);
+    await client.query("COMMIT");
+    return approved;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function rejectVendorPaymentWorkflow({ orgId, actorUserId, id, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Vendor payment not found");
+    const vp = rows[0];
+    if (!vp.workflow_document_id) throw new AppError(409, "Vendor payment has no workflow document");
+
+    const rejected = await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "payment_out",
+      workflowDocumentId: vp.workflow_document_id,
+      creatorUserId: vp.created_by || null,
+      comment,
+      client
+    });
+
+    await client.query(`UPDATE vendor_payments SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId, comment || null]);
+    await client.query("COMMIT");
+    return rejected;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 async function postVendorPayment({ orgId, actorUserId, id }) {
   const { withTransaction } = require("../../../../db/tx");
   return withTransaction(async (client) => {
@@ -344,7 +464,9 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
     );
     if (!vpRows.length) throw new AppError(404, "Vendor payment not found");
     const vp = vpRows[0];
-    if (vp.status !== "draft") throw new AppError(409, "Only draft vendor payments can be posted");
+    if (!["draft","approved"].includes(vp.status)) throw new AppError(409, "Only draft/approved vendor payments can be posted");
+
+  await assertVendorPaymentApprovalStateAllowsPost({ orgId, vendorPayment: vp, client });
 
     const { rows: allocations } = await client.query(
       `SELECT * FROM vendor_payment_allocations WHERE vendor_payment_id=$1 ORDER BY created_at ASC`,
@@ -556,6 +678,10 @@ module.exports = {
   listVendorPayments,
   autoAllocateVendorPayment,
   reallocateVendorPayment,
+  submitVendorPaymentForApproval,
+  approveVendorPaymentWorkflow,
+  rejectVendorPaymentWorkflow,
+  assertVendorPaymentApprovalStateAllowsPost,
   postVendorPayment,
   voidVendorPayment
 };

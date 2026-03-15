@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../../middleware/permission.middleware");
+const { idempotency } = require("../../../../middleware/idempotency.middleware");
 const { validate } = require("../../../../shared/validators/validate");
 const { writeAudit } = require("../../../../core/foundation/audit-logs/audit.service");
 
@@ -95,6 +96,39 @@ router.post("/:id/reallocate", requirePermission("transactions.allocations.reall
     });
 
     res.json(out);
+  } catch (e) { next(e); }
+});
+
+
+router.post("/:id/submit-for-approval", idempotency({ required: true }), requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const doc = await svc.submitCustomerReceiptForApproval({ orgId, actorUserId, id: req.params.id });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "customer_receipt.submitted_for_approval", entityType: "customer_receipts", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+    res.json(doc);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/approve", idempotency({ required: true }), requirePermission("approvals.act"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const comment = req.body?.comment;
+    const doc = await svc.approveCustomerReceiptWorkflow({ orgId, actorUserId, id: req.params.id, comment });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "customer_receipt.approved", entityType: "customer_receipts", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+    res.json(doc);
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/reject", idempotency({ required: true }), requirePermission("approvals.act"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const comment = req.body?.comment;
+    const doc = await svc.rejectCustomerReceiptWorkflow({ orgId, actorUserId, id: req.params.id, comment });
+    await writeAudit({ organizationId: orgId, actorUserId, action: "customer_receipt.rejected", entityType: "customer_receipts", entityId: req.params.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: doc });
+    res.json(doc);
   } catch (e) { next(e); }
 });
 

@@ -2,6 +2,7 @@ const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 // Banking integration: record posted journals that affect bank accounts into bank_transactions
 // so the cashbook/reconciliation views can include operational transactions (receipts/payments/journals)
@@ -382,7 +383,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
 
     const { rows: jRows } = await client.query(
       `
-      SELECT id, status, period_id, entry_date, created_by
+      SELECT id, status, period_id, entry_date, created_by, workflow_document_id
       FROM journal_entries
       WHERE organization_id=$1 AND id=$2
       FOR UPDATE
@@ -395,6 +396,8 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     if (!["draft", "approved"].includes(journal.status)) {
       throw new AppError(409, "Journal must be in draft or approved status to post");
     }
+
+    await assertJournalApprovalStateAllowsPost({ orgId, journal, client });
 
     assertCanPost({
       settings,
@@ -872,6 +875,46 @@ async function reversePostedJournal({
 // Stage 2: Draft editing + lifecycle
 // ---------------------------------
 
+
+
+async function buildJournalWorkflowSnapshot(client, { orgId, journalId }) {
+  const { rows: journals } = await client.query(
+    `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
+    [orgId, journalId]
+  );
+  if (!journals.length) throw new AppError(404, "Journal not found");
+  const journal = journals[0];
+  const { rows: lines } = await client.query(
+    `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+    [journalId]
+  );
+  return {
+    journal,
+    snapshot: {
+      header: journal,
+      lines,
+      totals: {
+        debit_base: bigIntToDecimalString(sum2(lines).debit, 2),
+        credit_base: bigIntToDecimalString(sum2(lines).credit, 2),
+      },
+      meta: {
+        status: journal.status,
+        period_id: journal.period_id,
+        entry_date: journal.entry_date,
+      }
+    }
+  };
+}
+
+async function assertJournalApprovalStateAllowsPost({ orgId, journal, client }) {
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: "journal_entry",
+    workflowDocumentId: journal.workflow_document_id,
+    client,
+    actionLabel: "post"
+  });
+}
 async function getJournalWithLines({ orgId, journalId }) {
   const { rows: j } = await pool.query(
     `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
@@ -1064,15 +1107,8 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
   try {
     await client.query("BEGIN");
 
-    const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by, period_id, entry_date
-       FROM journal_entries
-       WHERE organization_id=$1 AND id=$2
-       FOR UPDATE`,
-      [orgId, journalId]
-    );
-    if (!jRows.length) throw new AppError(404, "Journal not found");
-    const j = jRows[0];
+    const { journal, snapshot } = await buildJournalWorkflowSnapshot(client, { orgId, journalId });
+    const j = journal;
 
     if (j.status !== "draft") throw new AppError(409, "Only draft journals can be submitted");
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
@@ -1083,17 +1119,22 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
     if (period.status !== "open") throw new AppError(409, "Period not open");
     assertEntryDateWithinPeriod(j.entry_date, period);
 
-    const { rows: lines } = await client.query(
-      `SELECT debit, credit, amount_base
-       FROM journal_entry_lines
-       WHERE journal_entry_id=$1
-       ORDER BY line_no`,
-      [journalId]
-    );
-    if (!lines.length) throw new AppError(400, "Journal has no lines");
-
-    const totals = sum2(lines);
+    const totals = sum2(snapshot.lines);
+    if (!snapshot.lines.length) throw new AppError(400, "Journal has no lines");
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
+
+    await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "journal_entry",
+      entity: j,
+      workflowDocumentId: j.workflow_document_id,
+      snapshot,
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE journal_entries SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, journalId, workflowDocumentId]);
+      }
+    });
 
     await client.query(
       `
@@ -1122,10 +1163,8 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
   try {
     await client.query("BEGIN");
 
-    const settings = await getWorkflowSettings(client, { orgId });
-
     const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by
+      `SELECT id, status, created_by, workflow_document_id
        FROM journal_entries
        WHERE organization_id=$1 AND id=$2
        FOR UPDATE`,
@@ -1137,13 +1176,19 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
     if (j.status !== "submitted") {
       throw new AppError(409, "Only submitted journals can be approved");
     }
+    if (!j.workflow_document_id) throw new AppError(409, "Journal has no workflow document");
 
-    assertCanApprove({
-      settings,
-      creatorUserId: j.created_by,
+    await documentableSvc.approveEntityDocument({
+      orgId,
       actorUserId,
+      entityType: "journal_entry",
+      workflowDocumentId: j.workflow_document_id,
+      creatorUserId: j.created_by,
+      comment: null,
+      client
     });
 
+    const settings = await getWorkflowSettings(client, { orgId });
     await client.query(
       `
       UPDATE journal_entries
@@ -1186,7 +1231,7 @@ async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason })
     const settings = await getWorkflowSettings(client, { orgId });
 
     const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by
+      `SELECT id, status, created_by, workflow_document_id
        FROM journal_entries
        WHERE organization_id=$1 AND id=$2
        FOR UPDATE`,
@@ -1198,16 +1243,16 @@ async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason })
     if (j.status !== "submitted") {
       throw new AppError(409, "Only submitted journals can be rejected");
     }
+    if (!j.workflow_document_id) throw new AppError(409, "Journal has no workflow document");
 
-    assertCanReject({
-      settings,
-      creatorUserId: j.created_by,
+    await documentableSvc.rejectEntityDocument({
+      orgId,
       actorUserId,
-    });
-
-    assertRejectionCommentRequired({
-      settings,
-      reason,
+      entityType: "journal_entry",
+      workflowDocumentId: j.workflow_document_id,
+      creatorUserId: j.created_by,
+      comment: reason,
+      client
     });
 
     await client.query(
@@ -1356,6 +1401,7 @@ module.exports = {
   rejectSubmittedJournal,
   cancelDraftJournal,
   batchPostJournals,
+  assertJournalApprovalStateAllowsPost,
 
   // exported helpers in case other modules need them
   getWorkflowSettings,
