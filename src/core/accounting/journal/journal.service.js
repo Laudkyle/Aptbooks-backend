@@ -34,18 +34,37 @@ async function lookupFxRateMicro(client, { orgId, rateTypeCode = "SPOT", fromCur
   const to = String(toCurrency).toUpperCase();
   if (from === to) return 1000000n;
 
-  const { rows: rt } = await client.query("SELECT id FROM exchange_rate_types WHERE code=$1", [String(rateTypeCode).toUpperCase()]);
+  const { rows: rt } = await client.query(
+    "SELECT id FROM exchange_rate_types WHERE code=$1",
+    [String(rateTypeCode).toUpperCase()]
+  );
   if (!rt.length) throw new AppError(400, `Unknown FX rate type: ${rateTypeCode}`);
   const rateTypeId = rt[0].id;
 
   const direct = await client.query(
-    "SELECT rate FROM exchange_rates WHERE organization_id=$1 AND rate_type_id=$2 AND from_currency=$3 AND to_currency=$4 AND effective_date <= $5 ORDER BY effective_date DESC LIMIT 1",
+    `SELECT rate
+     FROM exchange_rates
+     WHERE organization_id=$1
+       AND rate_type_id=$2
+       AND from_currency=$3
+       AND to_currency=$4
+       AND effective_date <= $5
+     ORDER BY effective_date DESC
+     LIMIT 1`,
     [orgId, rateTypeId, from, to, asOfDate]
   );
   if (direct.rows.length) return parseRateToMicro(direct.rows[0].rate);
 
   const inv = await client.query(
-    "SELECT rate FROM exchange_rates WHERE organization_id=$1 AND rate_type_id=$2 AND from_currency=$3 AND to_currency=$4 AND effective_date <= $5 ORDER BY effective_date DESC LIMIT 1",
+    `SELECT rate
+     FROM exchange_rates
+     WHERE organization_id=$1
+       AND rate_type_id=$2
+       AND from_currency=$3
+       AND to_currency=$4
+       AND effective_date <= $5
+     ORDER BY effective_date DESC
+     LIMIT 1`,
     [orgId, rateTypeId, to, from, asOfDate]
   );
   if (inv.rows.length) {
@@ -77,7 +96,11 @@ function sum2(lines) {
   return lines.reduce((acc, l) => {
     const debitC = parseDecimalToBigInt(l.debit || 0, 2);
     const creditC = parseDecimalToBigInt(l.credit || 0, 2);
-    const base = ('amount_base' in l && l.amount_base != null) ? parseDecimalToBigInt(l.amount_base || 0, 2) : (debitC>0n?debitC:creditC);
+    const base =
+      ("amount_base" in l && l.amount_base != null)
+        ? parseDecimalToBigInt(l.amount_base || 0, 2)
+        : (debitC > 0n ? debitC : creditC);
+
     if (debitC > 0n) acc.debit += base;
     if (creditC > 0n) acc.credit += base;
     return acc;
@@ -86,7 +109,10 @@ function sum2(lines) {
 
 async function getPeriodForUpdate(client, orgId, periodId) {
   const { rows } = await client.query(
-    `SELECT id, status, start_date, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2 FOR SHARE`,
+    `SELECT id, status, start_date, end_date
+     FROM accounting_periods
+     WHERE organization_id=$1 AND id=$2
+     FOR SHARE`,
     [orgId, periodId]
   );
   if (!rows.length) throw new AppError(400, "Invalid period");
@@ -100,6 +126,154 @@ function assertEntryDateWithinPeriod(entryDate, period) {
   if (d < s || d > e) throw new AppError(409, "entryDate must be within the selected period");
 }
 
+// -----------------------------------------------------------------------------
+// Workflow settings helpers
+// -----------------------------------------------------------------------------
+
+async function getWorkflowSettings(client, { orgId }) {
+  const { rows } = await client.query(
+    `
+    SELECT
+      creator_can_approve,
+      creator_can_post,
+      allow_self_approval,
+      require_comment_on_rejection,
+      notify_creator_on_approval,
+      notify_creator_on_rejection
+    FROM document_workflow_statics
+    WHERE organization_id = $1
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 1
+    `,
+    [orgId]
+  );
+
+  return rows[0] || {
+    creator_can_approve: false,
+    creator_can_post: false,
+    allow_self_approval: false,
+    require_comment_on_rejection: true,
+    notify_creator_on_approval: true,
+    notify_creator_on_rejection: true,
+  };
+}
+
+function isSameUser(a, b) {
+  if (!a || !b) return false;
+  return String(a) === String(b);
+}
+
+function assertCanApprove({ settings, creatorUserId, actorUserId }) {
+  const isCreator = isSameUser(creatorUserId, actorUserId);
+  if (!isCreator) return;
+
+  if (settings.allow_self_approval || settings.creator_can_approve) return;
+
+  throw new AppError(403, "Workflow settings do not allow the creator to approve this journal");
+}
+
+function assertCanReject({ settings, creatorUserId, actorUserId }) {
+  const isCreator = isSameUser(creatorUserId, actorUserId);
+  if (!isCreator) return;
+
+  if (settings.allow_self_approval || settings.creator_can_approve) return;
+
+  throw new AppError(403, "Workflow settings do not allow the creator to reject this journal");
+}
+
+function assertCanPost({ settings, creatorUserId, actorUserId }) {
+  const isCreator = isSameUser(creatorUserId, actorUserId);
+  if (!isCreator) return;
+
+  if (settings.creator_can_post) return;
+
+  throw new AppError(403, "Workflow settings do not allow the creator to post this journal");
+}
+
+function assertRejectionCommentRequired({ settings, reason }) {
+  if (settings.require_comment_on_rejection && !String(reason || "").trim()) {
+    throw new AppError(400, "Rejection comment is required by workflow settings");
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Validation helpers
+// -----------------------------------------------------------------------------
+
+async function validateAccountIsUsable(client, { orgId, accountId }) {
+  const { rows } = await client.query(
+    `SELECT is_postable, status
+     FROM chart_of_accounts
+     WHERE organization_id=$1 AND id=$2`,
+    [orgId, accountId]
+  );
+  if (!rows.length) throw new AppError(400, "Invalid accountId");
+  if (!rows[0].is_postable) throw new AppError(400, "Non-postable account used");
+  if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
+}
+
+async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency, payloadRateTypeCode = "SPOT" }) {
+  const preparedLines = [];
+
+  for (const l of lines || []) {
+    await validateAccountIsUsable(client, { orgId, accountId: l.accountId });
+
+    const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase();
+    const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
+    const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
+
+    if ((debitCents > 0n && creditCents > 0n) || (debitCents === 0n && creditCents === 0n)) {
+      throw new AppError(400, "Each journal line must have either debit or credit");
+    }
+
+    const amountCents = debitCents > 0n ? debitCents : creditCents;
+
+    let rateMicro = 1000000n;
+    if (currencyCode !== baseCurrency) {
+      if (l.fxRate != null) {
+        rateMicro = parseRateToMicro(l.fxRate);
+      } else {
+        rateMicro = await lookupFxRateMicro(client, {
+          orgId,
+          rateTypeCode: l.rateTypeCode || payloadRateTypeCode || "SPOT",
+          fromCurrency: currencyCode,
+          toCurrency: baseCurrency,
+          asOfDate: entryDate,
+        });
+      }
+    }
+
+    const amountBaseCents =
+      currencyCode === baseCurrency
+        ? amountCents
+        : computeBaseCents({ amountCents, rateMicro });
+
+    preparedLines.push({
+      ...l,
+      currencyCode,
+      fxRateMicro: rateMicro,
+      amountBaseCents,
+    });
+  }
+
+  const totals = preparedLines.reduce(
+    (acc, l) => {
+      const debit = parseDecimalToBigInt(l.debit || 0, 2);
+      const credit = parseDecimalToBigInt(l.credit || 0, 2);
+      if (debit > 0n) acc.debit += l.amountBaseCents;
+      if (credit > 0n) acc.credit += l.amountBaseCents;
+      return acc;
+    },
+    { debit: 0n, credit: 0n }
+  );
+
+  if (totals.debit !== totals.credit) {
+    throw new AppError(400, "Journal not balanced in base currency");
+  }
+
+  return preparedLines;
+}
+
 async function createDraftJournal({ orgId, actorUserId, payload, client: existingClient = null }) {
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
@@ -111,7 +285,9 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     // idempotency
     if (payload.idempotencyKey) {
       const { rows: existing } = await client.query(
-        `SELECT id, status FROM journal_entries WHERE organization_id=$1 AND idempotency_key=$2`,
+        `SELECT id, status
+         FROM journal_entries
+         WHERE organization_id=$1 AND idempotency_key=$2`,
         [orgId, payload.idempotencyKey]
       );
       if (existing.length) {
@@ -131,56 +307,13 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
     const typeId = tRows[0].id;
 
-    // Compute & validate base-equivalent totals. For non-base currencies we either use a provided fxRate
-    // or look up a rate effective on entryDate.
-    const preparedLines = [];
-    for (const l of payload.lines || []) {
-      const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase();
-      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
-      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
-      const amountCents = debitCents > 0n ? debitCents : creditCents;
-
-      let rateMicro = 1000000n;
-      if (currencyCode !== baseCurrency) {
-        if (l.fxRate != null) {
-          rateMicro = parseRateToMicro(l.fxRate);
-        } else {
-          rateMicro = await lookupFxRateMicro(client, {
-            orgId,
-            rateTypeCode: l.rateTypeCode || payload.rateTypeCode || "SPOT",
-            fromCurrency: currencyCode,
-            toCurrency: baseCurrency,
-            asOfDate: payload.entryDate,
-          });
-        }
-      }
-
-      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
-      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
-    }
-
-    const totals = preparedLines.reduce(
-      (acc, l) => {
-        const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
-        const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
-        if (debitCents > 0n) acc.debit += l.amountBaseCents;
-        if (creditCents > 0n) acc.credit += l.amountBaseCents;
-        return acc;
-      },
-      { debit: 0n, credit: 0n }
-    );
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced in base currency");
-
-    // Validate accounts exist and are postable+active up front
-    for (const l of payload.lines) {
-      const { rows: aRows } = await client.query(
-        `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
-        [orgId, l.accountId]
-      );
-      if (!aRows.length) throw new AppError(400, "Invalid accountId");
-      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used");
-      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
-    }
+    const preparedLines = await prepareDraftLines(client, {
+      orgId,
+      entryDate: payload.entryDate,
+      lines: payload.lines || [],
+      baseCurrency,
+      payloadRateTypeCode: payload.rateTypeCode || "SPOT",
+    });
 
     const { rows: jRows } = await client.query(
       `
@@ -189,7 +322,15 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
       VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
       RETURNING id, status
       `,
-      [orgId, typeId, payload.periodId, payload.entryDate, payload.memo || null, payload.idempotencyKey || null, actorUserId]
+      [
+        orgId,
+        typeId,
+        payload.periodId,
+        payload.entryDate,
+        payload.memo || null,
+        payload.idempotencyKey || null,
+        actorUserId
+      ]
     );
     const journalId = jRows[0].id;
 
@@ -197,11 +338,6 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
       const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
-      const amountBaseBI = l.amountBaseCents;
-
-      const debit = bigIntToDecimalString(debitBI, 2);
-      const credit = bigIntToDecimalString(creditBI, 2);
-      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
 
       await client.query(
         `
@@ -209,7 +345,17 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
-        [journalId, i + 1, l.accountId, l.description || null, debit, credit, l.currencyCode, bigIntToDecimalString(l.fxRateMicro, 6), amountBase]
+        [
+          journalId,
+          i + 1,
+          l.accountId,
+          l.description || null,
+          bigIntToDecimalString(debitBI, 2),
+          bigIntToDecimalString(creditBI, 2),
+          l.currencyCode,
+          bigIntToDecimalString(l.fxRateMicro, 6),
+          bigIntToDecimalString(l.amountBaseCents, 2)
+        ]
       );
     }
 
@@ -229,9 +375,10 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
-    if (managesTx) await client.query('BEGIN');
+    if (managesTx) await client.query("BEGIN");
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
+    const settings = await getWorkflowSettings(client, { orgId });
 
     const { rows: jRows } = await client.query(
       `
@@ -242,24 +389,37 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       `,
       [orgId, journalId]
     );
-    if (!jRows.length) throw new AppError(404, 'Journal not found');
+    if (!jRows.length) throw new AppError(404, "Journal not found");
     const journal = jRows[0];
-    if (!['draft','approved'].includes(journal.status)) {
-      throw new AppError(409, 'Journal must be in draft or approved status to post');
-    }
-    if (journal.created_by && String(journal.created_by) === String(actorUserId)) {
-      throw new AppError(403, 'Segregation of duties: creator cannot post this journal');
+
+    if (!["draft", "approved"].includes(journal.status)) {
+      throw new AppError(409, "Journal must be in draft or approved status to post");
     }
 
+    assertCanPost({
+      settings,
+      creatorUserId: journal.created_by,
+      actorUserId,
+    });
+
     const period = await getPeriodForUpdate(client, orgId, journal.period_id);
-    if (period.status !== 'open') throw new AppError(409, 'Period not open');
+    if (period.status !== "open") throw new AppError(409, "Period not open");
     assertEntryDateWithinPeriod(journal.entry_date, period);
 
     const { rows: lines } = await client.query(
       `
-      SELECT jel.id AS line_id, jel.line_no, jel.account_id, jel.description,
-             jel.debit, jel.credit, jel.currency_code, jel.fx_rate, jel.amount_base,
-             coa.is_postable, coa.status AS account_status
+      SELECT
+        jel.id AS line_id,
+        jel.line_no,
+        jel.account_id,
+        jel.description,
+        jel.debit,
+        jel.credit,
+        jel.currency_code,
+        jel.fx_rate,
+        jel.amount_base,
+        coa.is_postable,
+        coa.status AS account_status
       FROM journal_entry_lines jel
       JOIN chart_of_accounts coa
         ON coa.id = jel.account_id AND coa.organization_id = $1
@@ -268,12 +428,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       `,
       [orgId, journalId]
     );
-    if (!lines.length) throw new AppError(400, 'Journal has no lines');
+    if (!lines.length) throw new AppError(400, "Journal has no lines");
 
     // Validate accounts and ensure amount_base/fx_rate are present and correct.
     for (const l of lines) {
-      if (!l.is_postable) throw new AppError(400, 'Non-postable account used');
-      if (l.account_status !== 'active') throw new AppError(400, 'Inactive account used');
+      if (!l.is_postable) throw new AppError(400, "Non-postable account used");
+      if (l.account_status !== "active") throw new AppError(400, "Inactive account used");
 
       const currencyCode = String(l.currency_code || baseCurrency).toUpperCase();
       const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
@@ -282,12 +442,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
 
       let rateMicro = 1000000n;
       if (currencyCode !== baseCurrency) {
-        if (l.fx_rate != null && String(l.fx_rate).trim() !== '') {
+        if (l.fx_rate != null && String(l.fx_rate).trim() !== "") {
           rateMicro = parseRateToMicro(l.fx_rate);
         } else {
           rateMicro = await lookupFxRateMicro(client, {
             orgId,
-            rateTypeCode: 'SPOT',
+            rateTypeCode: "SPOT",
             fromCurrency: currencyCode,
             toCurrency: baseCurrency,
             asOfDate: journal.entry_date,
@@ -295,17 +455,29 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
         }
       }
 
-      const computedBaseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
+      const computedBaseCents =
+        currencyCode === baseCurrency
+          ? amountCents
+          : computeBaseCents({ amountCents, rateMicro });
+
       const storedBaseCents = parseDecimalToBigInt(l.amount_base || 0, 2);
 
       // If missing/incorrect, update line.
-      if (storedBaseCents !== computedBaseCents || String(l.fx_rate || '').trim() === '') {
+      if (storedBaseCents !== computedBaseCents || String(l.fx_rate || "").trim() === "") {
         await client.query(
-          `UPDATE journal_entry_lines
-           SET currency_code=$2, fx_rate=$3, amount_base=$4
-           WHERE id=$1`,
-          [l.line_id, currencyCode, bigIntToDecimalString(rateMicro, 6), bigIntToDecimalString(computedBaseCents, 2)]
+          `
+          UPDATE journal_entry_lines
+          SET currency_code=$2, fx_rate=$3, amount_base=$4
+          WHERE id=$1
+          `,
+          [
+            l.line_id,
+            currencyCode,
+            bigIntToDecimalString(rateMicro, 6),
+            bigIntToDecimalString(computedBaseCents, 2)
+          ]
         );
+
         l.currency_code = currencyCode;
         l.fx_rate = bigIntToDecimalString(rateMicro, 6);
         l.amount_base = bigIntToDecimalString(computedBaseCents, 2);
@@ -313,12 +485,13 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     }
 
     const totals = sum2(lines);
-    if (totals.debit !== totals.credit) throw new AppError(400, 'Journal not balanced in base currency');
+    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced in base currency");
 
     for (const l of lines) {
       const isDebit = parseDecimalToBigInt(l.debit || 0, 2) > 0n;
       const isCredit = parseDecimalToBigInt(l.credit || 0, 2) > 0n;
-      const baseAmt = l.amount_base || '0';
+      const baseAmt = l.amount_base || "0";
+
       await client.query(
         `
         INSERT INTO general_ledger_balances
@@ -329,7 +502,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
           debit_total = general_ledger_balances.debit_total + EXCLUDED.debit_total,
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
-        [orgId, journal.period_id, l.account_id, isDebit ? baseAmt : '0', isCredit ? baseAmt : '0']
+        [orgId, journal.period_id, l.account_id, isDebit ? baseAmt : "0", isCredit ? baseAmt : "0"]
       );
     }
 
@@ -355,18 +528,22 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       // Never block posting for cashbook enrichment.
       await enqueueEvent({
         orgId,
-        eventType: 'banking.bank_transactions.enrichment_failed',
+        eventType: "banking.bank_transactions.enrichment_failed",
         payload: { journalId, error: String(e && e.message ? e.message : e) },
       });
     }
 
-    await enqueueEvent({ orgId, eventType: 'accounting.journal.posted', payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date } });
+    await enqueueEvent({
+      orgId,
+      eventType: "accounting.journal.posted",
+      payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date }
+    });
 
-    if (managesTx) await client.query('COMMIT');
-    return { journalId, status: 'posted' };
+    if (managesTx) await client.query("COMMIT");
+    return { journalId, status: "posted" };
   } catch (e) {
     if (managesTx) {
-      try { await client.query('ROLLBACK'); } catch (_) {}
+      try { await client.query("ROLLBACK"); } catch (_) {}
     }
     throw e;
   } finally {
@@ -375,7 +552,6 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
 }
 
 /**
- * Accounting-correct void/**
  * Accounting-correct void: create and post a reversal journal.
  * - Requires original journal is POSTED and not already voided.
  * - Reversal journal is posted immediately in the SAME period.
@@ -386,8 +562,6 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
   const managesTx = !existingClient;
   try {
     if (managesTx) await client.query("BEGIN");
-
-    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const { rows: jRows } = await client.query(
       `
@@ -403,7 +577,9 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
     if (orig.status !== "posted") throw new AppError(409, "Only posted journals can be voided");
 
     const period = await getPeriodForUpdate(client, orgId, orig.period_id);
-    if (period.status !== "open") throw new AppError(409, "Period not open; cannot create reversal in this period");
+    if (period.status !== "open") {
+      throw new AppError(409, "Period not open; cannot create reversal in this period");
+    }
 
     const { rows: lines } = await client.query(
       `
@@ -437,22 +613,27 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       const newCreditBI = debitBI;
       const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI;
 
-      const newDebit = bigIntToDecimalString(newDebitBI, 2);
-      const newCredit = bigIntToDecimalString(newCreditBI, 2);
-      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
-
       await client.query(
         `
         INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
-        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
+        [
+          reversalId,
+          l.line_no,
+          l.account_id,
+          `REV: ${l.description || ""}`.trim(),
+          bigIntToDecimalString(newDebitBI, 2),
+          bigIntToDecimalString(newCreditBI, 2),
+          l.currency_code,
+          l.fx_rate || "1",
+          l.amount_base || bigIntToDecimalString(amountBaseBI, 2)
+        ]
       );
     }
 
     // Post reversal (update GL)
-    // Fetch reversal lines for posting
     const { rows: revLines } = await client.query(
       `
       SELECT account_id, debit, credit, amount_base
@@ -477,7 +658,13 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
           debit_total = general_ledger_balances.debit_total + EXCLUDED.debit_total,
           credit_total = general_ledger_balances.credit_total + EXCLUDED.credit_total
         `,
-        [orgId, orig.period_id, l.account_id, (parseDecimalToBigInt(l.debit||0,2)>0n?l.amount_base:'0'), (parseDecimalToBigInt(l.credit||0,2)>0n?l.amount_base:'0')]
+        [
+          orgId,
+          orig.period_id,
+          l.account_id,
+          (parseDecimalToBigInt(l.debit || 0, 2) > 0n ? l.amount_base : "0"),
+          (parseDecimalToBigInt(l.credit || 0, 2) > 0n ? l.amount_base : "0")
+        ]
       );
     }
 
@@ -490,25 +677,27 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       [orgId, actorUserId, reversalId]
     );
 
-    // Mark original voided (for UX/reporting; GL is corrected by reversal)
-    // Mark original voided (for UX/reporting; GL is corrected by reversal)
-// IMPORTANT: Do NOT modify memo or any other non-void field (immutability trigger)
-await client.query(
-  `
-  UPDATE journal_entries
-  SET status='voided',
-      voided_at=NOW(),
-      voided_by=$3,
-      void_reason=$4,
-      updated_at=NOW()
-  WHERE organization_id=$1
-    AND id=$2
-    AND status='posted'
-  `,
-  [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
-);
+    // IMPORTANT: Do NOT modify memo or any other non-void field (immutability trigger)
+    await client.query(
+      `
+      UPDATE journal_entries
+      SET status='voided',
+          voided_at=NOW(),
+          voided_by=$3,
+          void_reason=$4,
+          updated_at=NOW()
+      WHERE organization_id=$1
+        AND id=$2
+        AND status='posted'
+      `,
+      [orgId, journalId, actorUserId, `Reversed by JE ${reversalId}. Reason: ${reason}`]
+    );
 
-    await enqueueEvent({ orgId, eventType: "accounting.journal.voided", payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id } });
+    await enqueueEvent({
+      orgId,
+      eventType: "accounting.journal.voided",
+      payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id }
+    });
 
     if (managesTx) await client.query("COMMIT");
     return { journalId, status: "voided", reversalJournalId: reversalId };
@@ -521,13 +710,21 @@ await client.query(
     if (managesTx) client.release();
   }
 }
-async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey, client: existingClient = null }) {
+
+async function reversePostedJournal({
+  orgId,
+  journalId,
+  actorUserId,
+  targetPeriodId,
+  entryDate,
+  reason,
+  idempotencyKey,
+  client: existingClient = null,
+}) {
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
     if (managesTx) await client.query("BEGIN");
-
-    const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     // 1) Load original (lock)
     const { rows: jRows } = await client.query(
@@ -545,7 +742,10 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
 
     // 2) Target period must be open (reversal posts there)
     const targetPeriod = await getPeriodForUpdate(client, orgId, targetPeriodId);
-    if (targetPeriod.status !== "open") throw new AppError(409, "Target period not open; cannot post reversal");
+    if (targetPeriod.status !== "open") {
+      throw new AppError(409, "Target period not open; cannot post reversal");
+    }
+    assertEntryDateWithinPeriod(entryDate, targetPeriod);
 
     // 3) Idempotency: if reversal already exists, return it
     if (idempotencyKey) {
@@ -597,17 +797,23 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
       const newCreditBI = debitBI;
       const amountBaseBI = newDebitBI > 0n ? newDebitBI : newCreditBI;
 
-      const newDebit = bigIntToDecimalString(newDebitBI, 2);
-      const newCredit = bigIntToDecimalString(newCreditBI, 2);
-      const amountBase = bigIntToDecimalString(amountBaseBI, 2);
-
       await client.query(
         `
         INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         `,
-        [reversalId, l.line_no, l.account_id, `REV: ${l.description || ''}`.trim(), newDebit, newCredit, l.currency_code, l.fx_rate || '1', l.amount_base]
+        [
+          reversalId,
+          l.line_no,
+          l.account_id,
+          `REV: ${l.description || ""}`.trim(),
+          bigIntToDecimalString(newDebitBI, 2),
+          bigIntToDecimalString(newCreditBI, 2),
+          l.currency_code,
+          l.fx_rate || "1",
+          l.amount_base || bigIntToDecimalString(amountBaseBI, 2)
+        ]
       );
     }
 
@@ -644,7 +850,12 @@ async function reversePostedJournal({ orgId, journalId, actorUserId, targetPerio
     );
 
     // 8) IMPORTANT: Do NOT modify original journal status
-    await enqueueEvent({ orgId, eventType: 'accounting.journal.reversed', payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate } });
+    await enqueueEvent({
+      orgId,
+      eventType: "accounting.journal.reversed",
+      payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate }
+    });
+
     if (managesTx) await client.query("COMMIT");
     return { reversalJournalId: reversalId, alreadyExisted: false };
   } catch (e) {
@@ -667,23 +878,30 @@ async function getJournalWithLines({ orgId, journalId }) {
     [orgId, journalId]
   );
   if (!j.length) throw new AppError(404, "Journal not found");
+
   const { rows: lines } = await pool.query(
     `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
     [journalId]
   );
+
   return { journal: j[0], lines };
 }
 
 async function assertEditableJournal(client, { orgId, journalId }) {
   const { rows: jRows } = await client.query(
-    `SELECT id, status, period_id, entry_date, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+    `SELECT id, status, period_id, entry_date, created_by
+     FROM journal_entries
+     WHERE organization_id=$1 AND id=$2
+     FOR UPDATE`,
     [orgId, journalId]
   );
   if (!jRows.length) throw new AppError(404, "Journal not found");
+
   const j = jRows[0];
   if (!["draft", "rejected"].includes(j.status)) {
     throw new AppError(409, "Only draft/rejected journals can be edited");
   }
+
   const period = await getPeriodForUpdate(client, orgId, j.period_id);
   if (period.status !== "open") throw new AppError(409, "Period not open");
   return { journal: j, period };
@@ -693,6 +911,7 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
     const { journal } = await assertEditableJournal(client, { orgId, journalId });
     if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
       // Allow only creator to edit draft by default
@@ -702,7 +921,10 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
     // Resolve type id if typeCode provided
     let typeId = null;
     if (payload.typeCode) {
-      const { rows: tRows } = await client.query(`SELECT id FROM journal_entry_types WHERE code=$1`, [payload.typeCode]);
+      const { rows: tRows } = await client.query(
+        `SELECT id FROM journal_entry_types WHERE code=$1`,
+        [payload.typeCode]
+      );
       if (!tRows.length) throw new AppError(400, "Invalid journal entry type");
       typeId = tRows[0].id;
     }
@@ -721,18 +943,27 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
     }
 
     await client.query(
-      `UPDATE journal_entries
-       SET period_id = COALESCE($3, period_id),
-           entry_date = COALESCE($4, entry_date),
-           memo = CASE WHEN $5::text IS NOT NULL THEN $5 ELSE memo END,
-           journal_entry_type_id = COALESCE($6, journal_entry_type_id),
-           status='draft',
-           rejected_at=NULL,
-           rejected_by=NULL,
-           rejection_reason=NULL,
-           updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2`,
-      [orgId, journalId, periodId, payload.entryDate || null, payload.memo === undefined ? null : payload.memo, typeId]
+      `
+      UPDATE journal_entries
+      SET period_id = COALESCE($3, period_id),
+          entry_date = COALESCE($4, entry_date),
+          memo = CASE WHEN $5::text IS NOT NULL THEN $5 ELSE memo END,
+          journal_entry_type_id = COALESCE($6, journal_entry_type_id),
+          status='draft',
+          rejected_at=NULL,
+          rejected_by=NULL,
+          rejection_reason=NULL,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      `,
+      [
+        orgId,
+        journalId,
+        periodId,
+        payload.entryDate || null,
+        payload.memo === undefined ? null : payload.memo,
+        typeId
+      ]
     );
 
     await client.query("COMMIT");
@@ -749,6 +980,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
     const { journal } = await assertEditableJournal(client, { orgId, journalId });
     if (journal.created_by && String(journal.created_by) !== String(actorUserId)) {
       throw new AppError(403, "Only the creator can edit this draft journal");
@@ -756,79 +988,39 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
 
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
-    // Prepare lines with proper FX rates and base amounts
-    const preparedLines = [];
-    for (const l of lines) {
-      const currencyCode = String(l.currencyCode || baseCurrency).toUpperCase();
-      const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
-      const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
-      const amountCents = debitCents > 0n ? debitCents : creditCents;
+    const preparedLines = await prepareDraftLines(client, {
+      orgId,
+      entryDate: journal.entry_date,
+      lines,
+      baseCurrency,
+      payloadRateTypeCode: "SPOT",
+    });
 
-      let rateMicro = 1000000n;
-      if (currencyCode !== baseCurrency) {
-        if (l.fxRate != null) {
-          rateMicro = parseRateToMicro(l.fxRate);
-        } else {
-          // Look up FX rate for the journal's entry date
-          rateMicro = await lookupFxRateMicro(client, {
-            orgId,
-            rateTypeCode: l.rateTypeCode || "SPOT",
-            fromCurrency: currencyCode,
-            toCurrency: baseCurrency,
-            asOfDate: journal.entry_date,
-          });
-        }
-      }
-
-      const baseCents = currencyCode === baseCurrency ? amountCents : computeBaseCents({ amountCents, rateMicro });
-      preparedLines.push({ ...l, currencyCode, fxRateMicro: rateMicro, amountBaseCents: baseCents });
-    }
-
-    // Validate totals are balanced
-    const totals = preparedLines.reduce(
-      (acc, l) => {
-        const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
-        const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
-        if (debitCents > 0n) acc.debit += l.amountBaseCents;
-        if (creditCents > 0n) acc.credit += l.amountBaseCents;
-        return acc;
-      },
-      { debit: 0n, credit: 0n }
-    );
-    if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
-
-    // Validate accounts
-    for (const l of preparedLines) {
-      const { rows: aRows } = await client.query(
-        `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
-        [orgId, l.accountId]
-      );
-      if (!aRows.length) throw new AppError(400, "Invalid accountId");
-      if (!aRows[0].is_postable) throw new AppError(400, "Non-postable account used");
-      if (aRows[0].status !== "active") throw new AppError(400, "Inactive account used");
-    }
-
-    // IMPORTANT: Check if there are existing lines first
     const { rows: existingLines } = await client.query(
-      `SELECT COUNT(*) as count FROM journal_entry_lines WHERE journal_entry_id = $1`,
+      `SELECT COUNT(*) as count
+       FROM journal_entry_lines
+       WHERE journal_entry_id = $1`,
       [journalId]
     );
-    
-    // Delete existing lines if they exist
-    if (parseInt(existingLines[0].count) > 0) {
-      await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`, [journalId]);
+
+    if (parseInt(existingLines[0].count, 10) > 0) {
+      await client.query(
+        `DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`,
+        [journalId]
+      );
     }
 
-    // Insert new lines with ALL required fields including fx_rate
     for (let i = 0; i < preparedLines.length; i++) {
       const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
       const creditBI = parseDecimalToBigInt(l.credit || 0, 2);
-      
+
       await client.query(
-        `INSERT INTO journal_entry_lines
+        `
+        INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `,
         [
           journalId,
           i + 1,
@@ -845,9 +1037,15 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
 
     // If journal was rejected, revert back to draft
     await client.query(
-      `UPDATE journal_entries
-       SET status = 'draft', rejected_at = NULL, rejected_by = NULL, rejection_reason = NULL, updated_at = NOW()
-       WHERE organization_id = $1 AND id = $2`,
+      `
+      UPDATE journal_entries
+      SET status = 'draft',
+          rejected_at = NULL,
+          rejected_by = NULL,
+          rejection_reason = NULL,
+          updated_at = NOW()
+      WHERE organization_id = $1 AND id = $2
+      `,
       [orgId, journalId]
     );
 
@@ -860,16 +1058,22 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
     client.release();
   }
 }
+
 async function submitDraftJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
     const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by, period_id, entry_date FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      `SELECT id, status, created_by, period_id, entry_date
+       FROM journal_entries
+       WHERE organization_id=$1 AND id=$2
+       FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
+
     if (j.status !== "draft") throw new AppError(409, "Only draft journals can be submitted");
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
       throw new AppError(403, "Only the creator can submit this journal");
@@ -880,17 +1084,26 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
     assertEntryDateWithinPeriod(j.entry_date, period);
 
     const { rows: lines } = await client.query(
-      `SELECT debit, credit FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+      `SELECT debit, credit, amount_base
+       FROM journal_entry_lines
+       WHERE journal_entry_id=$1
+       ORDER BY line_no`,
       [journalId]
     );
     if (!lines.length) throw new AppError(400, "Journal has no lines");
+
     const totals = sum2(lines);
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
     await client.query(
-      `UPDATE journal_entries
-       SET status='submitted', submitted_at=NOW(), submitted_by=$3, updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2`,
+      `
+      UPDATE journal_entries
+      SET status='submitted',
+          submitted_at=NOW(),
+          submitted_by=$3,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      `,
       [orgId, journalId, actorUserId]
     );
 
@@ -908,22 +1121,53 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    const settings = await getWorkflowSettings(client, { orgId });
+
     const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      `SELECT id, status, created_by
+       FROM journal_entries
+       WHERE organization_id=$1 AND id=$2
+       FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
-    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be approved");
-    if (j.created_by && String(j.created_by) === String(actorUserId)) {
-      throw new AppError(403, "Segregation of duties: creator cannot approve this journal");
+
+    if (j.status !== "submitted") {
+      throw new AppError(409, "Only submitted journals can be approved");
     }
+
+    assertCanApprove({
+      settings,
+      creatorUserId: j.created_by,
+      actorUserId,
+    });
+
     await client.query(
-      `UPDATE journal_entries
-       SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2`,
+      `
+      UPDATE journal_entries
+      SET status='approved',
+          approved_at=NOW(),
+          approved_by=$3,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      `,
       [orgId, journalId, actorUserId]
     );
+
+    if (settings.notify_creator_on_approval && j.created_by) {
+      await enqueueEvent({
+        orgId,
+        eventType: "accounting.journal.approved",
+        payload: {
+          journalId,
+          approvedBy: actorUserId,
+          creatorUserId: j.created_by,
+        },
+      });
+    }
+
     await client.query("COMMIT");
     return { journalId, status: "approved" };
   } catch (e) {
@@ -938,22 +1182,60 @@ async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason })
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    const settings = await getWorkflowSettings(client, { orgId });
+
     const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      `SELECT id, status, created_by
+       FROM journal_entries
+       WHERE organization_id=$1 AND id=$2
+       FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
-    if (j.status !== "submitted") throw new AppError(409, "Only submitted journals can be rejected");
-    if (j.created_by && String(j.created_by) === String(actorUserId)) {
-      throw new AppError(403, "Segregation of duties: creator cannot reject this journal");
+
+    if (j.status !== "submitted") {
+      throw new AppError(409, "Only submitted journals can be rejected");
     }
+
+    assertCanReject({
+      settings,
+      creatorUserId: j.created_by,
+      actorUserId,
+    });
+
+    assertRejectionCommentRequired({
+      settings,
+      reason,
+    });
+
     await client.query(
-      `UPDATE journal_entries
-       SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2`,
-      [orgId, journalId, actorUserId, reason]
+      `
+      UPDATE journal_entries
+      SET status='rejected',
+          rejected_at=NOW(),
+          rejected_by=$3,
+          rejection_reason=$4,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      `,
+      [orgId, journalId, actorUserId, reason || null]
     );
+
+    if (settings.notify_creator_on_rejection && j.created_by) {
+      await enqueueEvent({
+        orgId,
+        eventType: "accounting.journal.rejected",
+        payload: {
+          journalId,
+          rejectedBy: actorUserId,
+          creatorUserId: j.created_by,
+          reason: reason || null,
+        },
+      });
+    }
+
     await client.query("COMMIT");
     return { journalId, status: "rejected" };
   } catch (e) {
@@ -968,24 +1250,36 @@ async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
     const { rows: jRows } = await client.query(
-      `SELECT id, status, created_by FROM journal_entries WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      `SELECT id, status, created_by
+       FROM journal_entries
+       WHERE organization_id=$1 AND id=$2
+       FOR UPDATE`,
       [orgId, journalId]
     );
     if (!jRows.length) throw new AppError(404, "Journal not found");
     const j = jRows[0];
+
     if (j.status !== "draft" && j.status !== "rejected") {
       throw new AppError(409, "Only draft/rejected journals can be canceled");
     }
     if (j.created_by && String(j.created_by) !== String(actorUserId)) {
       throw new AppError(403, "Only the creator can cancel this journal");
     }
+
     await client.query(
-      `UPDATE journal_entries
-       SET status='canceled', canceled_at=NOW(), canceled_by=$3, updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2`,
+      `
+      UPDATE journal_entries
+      SET status='canceled',
+          canceled_at=NOW(),
+          canceled_by=$3,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      `,
       [orgId, journalId, actorUserId]
     );
+
     await client.query("COMMIT");
     return { journalId, status: "canceled" };
   } catch (e) {
@@ -1048,7 +1342,6 @@ async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
   return rows;
 }
 
-
 module.exports = {
   createDraftJournal,
   postDraftJournal,
@@ -1062,5 +1355,12 @@ module.exports = {
   approveSubmittedJournal,
   rejectSubmittedJournal,
   cancelDraftJournal,
-  batchPostJournals
+  batchPostJournals,
+
+  // exported helpers in case other modules need them
+  getWorkflowSettings,
+  assertCanApprove,
+  assertCanReject,
+  assertCanPost,
+  assertRejectionCommentRequired,
 };
