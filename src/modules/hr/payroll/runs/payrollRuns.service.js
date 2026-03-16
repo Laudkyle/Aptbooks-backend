@@ -1,5 +1,8 @@
 const { AppError } = require("../../../../shared/errors/AppError");
 const journalIF = require("../../../../interfaces/journalPosting.interface");
+const { pool } = require("../../../../db/pool");
+const { withTransaction } = require("../../../../db/tx");
+const documentableSvc = require("../../../../workflow/documents/documentable.service");
 
 const runsRepo = require("./payrollRuns.repository");
 const employeesRepo = require("../../employees/employees.repository");
@@ -65,6 +68,65 @@ function applyCap(amount, capAmount) {
   const cap = capAmount === null || capAmount === undefined ? null : Number(capAmount);
   if (cap === null || Number.isNaN(cap) || cap <= 0) return amount;
   return Math.min(Number(amount || 0), cap);
+}
+
+
+async function loadRunSnapshot(orgId, runId) {
+  const run = await getRun({ orgId, runId });
+  const lines = await listRunLines({ orgId, runId });
+  const journal = await runsRepo.getRunJournal(orgId, runId);
+  return { run, lines, journal };
+}
+
+async function submitRunForApproval({ orgId, actorUserId, runId }) {
+  return withTransaction(async (client) => {
+    const { run, lines, journal } = await loadRunSnapshot(orgId, runId);
+    if (!run) throw new AppError(404, "Payroll run not found");
+    if (!["calculated", "rejected"].includes(run.status)) throw new AppError(409, "Payroll run must be calculated before submission");
+    await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "payslip",
+      entity: run,
+      workflowDocumentId: run.workflow_document_id,
+      snapshot: { header: run, lines, related: { journal }, meta: { status: run.status } },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE hr_payroll_runs SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, runId, workflowDocumentId]);
+      }
+    });
+    return getRun({ orgId, runId });
+  });
+}
+
+async function approveRunWorkflow({ orgId, actorUserId, runId, comment }) {
+  return withTransaction(async (client) => {
+    const run = await getRun({ orgId, runId });
+    if (!run) throw new AppError(404, "Payroll run not found");
+    if (run.status !== "submitted") throw new AppError(409, "Only submitted payroll runs can be approved");
+    await documentableSvc.approveEntityDocument({
+      orgId, actorUserId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
+    });
+    return getRun({ orgId, runId });
+  });
+}
+
+async function rejectRunWorkflow({ orgId, actorUserId, runId, comment }) {
+  return withTransaction(async (client) => {
+    const run = await getRun({ orgId, runId });
+    if (!run) throw new AppError(404, "Payroll run not found");
+    if (run.status !== "submitted") throw new AppError(409, "Only submitted payroll runs can be rejected");
+    await documentableSvc.rejectEntityDocument({
+      orgId, actorUserId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
+    });
+    return getRun({ orgId, runId });
+  });
+}
+
+async function assertRunApprovalStateAllowsPost({ orgId, run, client }) {
+  return documentableSvc.assertEntityApprovedForAction({
+    orgId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, client, actionLabel: "post"
+  });
 }
 
 async function createRun({ orgId, actorUserId, payload }) {
@@ -251,7 +313,7 @@ function round2(n) {
 
 async function buildJournal({ orgId, actorUserId, runId, idempotencyKey }) {
   const run = await getRun({ orgId, runId });
-  if (run.status !== "calculated") {
+  if (run.status !== "calculated" && run.status !== "approved") {
     throw new AppError(409, "Run must be calculated before building a journal");
   }
 
@@ -378,6 +440,7 @@ async function buildJournal({ orgId, actorUserId, runId, idempotencyKey }) {
 
 async function postJournal({ orgId, actorUserId, runId }) {
   const run = await getRun({ orgId, runId });
+  await assertRunApprovalStateAllowsPost({ orgId, run, client: pool });
   const link = await runsRepo.getRunJournal(orgId, runId);
   if (!link?.journal_entry_id) throw new AppError(400, "No journal built for this payroll run");
 

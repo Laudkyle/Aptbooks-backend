@@ -3,9 +3,18 @@ const { AppError } = require("../../../shared/errors/AppError");
 const repo = require("./transactions.repository");
 const { getSetting, upsertSetting } = require("../inventory.settings.repository");
 const { createDraftJournal, postDraftJournal } = require("../../../interfaces/journalPosting.interface");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 function round6(n) {
   return Math.round((Number(n) + Number.EPSILON) * 1e6) / 1e6;
+}
+
+function getInventoryTxnEntityType(txnType) {
+  if (txnType === "receipt") return "stock_receive";
+  if (txnType === "issue") return "stock_issue";
+  if (txnType === "transfer") return "stock_transfer";
+  if (txnType === "adjustment") return "stock_adjustment";
+  throw new AppError(400, `Unsupported inventory transaction type: ${txnType}`);
 }
 
 async function ensureCostMethod(orgId) {
@@ -45,6 +54,53 @@ function aggregateJournalLines(lines) {
   return Array.from(map.values()).map((x) => ({ ...x, debit: round6(x.debit), credit: round6(x.credit) }));
 }
 
+async function buildTransactionSnapshot({ orgId, transactionId, client = null }) {
+  const out = await repo.getTransactionWithLines(client || pool, orgId, transactionId);
+  if (!out) throw new AppError(404, "Transaction not found");
+  const { txn, lines } = out;
+  return {
+    header: {
+      id: txn.id,
+      txnType: txn.txn_type,
+      txnDate: txn.txn_date,
+      periodId: txn.period_id,
+      reference: txn.reference,
+      memo: txn.memo,
+      status2: txn.status2,
+      sourceWarehouse: txn.source_warehouse_id ? {
+        id: txn.source_warehouse_id,
+        code: txn.source_warehouse_code || null,
+        name: txn.source_warehouse_name || null
+      } : null,
+      destWarehouse: txn.dest_warehouse_id ? {
+        id: txn.dest_warehouse_id,
+        code: txn.dest_warehouse_code || null,
+        name: txn.dest_warehouse_name || null
+      } : null
+    },
+    lines: lines.map((l) => ({
+      id: l.id,
+      itemId: l.item_id,
+      sku: l.sku || null,
+      name: l.name || null,
+      quantity: Number(l.quantity || 0),
+      direction: l.direction || null,
+      unitCost: l.unit_cost == null ? null : Number(l.unit_cost),
+      extendedCost: l.extended_cost == null ? null : Number(l.extended_cost)
+    })),
+    valuation_context: {
+      costMethod: await ensureCostMethod(orgId)
+    },
+    related: {
+      journalEntryId: txn.journal_entry_id || null,
+      workflowDocumentId: txn.workflow_document_id || null
+    },
+    meta: {
+      source: "inventory_transactions"
+    }
+  };
+}
+
 async function createDraftTransaction({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
   try {
@@ -59,7 +115,6 @@ async function createDraftTransaction({ orgId, actorUserId, payload }) {
     const lines = payload.lines || [];
     if (!Array.isArray(lines) || !lines.length) throw new AppError(400, "lines[] is required");
 
-    // Basic payload guards for warehouses
     if (txnType === "receipt" && !payload.destWarehouseId) throw new AppError(400, "destWarehouseId is required for receipt");
     if (txnType === "issue" && !payload.sourceWarehouseId) throw new AppError(400, "sourceWarehouseId is required for issue");
     if (txnType === "transfer") {
@@ -116,29 +171,117 @@ async function getTransaction({ orgId, transactionId }) {
   return out;
 }
 
-async function approveTransaction({ orgId, actorUserId, transactionId }) {
+async function submitTransactionForApproval({ orgId, actorUserId, transactionId }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query(
-      `SELECT id, status2 FROM inventory_transactions WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
-      [orgId, transactionId]
-    );
-    if (!rows.length) throw new AppError(404, "Transaction not found");
-    const txn = rows[0];
-    if (txn.status2 !== "draft") throw new AppError(409, "Only draft transactions can be approved");
-    await client.query(
-      `UPDATE inventory_transactions SET status2='approved', approved_by=$3, approved_at=NOW() WHERE organization_id=$1 AND id=$2`,
-      [orgId, transactionId, actorUserId]
-    );
+    const out = await repo.getTransactionWithLines(client, orgId, transactionId);
+    if (!out) throw new AppError(404, "Transaction not found");
+    const { txn } = out;
+    if (txn.status2 !== "draft" && txn.status2 !== "rejected") throw new AppError(409, "Only draft or rejected transactions can be submitted");
+
+    const entityType = getInventoryTxnEntityType(txn.txn_type);
+    const snapshot = await buildTransactionSnapshot({ orgId, transactionId, client });
+    const doc = await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType,
+      entity: txn,
+      workflowDocumentId: txn.workflow_document_id,
+      snapshot,
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await repo.setWorkflowDocumentId(client, orgId, transactionId, workflowDocumentId);
+      }
+    });
+
+    const updated = await repo.setStatus2(client, orgId, transactionId, "submitted", actorUserId);
     await client.query("COMMIT");
-    return { transactionId, status2: "approved" };
+    return { transaction: updated, workflowDocument: doc };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
   } finally {
     client.release();
   }
+}
+
+async function approveTransactionWorkflow({ orgId, actorUserId, transactionId, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const out = await repo.getTransactionWithLines(client, orgId, transactionId);
+    if (!out) throw new AppError(404, "Transaction not found");
+    const { txn } = out;
+    if (!txn.workflow_document_id) throw new AppError(409, "Transaction has no workflow document");
+    if (txn.status2 !== "submitted" && txn.status2 !== "approved") throw new AppError(409, "Only submitted transactions can be approved");
+
+    const doc = await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: getInventoryTxnEntityType(txn.txn_type),
+      workflowDocumentId: txn.workflow_document_id,
+      creatorUserId: txn.created_by,
+      comment,
+      client
+    });
+
+    const updated = await repo.setStatus2(client, orgId, transactionId, "approved", actorUserId);
+    await client.query("COMMIT");
+    return { transaction: updated, workflowDocument: doc };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function rejectTransactionWorkflow({ orgId, actorUserId, transactionId, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const out = await repo.getTransactionWithLines(client, orgId, transactionId);
+    if (!out) throw new AppError(404, "Transaction not found");
+    const { txn } = out;
+    if (!txn.workflow_document_id) throw new AppError(409, "Transaction has no workflow document");
+    if (txn.status2 !== "submitted") throw new AppError(409, "Only submitted transactions can be rejected");
+
+    const doc = await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: getInventoryTxnEntityType(txn.txn_type),
+      workflowDocumentId: txn.workflow_document_id,
+      creatorUserId: txn.created_by,
+      comment,
+      client
+    });
+
+    const updated = await repo.setStatus2(client, orgId, transactionId, "rejected", actorUserId, comment || null);
+    await client.query("COMMIT");
+    return { transaction: updated, workflowDocument: doc };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function assertTransactionApprovalStateAllowsPost({ orgId, transactionId, client = null }) {
+  const out = await repo.getTransactionWithLines(client || pool, orgId, transactionId);
+  if (!out) throw new AppError(404, "Transaction not found");
+  await documentableSvc.assertEntityApprovedForAction({
+    orgId,
+    entityType: getInventoryTxnEntityType(out.txn.txn_type),
+    workflowDocumentId: out.txn.workflow_document_id,
+    actionLabel: "post",
+    client: client || pool
+  });
+}
+
+async function approveTransaction({ orgId, actorUserId, transactionId, comment }) {
+  return approveTransactionWorkflow({ orgId, actorUserId, transactionId, comment });
 }
 
 async function voidTransaction({ orgId, actorUserId, transactionId, reason }) {
@@ -153,12 +296,10 @@ async function voidTransaction({ orgId, actorUserId, transactionId, reason }) {
     const st = rows[0].status2;
     if (st === "posted") throw new AppError(409, "Posted transactions must be reversed, not voided");
     if (st === "voided") return { transactionId, status2: "voided" };
-    await client.query(
-      `UPDATE inventory_transactions SET status2='voided', status='void', voided_by=$3, voided_at=NOW(), void_reason=$4 WHERE organization_id=$1 AND id=$2`,
-      [orgId, transactionId, actorUserId, reason || null]
-    );
+    const updated = await repo.setStatus2(client, orgId, transactionId, "voided", actorUserId, reason || null);
+    await client.query(`UPDATE inventory_transactions SET status='void' WHERE organization_id=$1 AND id=$2`, [orgId, transactionId]);
     await client.query("COMMIT");
-    return { transactionId, status2: "voided" };
+    return { transactionId, status2: updated.status2 || "voided" };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -167,7 +308,7 @@ async function voidTransaction({ orgId, actorUserId, transactionId, reason }) {
   }
 }
 
-async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
+async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypassApprovalCheck = false }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -180,6 +321,10 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
     if (txn.status2 !== "approved") throw new AppError(409, "Only approved transactions can be posted");
     if (txn.journal_entry_id) throw new AppError(409, "Transaction already posted");
 
+    if (!bypassApprovalCheck) {
+      await assertTransactionApprovalStateAllowsPost({ orgId, transactionId, client });
+    }
+
     const { method } = await ensureCostMethod(orgId);
     await assertPeriodOpen(client, orgId, txn.period_id, txn.txn_date);
 
@@ -190,7 +335,7 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
     if (!lineRows.length) throw new AppError(409, "Transaction has no lines");
 
     const itemIds = lineRows.map((l) => l.item_id);
-    const items = await repo.getItemsWithAccounts(orgId, itemIds);
+    const items = await repo.getItemsWithAccounts(orgId, itemIds, client);
     const itemMap = new Map(items.map((r) => [r.item_id, r]));
     for (const l of lineRows) {
       if (!itemMap.has(l.item_id)) throw new AppError(400, `Unknown itemId ${l.item_id}`);
@@ -242,7 +387,6 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
 
         let unitCost = Number(bal.avg_unit_cost);
         let ext = round6(qty * unitCost);
-
         if (method === "FIFO") {
           const r = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, l.item_id, l.id, qty);
           if (!r.ok) throw new AppError(409, `Insufficient FIFO layers for item ${l.item_id}`);
@@ -302,7 +446,6 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
           [orgId, txn.dest_warehouse_id, l.item_id, newDstQty, newDstAvg]
         );
       }
-      // no journal
     } else if (txnType === "adjustment") {
       if (!txn.source_warehouse_id) throw new AppError(400, "sourceWarehouseId is required for adjustment");
       for (const l of lineRows) {
@@ -351,7 +494,6 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
       throw new AppError(400, `Unsupported txnType: ${txnType}`);
     }
 
-    // Post journal (except transfer)
     let postedJournalId = null;
     if (journalLines.length) {
       const agg = aggregateJournalLines(journalLines);
@@ -391,14 +533,12 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId }) {
   }
 }
 
-// Reverse by creating an opposite adjustment transaction and posting it immediately.
 async function reversePostedTransaction({ orgId, actorUserId, transactionId, reason }) {
   const orig = await repo.getTransactionWithLines(orgId, transactionId);
   if (!orig) throw new AppError(404, "Transaction not found");
   if (orig.txn.status2 !== "posted") throw new AppError(409, "Only posted transactions can be reversed");
   if (orig.txn.reversed_txn_id) return { transactionId, reversedTxnId: orig.txn.reversed_txn_id };
 
-  // Construct a reversing adjustment: for receipts -> decrease; issues -> increase; transfer -> swap; adjustment -> invert directions.
   const reverseType = orig.txn.txn_type === "transfer" ? "transfer" : "adjustment";
 
   const draftPayload = {
@@ -414,15 +554,17 @@ async function reversePostedTransaction({ orgId, actorUserId, transactionId, rea
       if (orig.txn.txn_type === "receipt") return { itemId: l.item_id, quantity: q, direction: "decrease" };
       if (orig.txn.txn_type === "issue") return { itemId: l.item_id, quantity: q, direction: "increase", unitCost: Number(l.unit_cost || 0) };
       if (orig.txn.txn_type === "transfer") return { itemId: l.item_id, quantity: q };
-      // adjustment
       const dir = l.direction === "increase" ? "decrease" : "increase";
       return { itemId: l.item_id, quantity: q, direction: dir, unitCost: Number(l.unit_cost || 0) };
     }),
   };
 
   const created = await createDraftTransaction({ orgId, actorUserId, payload: draftPayload });
-  await approveTransaction({ orgId, actorUserId, transactionId: created.transactionId });
-  const posted = await postApprovedTransaction({ orgId, actorUserId, transactionId: created.transactionId });
+  const createdId = created.transactionId;
+
+  await submitTransactionForApproval({ orgId, actorUserId, transactionId: createdId });
+  await approveTransactionWorkflow({ orgId, actorUserId, transactionId: createdId, comment: reason ? `Auto-approved reversal: ${reason}` : "Auto-approved reversal" });
+  const posted = await postApprovedTransaction({ orgId, actorUserId, transactionId: createdId });
 
   await pool.query(
     `UPDATE inventory_transactions SET reversed_txn_id=$3 WHERE organization_id=$1 AND id=$2`,
@@ -437,6 +579,10 @@ module.exports = {
   createDraftTransaction,
   listTransactions,
   getTransaction,
+  submitTransactionForApproval,
+  approveTransactionWorkflow,
+  rejectTransactionWorkflow,
+  assertTransactionApprovalStateAllowsPost,
   approveTransaction,
   postApprovedTransaction,
   voidTransaction,

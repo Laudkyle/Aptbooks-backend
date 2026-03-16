@@ -2,6 +2,7 @@ const { pool } = require("../../db/pool");
 const { AppError } = require("../../shared/errors/AppError");
 const Decimal = require("decimal.js");
 const journalPosting = require("../../interfaces/journalPosting.interface");
+const documentableSvc = require("../../workflow/documents/documentable.service");
 
 // -------------------------
 // Helpers
@@ -166,6 +167,61 @@ async function listPeriodsOverlappingRange(client, orgId, startDate, endDate) {
 // -------------------------
 // Public API
 // -------------------------
+
+async function submitContractForApproval({ orgId, actorUserId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    const obligations = await listObligations(client, orgId, contractId);
+    await documentableSvc.submitEntityForApproval({
+      orgId, actorUserId, entityType: "contract", entity: contract, workflowDocumentId: contract.workflow_document_id,
+      snapshot: { header: contract, lines: obligations, meta: { status: contract.status, transaction_price: contract.transaction_price } },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE ifrs15_contracts SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, contractId, workflowDocumentId]);
+      }
+    });
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "WORKFLOW_SUBMITTED", meta: {} });
+    await client.query("COMMIT");
+    return getContract({ orgId, contractId });
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally { client.release(); }
+}
+
+async function approveContractWorkflow({ orgId, actorUserId, contractId, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    if (!contract.workflow_document_id) throw new AppError(409, "Contract has no workflow document");
+    const out = await documentableSvc.approveEntityDocument({ orgId, actorUserId, entityType: "contract", workflowDocumentId: contract.workflow_document_id, creatorUserId: contract.created_by, comment, client });
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "WORKFLOW_APPROVED", meta: { comment: comment || null } });
+    await client.query("COMMIT");
+    return out;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally { client.release(); }
+}
+
+async function rejectContractWorkflow({ orgId, actorUserId, contractId, comment }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    if (!contract.workflow_document_id) throw new AppError(409, "Contract has no workflow document");
+    const out = await documentableSvc.rejectEntityDocument({ orgId, actorUserId, entityType: "contract", workflowDocumentId: contract.workflow_document_id, creatorUserId: contract.created_by, comment, client });
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "WORKFLOW_REJECTED", meta: { comment: comment || null } });
+    await client.query("COMMIT");
+    return out;
+  } catch (e) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw e;
+  } finally { client.release(); }
+}
 
 async function getSettingsPublic({ orgId }) {
   return getSettings(pool, orgId); // not used (kept for parity)
@@ -370,6 +426,7 @@ async function activateContract({ orgId, actorUserId, contractId, payload }) {
     const settings = await getSettingsOrThrow(client, orgId);
     const contract = await getContractOrThrow(client, orgId, contractId);
     if (contract.status !== "draft") throw new AppError(409, "Contract already activated");
+    await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: "contract", workflowDocumentId: contract.workflow_document_id, client, actionLabel: "activate" });
 
     const obligations = await listObligations(client, orgId, contractId);
     if (!obligations.length) throw new AppError(409, "Contract has no performance obligations");
@@ -1832,6 +1889,9 @@ module.exports = {
   upsertSettings,
   listContracts,
   createContract,
+  submitContractForApproval,
+  approveContractWorkflow,
+  rejectContractWorkflow,
   getContract,
   addObligation,
   activateContract,

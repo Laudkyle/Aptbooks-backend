@@ -2,6 +2,8 @@ const { pool } = require("../../db/pool");
 const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { normalizeCode, normalizeStatus } = require("../_util");
+const { withTransaction } = require("../../db/tx");
+const documentableSvc = require("../../workflow/documents/documentable.service");
 
 // Status constants matching database schema and frontend
 const PROJECT_STATUS = ["draft", "active", "on_hold", "completed", "archived"];
@@ -64,6 +66,39 @@ function assertName(name, field = "name") {
     throw new AppError(400, `${field} must be at least 2 characters`);
   }
 }
+
+async function submitProjectForApproval({ orgId, actorUserId, projectId, req }) {
+  return withTransaction(async (client) => {
+    const project = await getProject({ orgId, id: projectId });
+    if (!project) throw new AppError(404, "Project not found");
+    await documentableSvc.submitEntityForApproval({
+      orgId, actorUserId, entityType: "project", entity: project, workflowDocumentId: project.workflow_document_id,
+      snapshot: { header: project, phases: project.phases || [], lines: (project.phases || []).flatMap((p) => p.tasks || []), meta: { status: project.status } },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE projects SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, projectId, workflowDocumentId]);
+      }
+    });
+    return fetchProjectOrThrow({ orgId, projectId });
+  });
+}
+
+async function approveProjectWorkflow({ orgId, actorUserId, projectId, comment, req }) {
+  return withTransaction(async (client) => {
+    const project = await fetchProjectOrThrow({ orgId, projectId });
+    if (!project.workflow_document_id) throw new AppError(409, "Project has no workflow document");
+    return documentableSvc.approveEntityDocument({ orgId, actorUserId, entityType: "project", workflowDocumentId: project.workflow_document_id, creatorUserId: null, comment, client });
+  });
+}
+
+async function rejectProjectWorkflow({ orgId, actorUserId, projectId, comment, req }) {
+  return withTransaction(async (client) => {
+    const project = await fetchProjectOrThrow({ orgId, projectId });
+    if (!project.workflow_document_id) throw new AppError(409, "Project has no workflow document");
+    return documentableSvc.rejectEntityDocument({ orgId, actorUserId, entityType: "project", workflowDocumentId: project.workflow_document_id, creatorUserId: null, comment, client });
+  });
+}
+
 
 // ============================
 // Projects
@@ -167,6 +202,9 @@ async function updateProject({ orgId, id, code, name, description, status, start
   const n = name !== undefined ? (assertName(name), name.trim()) : current.name;
   const desc = description !== undefined ? description : current.description;
   const st = status !== undefined ? normalizeStatus(status, PROJECT_STATUS, "status") : current.status;
+  if (st === "active" && current.status !== "active") {
+    await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: "project", workflowDocumentId: current.workflow_document_id, actionLabel: "activate", client: pool });
+  }
   
   const { rows } = await pool.query(
     `UPDATE projects SET 
@@ -569,6 +607,9 @@ module.exports = {
   createProject,
   updateProject,
   archiveProject,
+  submitProjectForApproval,
+  approveProjectWorkflow,
+  rejectProjectWorkflow,
   
   // Phases
   listPhases,

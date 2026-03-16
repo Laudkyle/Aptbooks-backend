@@ -41,6 +41,31 @@ router.post("/", requirePermission("reporting.projects.manage"), idempotency({ r
   }
 });
 
+
+router.post("/:projectId/submit-for-approval", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.submitProjectForApproval({ orgId, actorUserId, projectId: req.params.projectId, req });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.post("/:projectId/approve", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.approveProjectWorkflow({ orgId, actorUserId, projectId: req.params.projectId, comment: req.body?.comment || null, req });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.post("/:projectId/reject", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: actorUserId } = req.user;
+    const data = await svc.rejectProjectWorkflow({ orgId, actorUserId, projectId: req.params.projectId, comment: req.body?.comment || null, req });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 // Phases
 router.post("/:projectId/phases", requirePermission("reporting.projects.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {

@@ -3,9 +3,25 @@ const repo = require("./budgets.repository");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const { validateDimensionJson } = require("../dimensions/dimensions.validator");
 const { parseCsvText } = require("../../shared/utils/csv");
+const { pool } = require("../../db/pool");
+const { withTransaction } = require("../../db/tx");
+const documentableSvc = require("../../workflow/documents/documentable.service");
 
 function assertName(name) {
   if (!name || typeof name !== "string") throw new AppError(400, "name is required");
+}
+
+
+async function getBudgetVersionSnapshot({ orgId, budgetId, versionId, client = pool }) {
+  const version = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!version) throw new AppError(404, "Budget version not found");
+  const { rows: budgetRows } = await client.query(`SELECT * FROM budgets WHERE organization_id=$1 AND id=$2 LIMIT 1`, [orgId, budgetId]);
+  const { rows: lines } = await client.query(`SELECT * FROM budget_lines WHERE organization_id=$1 AND budget_version_id=$2 ORDER BY created_at ASC`, [orgId, versionId]);
+  return {
+    version: { ...version, budget_name: budgetRows[0]?.name || null, budget_status: budgetRows[0]?.status || null },
+    budget: budgetRows[0] || null,
+    lines
+  };
 }
 
 
@@ -205,22 +221,38 @@ function assertEditableWorkflow(version) {
 }
 
 async function submitVersion({ orgId, budgetId, versionId, actorUserId, req }) {
-  const v = await repo.getVersion({ orgId, budgetId, versionId });
-  if (!v) throw new AppError(404, "Budget version not found");
-  if (v.workflow_status !== "draft" && v.workflow_status !== "rejected") {
-    throw new AppError(409, "Only draft/rejected versions can be submitted");
-  }
-  const updated = await repo.updateVersionWorkflow({
-    orgId,
-    budgetId,
-    versionId,
-    patch: {
-      workflowStatus: "in_review",
-      submittedAt: new Date().toISOString(),
-      submittedByUserId: actorUserId,
-      rejectionReason: null,
-    },
+  const updated = await withTransaction(async (client) => {
+    const { version, budget, lines } = await getBudgetVersionSnapshot({ orgId, budgetId, versionId, client });
+    if (!["draft", "rejected"].includes(version.workflow_status)) {
+      throw new AppError(409, "Only draft/rejected versions can be submitted");
+    }
+
+    await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "budget",
+      entity: version,
+      workflowDocumentId: version.workflow_document_id,
+      snapshot: { header: version, lines, related: { budget }, meta: { workflow_status: version.workflow_status, status: version.status } },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE budget_versions SET workflow_document_id=$4, updated_at=NOW() WHERE organization_id=$1 AND budget_id=$2 AND id=$3`, [orgId, budgetId, versionId, workflowDocumentId]);
+      }
+    });
+
+    return repo.updateVersionWorkflow({
+      orgId,
+      budgetId,
+      versionId,
+      patch: {
+        workflowStatus: "in_review",
+        submittedAt: new Date().toISOString(),
+        submittedByUserId: actorUserId,
+        rejectionReason: null,
+      },
+    });
   });
+  const before = await repo.getVersion({ orgId, budgetId, versionId });
   await writeAudit({
     organizationId: orgId,
     actorUserId,
@@ -229,65 +261,49 @@ async function submitVersion({ orgId, budgetId, versionId, actorUserId, req }) {
     entityId: versionId,
     ip: req.ip,
     userAgent: req.headers["user-agent"],
-    before: v,
+    before,
     after: updated,
   });
   return updated;
 }
 
 async function approveVersion({ orgId, budgetId, versionId, actorUserId, req }) {
-  const v = await repo.getVersion({ orgId, budgetId, versionId });
-  if (!v) throw new AppError(404, "Budget version not found");
-  if (v.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be approved");
-  const updated = await repo.updateVersionWorkflow({
-    orgId,
-    budgetId,
-    versionId,
-    patch: {
-      workflowStatus: "approved",
-      approvedAt: new Date().toISOString(),
-      approvedByUserId: actorUserId,
-    },
+  const updated = await withTransaction(async (client) => {
+    const version = await repo.getVersion({ orgId, budgetId, versionId });
+    if (!version) throw new AppError(404, "Budget version not found");
+    if (version.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be approved");
+    await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "budget",
+      workflowDocumentId: version.workflow_document_id,
+      creatorUserId: version.created_by_user_id,
+      client
+    });
+    return repo.updateVersionWorkflow({
+      orgId, budgetId, versionId, patch: { workflowStatus: "approved", approvedAt: new Date().toISOString(), approvedByUserId: actorUserId }
+    });
   });
   await writeAudit({
-    organizationId: orgId,
-    actorUserId,
-    action: "reporting.budget.version.approve",
-    entityType: "budget_version",
-    entityId: versionId,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
-    before: v,
-    after: updated,
+    organizationId: orgId, actorUserId, action: "reporting.budget.version.approve", entityType: "budget_version", entityId: versionId, ip: req.ip, userAgent: req.headers["user-agent"], before: null, after: updated,
   });
   return updated;
 }
 
 async function rejectVersion({ orgId, budgetId, versionId, reason, actorUserId, req }) {
-  const v = await repo.getVersion({ orgId, budgetId, versionId });
-  if (!v) throw new AppError(404, "Budget version not found");
-  if (v.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be rejected");
-  const updated = await repo.updateVersionWorkflow({
-    orgId,
-    budgetId,
-    versionId,
-    patch: {
-      workflowStatus: "rejected",
-      rejectedAt: new Date().toISOString(),
-      rejectedByUserId: actorUserId,
-      rejectionReason: reason || "Rejected",
-    },
+  const updated = await withTransaction(async (client) => {
+    const version = await repo.getVersion({ orgId, budgetId, versionId });
+    if (!version) throw new AppError(404, "Budget version not found");
+    if (version.workflow_status !== "in_review") throw new AppError(409, "Only in_review versions can be rejected");
+    await documentableSvc.rejectEntityDocument({
+      orgId, actorUserId, entityType: "budget", workflowDocumentId: version.workflow_document_id, creatorUserId: version.created_by_user_id, comment: reason || "Rejected", client
+    });
+    return repo.updateVersionWorkflow({
+      orgId, budgetId, versionId, patch: { workflowStatus: "rejected", rejectedAt: new Date().toISOString(), rejectedByUserId: actorUserId, rejectionReason: reason || "Rejected" }
+    });
   });
   await writeAudit({
-    organizationId: orgId,
-    actorUserId,
-    action: "reporting.budget.version.reject",
-    entityType: "budget_version",
-    entityId: versionId,
-    ip: req.ip,
-    userAgent: req.headers["user-agent"],
-    before: v,
-    after: updated,
+    organizationId: orgId, actorUserId, action: "reporting.budget.version.reject", entityType: "budget_version", entityId: versionId, ip: req.ip, userAgent: req.headers["user-agent"], before: null, after: updated,
   });
   return updated;
 }
@@ -490,8 +506,8 @@ async function finalizeVersion({ orgId, budgetId, versionId, actorUserId, req })
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
   if (v.status !== "draft") throw new AppError(409, "Only draft versions can be finalized");
+  await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: "budget", workflowDocumentId: v.workflow_document_id, client: pool, actionLabel: "publish" });
 
-  const { pool } = require("../../db/pool");
   const { rows } = await pool.query(
     `
     UPDATE budget_versions

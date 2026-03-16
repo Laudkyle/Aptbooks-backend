@@ -43,6 +43,42 @@ router.put(
 );
 
 // Contracts
+router.post(
+  "/contracts/:contractId/submit-for-approval",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.submitContractForApproval({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/contracts/:contractId/approve",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.approveContractWorkflow({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, comment: req.body?.comment || null });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/contracts/:contractId/reject",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.rejectContractWorkflow({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, comment: req.body?.comment || null });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
 router.get(
   "/contracts",
   requirePermission("compliance.ifrs15.read"),

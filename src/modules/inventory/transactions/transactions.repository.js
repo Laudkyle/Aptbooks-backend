@@ -1,7 +1,13 @@
 const { pool } = require("../../../db/pool");
 
-async function getItemsWithAccounts(orgId, itemIds) {
-  const { rows } = await pool.query(
+function resolveDb(a, b, c) {
+  if (a && typeof a.query === "function") return { db: a, orgId: b, txnId: c };
+  return { db: pool, orgId: a, txnId: b };
+}
+
+async function getItemsWithAccounts(orgId, itemIds, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT i.id AS item_id, i.sku, i.name,
             c.id AS category_id,
             c.inventory_account_id, c.cogs_account_id, c.adjustment_account_id, c.clearing_account_id
@@ -88,9 +94,17 @@ async function setStatus2(client, orgId, txnId, status2, actorUserId, reason) {
   const fields = [];
   const params = [orgId, txnId, status2];
   let i = 4;
+  if (status2 === 'submitted') {
+    fields.push(`submitted_by=$${i++}`, `submitted_at=NOW()`);
+    params.push(actorUserId || null);
+  }
   if (status2 === 'approved') {
     fields.push(`approved_by=$${i++}`, `approved_at=NOW()`);
     params.push(actorUserId || null);
+  }
+  if (status2 === 'rejected') {
+    fields.push(`rejected_by=$${i++}`, `rejected_at=NOW()`, `rejection_reason=$${i++}`);
+    params.push(actorUserId || null, reason || null);
   }
   if (status2 === 'voided') {
     fields.push(`voided_by=$${i++}`, `voided_at=NOW()`, `void_reason=$${i++}`);
@@ -106,27 +120,39 @@ async function setStatus2(client, orgId, txnId, status2, actorUserId, reason) {
   return rows[0] || null;
 }
 
-async function getTransactionWithLines(client, orgId, txnId) {
-  const { rows: txRows } = await client.query(
-    `SELECT * FROM inventory_transactions WHERE organization_id=$1 AND id=$2`,
+async function getTransactionWithLines(a, b, c) {
+  const { db, orgId, txnId } = resolveDb(a, b, c);
+  const { rows: txRows } = await db.query(
+    `SELECT it.*,
+            sw.code AS source_warehouse_code, sw.name AS source_warehouse_name,
+            dw.code AS dest_warehouse_code, dw.name AS dest_warehouse_name
+       FROM inventory_transactions it
+       LEFT JOIN warehouses sw ON sw.id = it.source_warehouse_id
+       LEFT JOIN warehouses dw ON dw.id = it.dest_warehouse_id
+      WHERE it.organization_id=$1 AND it.id=$2`,
     [orgId, txnId]
   );
   if (!txRows.length) return null;
-  const { rows: lineRows } = await client.query(
-    `SELECT * FROM inventory_transaction_lines WHERE transaction_id=$1 ORDER BY created_at ASC`,
+  const { rows: lineRows } = await db.query(
+    `SELECT l.*, i.sku, i.name
+       FROM inventory_transaction_lines l
+       JOIN inventory_items i ON i.id = l.item_id
+      WHERE l.transaction_id=$1
+      ORDER BY l.created_at ASC`,
     [txnId]
   );
   return { txn: txRows[0], lines: lineRows };
 }
 
-async function listTransactions(orgId, query = {}) {
+async function listTransactions(orgId, query = {}, client = null) {
+  const db = client || pool;
   const params = [orgId];
   const where = ['organization_id=$1'];
   let i = 2;
   if (query.status2) { where.push(`status2=$${i++}`); params.push(query.status2); }
   if (query.txnType) { where.push(`txn_type=$${i++}`); params.push(query.txnType); }
   if (query.periodId) { where.push(`period_id=$${i++}`); params.push(query.periodId); }
-  const { rows } = await pool.query(
+  const { rows } = await db.query(
     `SELECT * FROM inventory_transactions WHERE ${where.join(' AND ')} ORDER BY txn_date DESC, created_at DESC`,
     params
   );
@@ -138,6 +164,14 @@ async function linkJournal(client, txnId, journalId) {
     `UPDATE inventory_transactions SET journal_entry_id=$2 WHERE id=$1`,
     [txnId, journalId]
   );
+}
+
+async function setWorkflowDocumentId(client, orgId, txnId, workflowDocumentId) {
+  const { rows } = await client.query(
+    `UPDATE inventory_transactions SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, txnId, workflowDocumentId]
+  );
+  return rows[0] || null;
 }
 
 async function createFifoLayer(client, orgId, warehouseId, itemId, receivedTxnLineId, qty, unitCost) {
@@ -187,6 +221,7 @@ module.exports = {
   findTransactionByIdempotency,
   insertTxnLine,
   linkJournal,
+  setWorkflowDocumentId,
   createFifoLayer,
   consumeFifoLayers,
   setStatus2,

@@ -1,6 +1,7 @@
 const repo = require("./leave.repository");
 const { AppError } = require("../../../shared/errors/AppError");
 const { withTransaction } = require("../../../db/tx");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 function assertDateOrder(start, end) {
   if (new Date(start) > new Date(end)) throw new AppError(400, "INVALID_DATES", "start_date must be <= end_date");
@@ -129,7 +130,37 @@ async function submitLeaveRequest({ orgId, actorUserId, requestId, audit, writeA
   const updated = await withTransaction(async (client) => {
     const r = await repo.getLeaveRequest(orgId, requestId, client, true);
     if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
-    if (r.status !== "draft") throw new AppError(409, "BAD_STATE", "Only draft leave requests can be submitted");
+    if (!["draft", "rejected"].includes(r.status)) throw new AppError(409, "BAD_STATE", "Only draft/rejected leave requests can be submitted");
+
+    await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "leave_request",
+      entity: r,
+      workflowDocumentId: r.workflow_document_id || r.document_id || null,
+      snapshot: {
+        header: r,
+        lines: [],
+        related: {
+          employee_id: r.employee_id,
+          leave_type_id: r.leave_type_id
+        },
+        meta: {
+          status: r.status,
+          start_date: r.start_date,
+          end_date: r.end_date,
+          days: r.days
+        }
+      },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(
+          `UPDATE hr_leave_requests SET workflow_document_id=$3, document_id=COALESCE(document_id, $3), updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+          [orgId, requestId, workflowDocumentId]
+        );
+      }
+    });
+
     return repo.setLeaveRequestStatus(orgId, requestId, "submitted", client);
   });
 
@@ -152,6 +183,16 @@ async function approveLeaveRequest({ orgId, actorUserId, requestId, audit, write
     const req = await repo.getLeaveRequest(orgId, requestId, client, true);
     if (!req) throw new AppError(404, "NOT_FOUND", "Leave request not found");
     if (req.status !== "submitted") throw new AppError(409, "BAD_STATE", "Only submitted requests can be approved");
+
+    if (!req.workflow_document_id && !req.document_id) throw new AppError(409, "BAD_STATE", "Leave request has no workflow document");
+    await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "leave_request",
+      workflowDocumentId: req.workflow_document_id || req.document_id,
+      creatorUserId: req.created_by_user_id,
+      client
+    });
 
     const lt = await repo.getLeaveType(orgId, req.leave_type_id);
     if (!lt) throw new AppError(409, "CONFIG", "Leave type missing");
@@ -192,6 +233,18 @@ async function rejectLeaveRequest({ orgId, actorUserId, requestId, payload, audi
     const r = await repo.getLeaveRequest(orgId, requestId, client, true);
     if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
     if (r.status !== "submitted") throw new AppError(409, "BAD_STATE", "Only submitted requests can be rejected");
+
+    if (!r.workflow_document_id && !r.document_id) throw new AppError(409, "BAD_STATE", "Leave request has no workflow document");
+    await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "leave_request",
+      workflowDocumentId: r.workflow_document_id || r.document_id,
+      creatorUserId: r.created_by_user_id,
+      comment: payload?.reason || "Leave rejected",
+      client
+    });
+
     await repo.insertLeaveLedger(orgId, {
       employeeId: r.employee_id,
       leaveTypeId: r.leave_type_id,

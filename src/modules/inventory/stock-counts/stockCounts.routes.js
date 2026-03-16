@@ -57,13 +57,19 @@ router.post("/:id/submit", idempotency({ required: true }), requirePermission("i
 
 router.post("/:id/approve", idempotency({ required: true }), requirePermission("inventory.transactions.approve"), async (req, res, next) => {
   try {
-    res.json(await svc.approveStockCount({ orgId: req.user.organization_id, actorUserId: req.user.id, id: req.params.id }));
+    res.json(await svc.approveStockCountWorkflow({ orgId: req.user.organization_id, actorUserId: req.user.id, id: req.params.id, comment: req.body?.comment }));
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/reject", idempotency({ required: true }), requirePermission("inventory.transactions.approve"), async (req, res, next) => {
+  try {
+    res.json(await svc.rejectStockCountWorkflow({ orgId: req.user.organization_id, actorUserId: req.user.id, id: req.params.id, comment: req.body?.comment }));
   } catch (e) { next(e); }
 });
 
 router.post("/:id/post", idempotency({ required: true }), requirePermission("inventory.transactions.post"), async (req, res, next) => {
   try {
-    res.json(await svc.postStockCountAdjustments({ orgId: req.user.organization_id, actorUserId: req.user.id, id: req.params.id }));
+    res.json(await svc.postStockCountAdjustments({ orgId: req.user.organization_id, actorUserId: req.user.id, id: req.params.id, payload: req.body || {} }));
   } catch (e) { next(e); }
 });
 

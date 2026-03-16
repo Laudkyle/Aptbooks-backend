@@ -1,5 +1,7 @@
 const { pool } = require("../../db/pool");
 const { AppError } = require("../../shared/errors/AppError");
+const { withTransaction } = require("../../db/tx");
+const documentableSvc = require("../../workflow/documents/documentable.service");
 
 function assertIsoDate(d, field) {
   if (!d || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(d)) {
@@ -51,8 +53,6 @@ async function vatSummary({ orgId, fromDate, toDate }) {
     netTaxPayable: Number((outputTax - inputTax).toFixed(2))
   };
 }
-
-module.exports = { vatSummary, vatReturn, listReturns };
 
 // ============================================================
 // Stage 6: VAT/GST returns (box-based) + persistence
@@ -199,6 +199,191 @@ async function vatReturn({ orgId, userId, fromDate, toDate, templateCode }) {
   return { return_id: saved[0]?.id, ...payload };
 }
 
+
+async function getReturnById({ orgId, returnId, client = pool }) {
+  const { rows } = await client.query(
+    `
+    SELECT
+      tr.*,
+      tt.code AS template_code,
+      tt.name AS template_name
+    FROM tax_returns tr
+    LEFT JOIN tax_return_templates tt ON tt.id = tr.template_id
+    WHERE tr.organization_id=$1 AND tr.id=$2
+    LIMIT 1
+    `,
+    [orgId, returnId]
+  );
+  return rows[0] || null;
+}
+
+function buildTaxReturnSnapshot(tr) {
+  const payload = tr.payload_json || {};
+  return {
+    header: {
+      id: tr.id,
+      tax_type: tr.tax_type,
+      from_date: tr.from_date,
+      to_date: tr.to_date,
+      status: tr.status,
+      workflow_status: tr.workflow_status,
+      template_id: tr.template_id,
+      template_code: tr.template_code || null,
+      template_name: tr.template_name || null,
+      created_at: tr.created_at,
+      finalized_at: tr.finalized_at
+    },
+    lines: Array.isArray(payload.boxes) ? payload.boxes : [],
+    totals: payload.totals || {},
+    related: {
+      template: tr.template_id ? { id: tr.template_id, code: tr.template_code || null, name: tr.template_name || null } : null
+    },
+    meta: {
+      payload_json: payload
+    }
+  };
+}
+
+async function submitReturnForApproval({ orgId, actorUserId, returnId }) {
+  return withTransaction(async (client) => {
+    const tr = await getReturnById({ orgId, returnId, client });
+    if (!tr) throw new AppError(404, "Tax return not found");
+    if (tr.status === "finalized") throw new AppError(409, "Finalized tax returns cannot be submitted");
+    if (!["draft", "voided"].includes(tr.status)) throw new AppError(409, "Only draft/voided tax returns can be submitted");
+    if (!["draft", "rejected"].includes(tr.workflow_status || "draft")) throw new AppError(409, "Only draft/rejected tax returns can be submitted for approval");
+
+    await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: "tax_return",
+      entity: tr,
+      workflowDocumentId: tr.workflow_document_id,
+      snapshot: buildTaxReturnSnapshot(tr),
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(
+          `UPDATE tax_returns
+              SET workflow_document_id=$3,
+                  workflow_status='submitted',
+                  submitted_at=NOW(),
+                  submitted_by_user_id=$4,
+                  approved_at=NULL,
+                  approved_by_user_id=NULL,
+                  rejected_at=NULL,
+                  rejected_by_user_id=NULL,
+                  rejection_reason=NULL
+            WHERE organization_id=$1 AND id=$2`,
+          [orgId, returnId, workflowDocumentId, actorUserId]
+        );
+      }
+    });
+
+    const { rows } = await client.query(
+      `UPDATE tax_returns
+          SET workflow_status='submitted',
+              submitted_at=NOW(),
+              submitted_by_user_id=$3,
+              approved_at=NULL,
+              approved_by_user_id=NULL,
+              rejected_at=NULL,
+              rejected_by_user_id=NULL,
+              rejection_reason=NULL
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      [orgId, returnId, actorUserId]
+    );
+    return rows[0];
+  });
+}
+
+async function approveReturnWorkflow({ orgId, actorUserId, returnId, comment }) {
+  return withTransaction(async (client) => {
+    const tr = await getReturnById({ orgId, returnId, client });
+    if (!tr) throw new AppError(404, "Tax return not found");
+    if (!tr.workflow_document_id) throw new AppError(409, "Tax return has no workflow document");
+
+    await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "tax_return",
+      workflowDocumentId: tr.workflow_document_id,
+      creatorUserId: tr.created_by || null,
+      comment: comment || null,
+      client
+    });
+
+    const { rows } = await client.query(
+      `UPDATE tax_returns
+          SET workflow_status='approved',
+              approved_at=NOW(),
+              approved_by_user_id=$3,
+              rejected_at=NULL,
+              rejected_by_user_id=NULL,
+              rejection_reason=NULL
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      [orgId, returnId, actorUserId]
+    );
+    return rows[0];
+  });
+}
+
+async function rejectReturnWorkflow({ orgId, actorUserId, returnId, comment }) {
+  return withTransaction(async (client) => {
+    const tr = await getReturnById({ orgId, returnId, client });
+    if (!tr) throw new AppError(404, "Tax return not found");
+    if (!tr.workflow_document_id) throw new AppError(409, "Tax return has no workflow document");
+
+    await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "tax_return",
+      workflowDocumentId: tr.workflow_document_id,
+      creatorUserId: tr.created_by || null,
+      comment: comment || null,
+      client
+    });
+
+    const { rows } = await client.query(
+      `UPDATE tax_returns
+          SET workflow_status='rejected',
+              rejected_at=NOW(),
+              rejected_by_user_id=$3,
+              rejection_reason=$4
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      [orgId, returnId, actorUserId, comment || null]
+    );
+    return rows[0];
+  });
+}
+
+async function finalizeReturn({ orgId, actorUserId, returnId }) {
+  return withTransaction(async (client) => {
+    const tr = await getReturnById({ orgId, returnId, client });
+    if (!tr) throw new AppError(404, "Tax return not found");
+    if (tr.status === "finalized") throw new AppError(409, "Tax return is already finalized");
+    if (tr.status === "voided") throw new AppError(409, "Voided tax returns cannot be finalized");
+
+    await documentableSvc.assertEntityApprovedForAction({
+      orgId,
+      entityType: "tax_return",
+      workflowDocumentId: tr.workflow_document_id,
+      client,
+      actionLabel: "finalize"
+    });
+
+    const { rows } = await client.query(
+      `UPDATE tax_returns
+          SET status='finalized', finalized_at=NOW(), finalized_by=$3
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      [orgId, returnId, actorUserId]
+    );
+    return rows[0];
+  });
+}
+
 async function listReturns({ orgId, taxType, fromDate, toDate }) {
   const t = taxType || "VAT";
   if (!['VAT','GST','SALES'].includes(t)) throw new AppError(400, "taxType must be VAT, GST, or SALES");
@@ -224,6 +409,8 @@ async function listReturns({ orgId, taxType, fromDate, toDate }) {
       tr.from_date,
       tr.to_date,
       tr.status,
+      tr.workflow_status,
+      tr.workflow_document_id,
       tr.created_at,
       tr.finalized_at,
       tr.template_id
@@ -242,8 +429,21 @@ async function listReturns({ orgId, taxType, fromDate, toDate }) {
     from: r.from_date,
     to: r.to_date,
     status: r.status,
+    workflow_status: r.workflow_status,
+    workflow_document_id: r.workflow_document_id,
     created_at: r.created_at,
     finalized_at: r.finalized_at,
     template_id: r.template_id
   }));
 }
+
+module.exports = {
+  vatSummary,
+  vatReturn,
+  listReturns,
+  getReturnById,
+  submitReturnForApproval,
+  approveReturnWorkflow,
+  rejectReturnWorkflow,
+  finalizeReturn
+};

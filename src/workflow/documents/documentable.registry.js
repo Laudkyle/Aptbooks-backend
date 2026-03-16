@@ -68,6 +68,156 @@ const registry = {
     title: (entity) => `Payment In ${entity.receipt_no || entity.id}`,
     description: (entity) => entity.memo || null,
     versionFilename: (entity) => `payment-in-${entity.receipt_no || entity.id}.json`
+  },
+  stock_adjustment: {
+    entityType: "stock_adjustment",
+    documentTypeCode: "STOCK_ADJUSTMENT",
+    documentTypeName: "Stock Adjustment",
+    noun: "stock adjustment",
+    blockedActionLabel: "post",
+    title: (entity) => `Stock Adjustment ${entity.reference || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `stock-adjustment-${entity.id}.json`
+  },
+  stock_transfer: {
+    entityType: "stock_transfer",
+    documentTypeCode: "STOCK_TRANSFER",
+    documentTypeName: "Stock Transfer",
+    noun: "stock transfer",
+    blockedActionLabel: "post",
+    title: (entity) => `Stock Transfer ${entity.reference || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `stock-transfer-${entity.id}.json`
+  },
+  stock_issue: {
+    entityType: "stock_issue",
+    documentTypeCode: "STOCK_ISSUE",
+    documentTypeName: "Stock Issue",
+    noun: "stock issue",
+    blockedActionLabel: "post",
+    title: (entity) => `Stock Issue ${entity.reference || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `stock-issue-${entity.id}.json`
+  },
+  stock_receive: {
+    entityType: "stock_receive",
+    documentTypeCode: "STOCK_RECEIVE",
+    documentTypeName: "Stock Receive",
+    noun: "stock receipt",
+    blockedActionLabel: "post",
+    title: (entity) => `Stock Receive ${entity.reference || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `stock-receive-${entity.id}.json`
+  },
+  stock_count: {
+    entityType: "stock_count",
+    documentTypeCode: "STOCK_COUNT",
+    documentTypeName: "Stock Count",
+    noun: "stock count",
+    blockedActionLabel: "post",
+    title: (entity) => `Stock Count ${entity.reference || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `stock-count-${entity.id}.json`
+  },
+  leave_request: {
+    entityType: "leave_request",
+    documentTypeCode: "LEAVE_REQUEST",
+    documentTypeName: "Leave Request",
+    noun: "leave request",
+    blockedActionLabel: "approve",
+    title: (entity) => `Leave Request ${entity.employee_no || entity.id}`,
+    description: (entity) => entity.reason || null,
+    versionFilename: (entity) => `leave-request-${entity.id}.json`
+  },
+  payslip: {
+    entityType: "payslip",
+    documentTypeCode: "PAYSLIP",
+    documentTypeName: "Payslip",
+    noun: "payslip",
+    blockedActionLabel: "post",
+    title: (entity) => `Payroll Run ${entity.id}`,
+    description: (entity) => `Payroll run for period ${entity.period_id}`,
+    versionFilename: (entity) => `payroll-run-${entity.id}.json`
+  },
+  budget: {
+    entityType: "budget",
+    documentTypeCode: "BUDGET",
+    documentTypeName: "Budget",
+    noun: "budget",
+    blockedActionLabel: "publish",
+    title: (entity) => `Budget ${entity.budget_name || entity.name || entity.id} v${entity.version_no}`,
+    description: (entity) => entity.name || null,
+    versionFilename: (entity) => `budget-version-${entity.id}.json`
+  },
+  forecast: {
+    entityType: "forecast",
+    documentTypeCode: "FORECAST",
+    documentTypeName: "Forecast",
+    noun: "forecast",
+    blockedActionLabel: "publish",
+    title: (entity) => `Forecast ${entity.forecast_name || entity.name || entity.id} v${entity.version_no}`,
+    description: (entity) => entity.name || null,
+    versionFilename: (entity) => `forecast-version-${entity.id}.json`
+  },
+  project: {
+    entityType: "project",
+    documentTypeCode: "PROJECT",
+    documentTypeName: "Project",
+    noun: "project",
+    blockedActionLabel: "activate",
+    title: (entity) => `Project ${entity.code || entity.name || entity.id}`,
+    description: (entity) => entity.description || null,
+    versionFilename: (entity) => `project-${entity.id}.json`
+  },
+  contract: {
+    entityType: "contract",
+    documentTypeCode: "CONTRACT",
+    documentTypeName: "Contract",
+    noun: "contract",
+    blockedActionLabel: "activate",
+    title: (entity) => `Contract ${entity.code || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `contract-${entity.id}.json`
+  },
+  tax_invoice: {
+    entityType: "tax_invoice",
+    documentTypeCode: "TAX_INVOICE",
+    documentTypeName: "Tax Invoice",
+    noun: "tax invoice",
+    blockedActionLabel: "issue",
+    title: (entity) => `Tax Invoice ${entity.invoice_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `tax-invoice-${entity.invoice_no || entity.id}.json`
+  },
+  tax_credit: {
+    entityType: "tax_credit",
+    documentTypeCode: "TAX_CREDIT",
+    documentTypeName: "Tax Credit",
+    noun: "tax credit",
+    blockedActionLabel: "issue",
+    title: (entity) => `Tax Credit ${entity.credit_note_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `tax-credit-${entity.credit_note_no || entity.id}.json`
+  },
+  tax_return: {
+    entityType: "tax_return",
+    documentTypeCode: "TAX_RETURN",
+    documentTypeName: "Tax Return",
+    noun: "tax return",
+    blockedActionLabel: "finalize",
+    title: (entity) => `Tax Return ${entity.tax_type || 'TAX'} ${entity.from_date || entity.from || ''} to ${entity.to_date || entity.to || ''}`.trim(),
+    description: (entity) => entity.template_name || entity.template_code || null,
+    versionFilename: (entity) => `tax-return-${entity.tax_type || 'tax'}-${entity.from_date || entity.from || entity.id}-${entity.to_date || entity.to || ''}.json`.replace(/\s+/g, '-')
+  },
+  receipt: {
+    entityType: "receipt",
+    documentTypeCode: "RECEIPT",
+    documentTypeName: "Receipt",
+    noun: "receipt",
+    blockedActionLabel: "post",
+    title: (entity) => `Receipt ${entity.receipt_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `receipt-${entity.receipt_no || entity.id}.json`
   }
 };
 

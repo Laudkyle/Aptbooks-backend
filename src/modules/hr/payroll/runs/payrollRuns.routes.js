@@ -60,6 +60,46 @@ router.post(
   }
 );
 
+
+router.post(
+  "/:id/submit-for-approval",
+  idempotency({ required: true }),
+  requirePermission("hr.payroll.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      res.json(await svc.submitRunForApproval({ orgId, actorUserId, runId: req.params.id }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/approve",
+  idempotency({ required: true }),
+  requirePermission("hr.payroll.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      res.json(await svc.approveRunWorkflow({ orgId, actorUserId, runId: req.params.id, comment: req.body?.comment || null }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/:id/reject",
+  idempotency({ required: true }),
+  requirePermission("hr.payroll.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      res.json(await svc.rejectRunWorkflow({ orgId, actorUserId, runId: req.params.id, comment: req.body?.comment || null }));
+    } catch (e) { next(e); }
+  }
+);
+
 // Build a DRAFT journal for the run (Segregation-of-duties: creator cannot post)
 router.post(
   "/:id/journal",

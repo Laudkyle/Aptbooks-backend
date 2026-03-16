@@ -26,7 +26,6 @@ router.get("/:id", requirePermission("inventory.transactions.read"), async (req,
   } catch (e) { next(e); }
 });
 
-// Option A workflow: create draft -> approve -> post
 router.post("/", idempotency({ required: true }), requirePermission("inventory.transactions.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -36,11 +35,27 @@ router.post("/", idempotency({ required: true }), requirePermission("inventory.t
   } catch (e) { next(e); }
 });
 
+router.post("/:id/submit", idempotency({ required: true }), requirePermission("inventory.transactions.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    res.json(await svc.submitTransactionForApproval({ orgId, actorUserId, transactionId: req.params.id }));
+  } catch (e) { next(e); }
+});
+
 router.post("/:id/approve", idempotency({ required: true }), requirePermission("inventory.transactions.approve"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-    res.json(await svc.approveTransaction({ orgId, actorUserId, transactionId: req.params.id }));
+    res.json(await svc.approveTransactionWorkflow({ orgId, actorUserId, transactionId: req.params.id, comment: req.body?.comment }));
+  } catch (e) { next(e); }
+});
+
+router.post("/:id/reject", idempotency({ required: true }), requirePermission("inventory.transactions.approve"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    res.json(await svc.rejectTransactionWorkflow({ orgId, actorUserId, transactionId: req.params.id, comment: req.body?.comment }));
   } catch (e) { next(e); }
 });
 
@@ -64,7 +79,7 @@ router.post("/:id/reverse", idempotency({ required: true }), requirePermission("
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-    res.json(await svc.reversePostedTransaction({ orgId, actorUserId, transactionId: req.params.id }));
+    res.json(await svc.reversePostedTransaction({ orgId, actorUserId, transactionId: req.params.id, reason: req.body?.reason }));
   } catch (e) { next(e); }
 });
 
