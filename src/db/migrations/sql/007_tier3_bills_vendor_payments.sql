@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS bills (
   voided_at TIMESTAMPTZ,
   voided_by UUID REFERENCES users(id) ON DELETE SET NULL,
   void_reason TEXT,
-
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
