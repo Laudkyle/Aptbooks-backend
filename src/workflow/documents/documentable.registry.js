@@ -209,6 +209,106 @@ const registry = {
     description: (entity) => entity.template_name || entity.template_code || null,
     versionFilename: (entity) => `tax-return-${entity.tax_type || 'tax'}-${entity.from_date || entity.from || entity.id}-${entity.to_date || entity.to || ''}.json`.replace(/\s+/g, '-')
   },
+  expense: {
+    entityType: "expense",
+    documentTypeCode: "EXPENSE",
+    documentTypeName: "Expense",
+    noun: "expense",
+    blockedActionLabel: "post",
+    title: (entity) => `Expense ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `expense-${entity.document_no || entity.id}.json`
+  },
+  quotation: {
+    entityType: "quotation",
+    documentTypeCode: "QUOTATION",
+    documentTypeName: "Quotation",
+    noun: "quotation",
+    blockedActionLabel: "issue",
+    title: (entity) => `Quotation ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `quotation-${entity.document_no || entity.id}.json`
+  },
+  sales_order: {
+    entityType: "sales_order",
+    documentTypeCode: "SALES_ORDER",
+    documentTypeName: "Sales Order",
+    noun: "sales order",
+    blockedActionLabel: "issue",
+    title: (entity) => `Sales Order ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `sales-order-${entity.document_no || entity.id}.json`
+  },
+  purchase_requisition: {
+    entityType: "purchase_requisition",
+    documentTypeCode: "PURCHASE_REQUISITION",
+    documentTypeName: "Purchase Requisition",
+    noun: "purchase requisition",
+    blockedActionLabel: "issue",
+    title: (entity) => `Purchase Requisition ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `purchase-requisition-${entity.document_no || entity.id}.json`
+  },
+  purchase_order: {
+    entityType: "purchase_order",
+    documentTypeCode: "PURCHASE_ORDER",
+    documentTypeName: "Purchase Order",
+    noun: "purchase order",
+    blockedActionLabel: "issue",
+    title: (entity) => `Purchase Order ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `purchase-order-${entity.document_no || entity.id}.json`
+  },
+  goods_receipt: {
+    entityType: "goods_receipt",
+    documentTypeCode: "GOODS_RECEIPT",
+    documentTypeName: "Goods Receipt",
+    noun: "goods receipt",
+    blockedActionLabel: "post",
+    title: (entity) => `Goods Receipt ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `goods-receipt-${entity.document_no || entity.id}.json`
+  },
+  petty_cash: {
+    entityType: "petty_cash",
+    documentTypeCode: "PETTY_CASH",
+    documentTypeName: "Petty Cash",
+    noun: "petty cash",
+    blockedActionLabel: "post",
+    title: (entity) => `Petty Cash ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `petty-cash-${entity.document_no || entity.id}.json`
+  },
+  advance: {
+    entityType: "advance",
+    documentTypeCode: "ADVANCE",
+    documentTypeName: "Advance",
+    noun: "advance",
+    blockedActionLabel: "post",
+    title: (entity) => `Advance ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `advance-${entity.document_no || entity.id}.json`
+  },
+  return: {
+    entityType: "return",
+    documentTypeCode: "RETURN",
+    documentTypeName: "Return",
+    noun: "return",
+    blockedActionLabel: "post",
+    title: (entity) => `Return ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `return-${entity.document_no || entity.id}.json`
+  },
+  refund: {
+    entityType: "refund",
+    documentTypeCode: "REFUND",
+    documentTypeName: "Refund",
+    noun: "refund",
+    blockedActionLabel: "post",
+    title: (entity) => `Refund ${entity.document_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `refund-${entity.document_no || entity.id}.json`
+  },
   receipt: {
     entityType: "receipt",
     documentTypeCode: "RECEIPT",
