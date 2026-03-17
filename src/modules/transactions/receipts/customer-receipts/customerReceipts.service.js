@@ -155,7 +155,7 @@ async function createDraftCustomerReceipt({ orgId, actorUserId, payload }) {
   }
 }
 
-async function getCustomerReceiptDetails({ orgId, id }) {
+async function getCustomerReceiptDetails({ orgId, id, currentUserId }) {
   const cr = await repo.getCustomerReceiptById(orgId, id);
   if (!cr) throw new AppError(404, "Customer receipt not found");
   const allocations = await repo.getAllocations(id);
@@ -167,7 +167,7 @@ async function listCustomerReceipts({ orgId, query }) {
 }
 
 async function autoAllocateCustomerReceipt({ orgId, actorUserId, id, rule }) {
-  const { customerReceipt: cr, allocations: current } = await getCustomerReceiptDetails({ orgId, id });
+  const { customerReceipt: cr, allocations: current } = await getCustomerReceiptDetails({ orgId, id, currentUserId: actorUserId });
   if (cr.status !== "draft") throw new AppError(409, "Only draft customer receipts can be auto-allocated");
 
   const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: cr.customer_id });
@@ -258,11 +258,11 @@ async function autoAllocateCustomerReceipt({ orgId, actorUserId, id, rule }) {
     client.release();
   }
 
-  return getCustomerReceiptDetails({ orgId, id });
+  return getCustomerReceiptDetails({ orgId, id, currentUserId: actorUserId   });
 }
 
 async function reallocateCustomerReceipt({ orgId, actorUserId, id, allocations }) {
-  const { customerReceipt: cr, allocations: before } = await getCustomerReceiptDetails({ orgId, id });
+  const { customerReceipt: cr, allocations: before } = await getCustomerReceiptDetails({ orgId, id, currentUserId: actorUserId });
 
   const isPosted = cr.status === "posted";
   if (cr.status !== "draft" && cr.status !== "posted") {
@@ -349,7 +349,7 @@ async function reallocateCustomerReceipt({ orgId, actorUserId, id, allocations }
     client.release();
   }
 
-  return getCustomerReceiptDetails({ orgId, id });
+  return getCustomerReceiptDetails({ orgId, id, currentUserId: actorUserId });
 }
 
 
@@ -472,7 +472,7 @@ async function rejectCustomerReceiptWorkflow({ orgId, actorUserId, id, comment }
 }
 
 async function postCustomerReceipt({ orgId, actorUserId, id }) {
-  const { customerReceipt: cr, allocations } = await getCustomerReceiptDetails({ orgId, id });
+  const { customerReceipt: cr, allocations } = await getCustomerReceiptDetails({ orgId, id, currentUserId: actorUserId });
   if (!["draft","approved"].includes(cr.status)) throw new AppError(409, "Only draft/approved customer receipts can be posted");
 
   await assertCustomerReceiptApprovalStateAllowsPost({ orgId, customerReceipt: cr, client: pool });

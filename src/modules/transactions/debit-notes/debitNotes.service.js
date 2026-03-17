@@ -116,10 +116,10 @@ async function listDebitNotes({ orgId, query }) {
   }
 }
 
-async function getDebitNoteDetails({ orgId, id }) {
+async function getDebitNoteDetails({ orgId, id, currentUserId }) {
   const client = await pool.connect();
   try {
-    const dn = await repo.getById({ orgId, id, client });
+    const dn = await repo.getById({ orgId, id, client, currentUserId});
     if (!dn) throw new AppError(404, "Debit note not found");
     const lines = await repo.getLines({ id, client });
     const applications = await repo.getApplications({ orgId, id, client });

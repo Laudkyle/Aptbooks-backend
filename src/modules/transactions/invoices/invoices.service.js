@@ -132,22 +132,49 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
   }
 }
 
-
-async function getInvoiceDetails({ orgId, invoiceId }) {
+async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
   const { rows } = await pool.query(
     `SELECT 
       i.*,
-      LOWER(d.workflow_state_code) AS workflow_status
+      LOWER(d.workflow_state_code) AS workflow_status,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_approve, FALSE)
+        ELSE FALSE
+      END AS can_approve,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_post, FALSE)
+        ELSE FALSE
+      END AS can_post
      FROM invoices i
      LEFT JOIN documents d
        ON d.id = i.workflow_document_id
-       AND d.organization_id = i.organization_id
+      AND d.organization_id = i.organization_id
+     LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post
+       FROM document_workflow_statics s
+       WHERE s.organization_id = i.organization_id
+         AND (
+           s.document_type_id = d.document_type_id
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = d.document_type_id THEN 0
+           ELSE 1
+         END
+       LIMIT 1
+     ) dws ON TRUE
      WHERE i.organization_id = $1 
        AND i.id = $2`,
-    [orgId, invoiceId]
+    [orgId, invoiceId, currentUserId]
   );
 
   if (!rows.length) throw new AppError(404, "Invoice not found");
+
   const invoice = rows[0];
 
   const { rows: lines } = await pool.query(

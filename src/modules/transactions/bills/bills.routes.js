@@ -47,7 +47,7 @@ router.get("/", requirePermission("transactions.bill.read"), async (req, res, ne
 router.get("/:id", requirePermission("transactions.bill.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    res.json(await svc.getBillDetails({ orgId, billId: req.params.id }));
+    res.json(await svc.getBillDetails({ orgId, billId: req.params.id, currentUserId: req.user.id }));
   } catch (e) { next(e); }
 });
 

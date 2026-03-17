@@ -2,28 +2,58 @@ const { AppError } = require("../../../shared/errors/AppError");
 
 
 
-async function getById({ orgId, id, client }) {
+async function getById({ orgId, id, currentUserId, client }) {
+  console.log("Fetching credit note with id:", id, "for org:", orgId, "and user:", currentUserId);
   const { rows } = await client.query(
     `SELECT 
       cn.*,
-      bp.name as customer_name,
-      bp.code as customer_code,
-      bp.email as customer_email,
-      bp.phone as customer_phone,
-      LOWER(d.workflow_state_code) AS workflow_status
+      bp.name AS customer_name,
+      bp.code AS customer_code,
+      bp.email AS customer_email,
+      bp.phone AS customer_phone,
+      LOWER(d.workflow_state_code) AS workflow_status,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_approve, FALSE)
+        ELSE FALSE
+      END AS "canApprove",
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_post, FALSE)
+        ELSE FALSE
+      END AS "canPost"
      FROM credit_notes cn
-     LEFT JOIN business_partners bp 
+     LEFT JOIN business_partners bp
        ON cn.customer_id = bp.id
      LEFT JOIN documents d
        ON d.id = cn.workflow_document_id
-       AND d.organization_id = cn.organization_id
-     WHERE cn.organization_id = $1 
+      AND d.organization_id = cn.organization_id
+     LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post
+       FROM document_workflow_statics s
+       WHERE s.organization_id = cn.organization_id
+         AND (
+           s.document_type_id = d.document_type_id
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = d.document_type_id THEN 0
+           ELSE 1
+         END
+       LIMIT 1
+     ) dws ON TRUE
+     WHERE cn.organization_id = $1
        AND cn.id = $2`,
-    [orgId, id]
+    [orgId, id, currentUserId]
   );
 
   return rows[0] || null;
 }
+
+
 
 async function getLines({ id, client }) {
   const { rows } = await client.query(

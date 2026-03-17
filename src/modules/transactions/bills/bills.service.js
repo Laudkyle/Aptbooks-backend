@@ -109,8 +109,8 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
   }
 }
 
-async function getBillDetails({ orgId, billId }) {
-  const bill = await repo.getBillById(orgId, billId);
+async function getBillDetails({ orgId, billId, currentUserId }) {
+  const bill = await repo.getBillById(orgId, billId, currentUserId);
   if (!bill) throw new AppError(404, "Bill not found");
 
   const lines = await repo.getBillLines(billId);

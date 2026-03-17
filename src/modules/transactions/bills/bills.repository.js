@@ -44,23 +44,49 @@ async function insertBillLine(client, { billId, lineNo, description, quantity, u
   );
 }
 
-async function getBillById(orgId, billId) {
+async function getBillById(orgId, billId, currentUserId) {
   const { rows } = await pool.query(
     `SELECT 
       b.*,
-      LOWER(d.workflow_state_code) AS workflow_status
+      LOWER(d.workflow_state_code) AS workflow_status,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_approve, FALSE)
+        ELSE FALSE
+      END AS can_approve,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_post, FALSE)
+        ELSE FALSE
+      END AS can_post
      FROM bills b
      LEFT JOIN documents d
        ON d.id = b.workflow_document_id
-       AND d.organization_id = b.organization_id
+      AND d.organization_id = b.organization_id
+     LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post
+       FROM document_workflow_statics s
+       WHERE s.organization_id = b.organization_id
+         AND (
+           s.document_type_id = d.document_type_id
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = d.document_type_id THEN 0
+           ELSE 1
+         END
+       LIMIT 1
+     ) dws ON TRUE
      WHERE b.organization_id = $1 
        AND b.id = $2`,
-    [orgId, billId]
+    [orgId, billId, currentUserId]
   );
 
   return rows[0] || null;
 }
-
 async function getBillLines(billId) {
   const { rows } = await pool.query(
     `SELECT * FROM bill_lines WHERE bill_id=$1 ORDER BY line_no`,

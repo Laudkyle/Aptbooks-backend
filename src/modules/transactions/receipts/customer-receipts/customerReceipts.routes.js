@@ -49,7 +49,7 @@ router.get("/", requirePermission("transactions.customer_receipt.read"), async (
 router.get("/:id", requirePermission("transactions.customer_receipt.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    res.json(await svc.getCustomerReceiptDetails({ orgId, id: req.params.id }));
+    res.json(await svc.getCustomerReceiptDetails({ orgId, id: req.params.id, currentUserId: req.user.id }));
   } catch (e) { next(e); }
 });
 

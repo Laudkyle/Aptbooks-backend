@@ -47,7 +47,7 @@ router.get("/", requirePermission("transactions.credit_note.read"), async (req, 
 router.get("/:id", requirePermission("transactions.credit_note.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    res.json(await svc.getCreditNoteDetails({ orgId, id: req.params.id }));
+    res.json(await svc.getCreditNoteDetails({ orgId, id: req.params.id, currentUserId: req.user.id }));
   } catch (e) { next(e); }
 });
 

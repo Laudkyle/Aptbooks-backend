@@ -117,15 +117,34 @@ async function listCreditNotes({ orgId, query }) {
   }
 }
 
-async function getCreditNoteDetails({ orgId, id }) {
+async function getCreditNoteDetails({ orgId, id, currentUserId }) {
   const client = await pool.connect();
+
   try {
-    const cn = await repo.getById({ orgId, id, client });
+    const cn = await repo.getById({
+      orgId,
+      id,
+      currentUserId,
+      client
+    });
+
     if (!cn) throw new AppError(404, "Credit note not found");
+
     const lines = await repo.getLines({ id, client });
     const applications = await repo.getApplications({ orgId, id, client });
-    const bal = await getCreditNoteBalances({ orgId, creditNoteId: id, client });
-    return { ...cn, lines, applications, balance: bal };
+    const bal = await getCreditNoteBalances({
+      orgId,
+      creditNoteId: id,
+      client
+    });
+
+    return {
+      ...cn,
+      lines,
+      applications,
+      balance: bal
+    };
+
   } finally {
     client.release();
   }

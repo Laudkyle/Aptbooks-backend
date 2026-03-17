@@ -88,40 +88,67 @@ async function getAllocations(vendorPaymentId) {
   );
   return rows;
 }
-async function getVendorPaymentById(orgId, id) {
+async function getVendorPaymentById(orgId, id, currentUserId) {
   const { rows } = await pool.query(
     `SELECT 
       vp.*,
-      bp.name as vendor_name,
-      bp.email as vendor_email,
-      bp.phone as vendor_phone,
-      addr.label as vendor_address_label,
-      addr.line1 as vendor_address_line1,
-      addr.line2 as vendor_address_line2,
-      addr.city as vendor_address_city,
-      addr.region as vendor_address_region,
-      addr.postal_code as vendor_address_postal_code,
-      addr.country as vendor_address_country,
-      pm.name as payment_method_name,
-      coa.name as cash_account_name,
-      coa.code as cash_account_code,
-      LOWER(d.workflow_state_code) AS workflow_status
+      bp.name AS vendor_name,
+      bp.email AS vendor_email,
+      bp.phone AS vendor_phone,
+      addr.label AS vendor_address_label,
+      addr.line1 AS vendor_address_line1,
+      addr.line2 AS vendor_address_line2,
+      addr.city AS vendor_address_city,
+      addr.region AS vendor_address_region,
+      addr.postal_code AS vendor_address_postal_code,
+      addr.country AS vendor_address_country,
+      pm.name AS payment_method_name,
+      coa.name AS cash_account_name,
+      coa.code AS cash_account_code,
+      LOWER(d.workflow_state_code) AS workflow_status,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_approve, FALSE)
+        ELSE FALSE
+      END AS can_approve,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_post, FALSE)
+        ELSE FALSE
+      END AS can_post
      FROM vendor_payments vp
      LEFT JOIN business_partners bp 
        ON vp.vendor_id = bp.id
      LEFT JOIN business_partner_addresses addr 
        ON bp.id = addr.partner_id 
-       AND addr.is_primary = TRUE
+      AND addr.is_primary = TRUE
      LEFT JOIN payment_methods pm 
        ON vp.payment_method_id = pm.id
      LEFT JOIN chart_of_accounts coa 
        ON vp.cash_account_id = coa.id
      LEFT JOIN documents d
        ON d.id = vp.workflow_document_id
-       AND d.organization_id = vp.organization_id
+      AND d.organization_id = vp.organization_id
+     LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post
+       FROM document_workflow_statics s
+       WHERE s.organization_id = vp.organization_id
+         AND (
+           s.document_type_id = d.document_type_id
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = d.document_type_id THEN 0
+           ELSE 1
+         END
+       LIMIT 1
+     ) dws ON TRUE
      WHERE vp.organization_id = $1 
        AND vp.id = $2`,
-    [orgId, id]
+    [orgId, id, currentUserId]
   );
 
   return rows[0] || null;

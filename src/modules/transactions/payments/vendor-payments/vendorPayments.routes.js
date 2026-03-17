@@ -49,7 +49,7 @@ router.get("/", requirePermission("transactions.vendor_payment.read"), async (re
 router.get("/:id", requirePermission("transactions.vendor_payment.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    res.json(await svc.getVendorPaymentDetails({ orgId, id: req.params.id }));
+    res.json(await svc.getVendorPaymentDetails({ orgId, id: req.params.id, currentUserId: req.user.id }));
   } catch (e) { next(e); }
 });
 

@@ -76,45 +76,71 @@ async function recordAllocationEvent(client, { orgId, customerReceiptId, actorUs
     [orgId, customerReceiptId, actorUserId || null, action, before || null, after || null]
   );
 }
-async function getCustomerReceiptById(orgId, receiptId) {
+async function getCustomerReceiptById(orgId, receiptId, currentUserId) {
   const { rows } = await pool.query(
     `SELECT 
       cr.*,
-      bp.name as customer_name,
-      bp.email as customer_email,
-      bp.phone as customer_phone,
-      addr.label as customer_address_label,
-      addr.line1 as customer_address_line1,
-      addr.line2 as customer_address_line2,
-      addr.city as customer_address_city,
-      addr.region as customer_address_region,
-      addr.postal_code as customer_address_postal_code,
-      addr.country as customer_address_country,
-      pm.name as payment_method_name,
-      coa.name as cash_account_name,
-      coa.code as cash_account_code,
-      LOWER(d.workflow_state_code) AS workflow_status
+      bp.name AS customer_name,
+      bp.email AS customer_email,
+      bp.phone AS customer_phone,
+      addr.label AS customer_address_label,
+      addr.line1 AS customer_address_line1,
+      addr.line2 AS customer_address_line2,
+      addr.city AS customer_address_city,
+      addr.region AS customer_address_region,
+      addr.postal_code AS customer_address_postal_code,
+      addr.country AS customer_address_country,
+      pm.name AS payment_method_name,
+      coa.name AS cash_account_name,
+      coa.code AS cash_account_code,
+      LOWER(d.workflow_state_code) AS workflow_status,
+      CASE
+        WHEN d.id IS NOT NULL AND d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_approve, FALSE)
+        ELSE FALSE
+      END AS can_approve,
+      CASE
+        WHEN d.id IS NOT NULL AND d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_post, FALSE)
+        ELSE FALSE
+      END AS can_post
      FROM customer_receipts cr
      LEFT JOIN business_partners bp 
        ON cr.customer_id = bp.id
      LEFT JOIN business_partner_addresses addr 
        ON bp.id = addr.partner_id 
-       AND addr.is_primary = TRUE
+      AND addr.is_primary = TRUE
      LEFT JOIN payment_methods pm 
        ON cr.payment_method_id = pm.id
      LEFT JOIN chart_of_accounts coa 
        ON cr.cash_account_id = coa.id
      LEFT JOIN documents d
        ON d.id = cr.workflow_document_id
-       AND d.organization_id = cr.organization_id
+      AND d.organization_id = cr.organization_id
+     LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post
+       FROM document_workflow_statics s
+       WHERE s.organization_id = cr.organization_id
+         AND (
+           (d.document_type_id IS NOT NULL AND s.document_type_id = d.document_type_id)
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = d.document_type_id THEN 0
+           ELSE 1
+         END
+       LIMIT 1
+     ) dws ON TRUE
      WHERE cr.organization_id = $1 
        AND cr.id = $2`,
-    [orgId, receiptId]
+    [orgId, receiptId, currentUserId]
   );
 
   return rows[0] || null;
 }
-
 async function getAllocations(customerReceiptId) {
   const { rows } = await pool.query(
     `SELECT * FROM customer_receipt_allocations WHERE customer_receipt_id=$1 ORDER BY created_at ASC`,

@@ -155,7 +155,7 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
 }
 
 async function autoAllocateVendorPayment({ orgId, actorUserId, id, rule }) {
-  const { vendorPayment: vp, allocations: current } = await getVendorPaymentDetails({ orgId, id });
+  const { vendorPayment: vp, allocations: current } = await getVendorPaymentDetails({ orgId, id, currentUserId: actorUserId });
   if (vp.status !== "draft") throw new AppError(409, "Only draft vendor payments can be auto-allocated");
 
   const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: vp.vendor_id });
@@ -233,11 +233,11 @@ async function autoAllocateVendorPayment({ orgId, actorUserId, id, rule }) {
     client.release();
   }
 
-  return getVendorPaymentDetails({ orgId, id });
+  return getVendorPaymentDetails({ orgId, id, currentUserId: actorUserId });
 }
 
 async function reallocateVendorPayment({ orgId, actorUserId, id, allocations }) {
-  const { vendorPayment: vp, allocations: before } = await getVendorPaymentDetails({ orgId, id });
+  const { vendorPayment: vp, allocations: before } = await getVendorPaymentDetails({ orgId, id, currentUserId: actorUserId });
 
   const isPosted = vp.status === "posted";
   if (vp.status !== "draft" && vp.status !== "posted") {
@@ -321,11 +321,11 @@ async function reallocateVendorPayment({ orgId, actorUserId, id, allocations }) 
     client.release();
   }
 
-  return getVendorPaymentDetails({ orgId, id });
+  return getVendorPaymentDetails({ orgId, id, currentUserId: actorUserId });
 }
 
-async function getVendorPaymentDetails({ orgId, id }) {
-  const vp = await repo.getVendorPaymentById(orgId, id);
+async function getVendorPaymentDetails({ orgId, id, currentUserId }) {
+  const vp = await repo.getVendorPaymentById(orgId, id, currentUserId);
   if (!vp) throw new AppError(404, "Vendor payment not found");
   const allocations = await repo.getAllocations(id);
   return { vendorPayment: vp, allocations };

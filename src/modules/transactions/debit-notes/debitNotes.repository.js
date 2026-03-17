@@ -1,6 +1,6 @@
 const { AppError } = require("../../../shared/errors/AppError");
 
-async function getById({ orgId, id, client }) {
+async function getById({ orgId, id, currentUserId, client }) {
   const { rows } = await client.query(
     `SELECT 
       dn.*,
@@ -8,16 +8,43 @@ async function getById({ orgId, id, client }) {
       bp.code AS vendor_code,
       bp.email AS vendor_email,
       bp.phone AS vendor_phone,
-      LOWER(d.workflow_state_code) AS workflow_status
+      LOWER(d.workflow_state_code) AS workflow_status,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_approve, FALSE)
+        ELSE FALSE
+      END AS can_approve,
+      CASE
+        WHEN d.created_by_user_id = $3
+        THEN COALESCE(dws.creator_can_post, FALSE)
+        ELSE FALSE
+      END AS can_post
      FROM debit_notes dn
-     LEFT JOIN business_partners bp 
+     LEFT JOIN business_partners bp
        ON dn.vendor_id = bp.id
      LEFT JOIN documents d
        ON d.id = dn.workflow_document_id
-       AND d.organization_id = dn.organization_id
-     WHERE dn.organization_id = $1 
+      AND d.organization_id = dn.organization_id
+     LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post
+       FROM document_workflow_statics s
+       WHERE s.organization_id = dn.organization_id
+         AND (
+           s.document_type_id = d.document_type_id
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = d.document_type_id THEN 0
+           ELSE 1
+         END
+       LIMIT 1
+     ) dws ON TRUE
+     WHERE dn.organization_id = $1
        AND dn.id = $2`,
-    [orgId, id]
+    [orgId, id, currentUserId]
   );
 
   return rows[0] || null;
