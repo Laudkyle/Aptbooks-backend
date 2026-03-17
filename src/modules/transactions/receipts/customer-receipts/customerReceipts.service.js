@@ -156,7 +156,7 @@ async function createDraftCustomerReceipt({ orgId, actorUserId, payload }) {
 }
 
 async function getCustomerReceiptDetails({ orgId, id, currentUserId }) {
-  const cr = await repo.getCustomerReceiptById(orgId, id);
+  const cr = await repo.getCustomerReceiptById(orgId, id, currentUserId);
   if (!cr) throw new AppError(404, "Customer receipt not found");
   const allocations = await repo.getAllocations(id);
   return { customerReceipt: cr, allocations };

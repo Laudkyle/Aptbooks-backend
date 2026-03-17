@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS invoices (
     CHECK (status IN ('draft','issued','paid','voided')),
 
   memo TEXT,
-
   subtotal NUMERIC(18,2) NOT NULL DEFAULT 0,
   total NUMERIC(18,2) NOT NULL DEFAULT 0,
 
@@ -34,6 +33,7 @@ CREATE TABLE IF NOT EXISTS invoices (
   voided_by UUID REFERENCES users(id) ON DELETE SET NULL,
   void_reason TEXT,
 
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
