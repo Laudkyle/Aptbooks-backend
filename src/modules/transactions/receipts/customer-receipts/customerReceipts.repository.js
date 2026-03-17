@@ -92,15 +92,26 @@ async function getCustomerReceiptById(orgId, receiptId) {
       addr.country as customer_address_country,
       pm.name as payment_method_name,
       coa.name as cash_account_name,
-      coa.code as cash_account_code
+      coa.code as cash_account_code,
+      LOWER(d.workflow_state_code) AS workflow_status
      FROM customer_receipts cr
-     LEFT JOIN business_partners bp ON cr.customer_id = bp.id
-     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
-     LEFT JOIN payment_methods pm ON cr.payment_method_id = pm.id
-     LEFT JOIN chart_of_accounts coa ON cr.cash_account_id = coa.id
-     WHERE cr.organization_id=$1 AND cr.id=$2`,
+     LEFT JOIN business_partners bp 
+       ON cr.customer_id = bp.id
+     LEFT JOIN business_partner_addresses addr 
+       ON bp.id = addr.partner_id 
+       AND addr.is_primary = TRUE
+     LEFT JOIN payment_methods pm 
+       ON cr.payment_method_id = pm.id
+     LEFT JOIN chart_of_accounts coa 
+       ON cr.cash_account_id = coa.id
+     LEFT JOIN documents d
+       ON d.id = cr.workflow_document_id
+       AND d.organization_id = cr.organization_id
+     WHERE cr.organization_id = $1 
+       AND cr.id = $2`,
     [orgId, receiptId]
   );
+
   return rows[0] || null;
 }
 

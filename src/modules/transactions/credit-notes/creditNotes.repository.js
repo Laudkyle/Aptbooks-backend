@@ -9,12 +9,19 @@ async function getById({ orgId, id, client }) {
       bp.name as customer_name,
       bp.code as customer_code,
       bp.email as customer_email,
-      bp.phone as customer_phone
+      bp.phone as customer_phone,
+      LOWER(d.workflow_state_code) AS workflow_status
      FROM credit_notes cn
-     LEFT JOIN business_partners bp ON cn.customer_id = bp.id
-     WHERE cn.organization_id=$1 AND cn.id=$2`,
+     LEFT JOIN business_partners bp 
+       ON cn.customer_id = bp.id
+     LEFT JOIN documents d
+       ON d.id = cn.workflow_document_id
+       AND d.organization_id = cn.organization_id
+     WHERE cn.organization_id = $1 
+       AND cn.id = $2`,
     [orgId, id]
   );
+
   return rows[0] || null;
 }
 

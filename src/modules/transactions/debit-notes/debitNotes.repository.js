@@ -4,15 +4,22 @@ async function getById({ orgId, id, client }) {
   const { rows } = await client.query(
     `SELECT 
       dn.*,
-      bp.name as vendor_name,
-      bp.code as vendor_code,
-      bp.email as vendor_email,
-      bp.phone as vendor_phone
+      bp.name AS vendor_name,
+      bp.code AS vendor_code,
+      bp.email AS vendor_email,
+      bp.phone AS vendor_phone,
+      LOWER(d.workflow_state_code) AS workflow_status
      FROM debit_notes dn
-     LEFT JOIN business_partners bp ON dn.vendor_id = bp.id
-     WHERE dn.organization_id=$1 AND dn.id=$2`,
+     LEFT JOIN business_partners bp 
+       ON dn.vendor_id = bp.id
+     LEFT JOIN documents d
+       ON d.id = dn.workflow_document_id
+       AND d.organization_id = dn.organization_id
+     WHERE dn.organization_id = $1 
+       AND dn.id = $2`,
     [orgId, id]
   );
+
   return rows[0] || null;
 }
 async function getLines({ id, client }) {

@@ -135,14 +135,26 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
 
 async function getInvoiceDetails({ orgId, invoiceId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2`,
+    `SELECT 
+      i.*,
+      LOWER(d.workflow_state_code) AS workflow_status
+     FROM invoices i
+     LEFT JOIN documents d
+       ON d.id = i.workflow_document_id
+       AND d.organization_id = i.organization_id
+     WHERE i.organization_id = $1 
+       AND i.id = $2`,
     [orgId, invoiceId]
   );
+
   if (!rows.length) throw new AppError(404, "Invoice not found");
   const invoice = rows[0];
 
   const { rows: lines } = await pool.query(
-    `SELECT * FROM invoice_lines WHERE invoice_id=$1 ORDER BY line_no`,
+    `SELECT * 
+     FROM invoice_lines 
+     WHERE invoice_id = $1 
+     ORDER BY line_no`,
     [invoiceId]
   );
 

@@ -46,9 +46,18 @@ async function insertBillLine(client, { billId, lineNo, description, quantity, u
 
 async function getBillById(orgId, billId) {
   const { rows } = await pool.query(
-    `SELECT * FROM bills WHERE organization_id=$1 AND id=$2`,
+    `SELECT 
+      b.*,
+      LOWER(d.workflow_state_code) AS workflow_status
+     FROM bills b
+     LEFT JOIN documents d
+       ON d.id = b.workflow_document_id
+       AND d.organization_id = b.organization_id
+     WHERE b.organization_id = $1 
+       AND b.id = $2`,
     [orgId, billId]
   );
+
   return rows[0] || null;
 }
 

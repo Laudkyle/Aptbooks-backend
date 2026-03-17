@@ -104,15 +104,26 @@ async function getVendorPaymentById(orgId, id) {
       addr.country as vendor_address_country,
       pm.name as payment_method_name,
       coa.name as cash_account_name,
-      coa.code as cash_account_code
+      coa.code as cash_account_code,
+      LOWER(d.workflow_state_code) AS workflow_status
      FROM vendor_payments vp
-     LEFT JOIN business_partners bp ON vp.vendor_id = bp.id
-     LEFT JOIN business_partner_addresses addr ON bp.id = addr.partner_id AND addr.is_primary = TRUE
-     LEFT JOIN payment_methods pm ON vp.payment_method_id = pm.id
-     LEFT JOIN chart_of_accounts coa ON vp.cash_account_id = coa.id
-     WHERE vp.organization_id=$1 AND vp.id=$2`,
+     LEFT JOIN business_partners bp 
+       ON vp.vendor_id = bp.id
+     LEFT JOIN business_partner_addresses addr 
+       ON bp.id = addr.partner_id 
+       AND addr.is_primary = TRUE
+     LEFT JOIN payment_methods pm 
+       ON vp.payment_method_id = pm.id
+     LEFT JOIN chart_of_accounts coa 
+       ON vp.cash_account_id = coa.id
+     LEFT JOIN documents d
+       ON d.id = vp.workflow_document_id
+       AND d.organization_id = vp.organization_id
+     WHERE vp.organization_id = $1 
+       AND vp.id = $2`,
     [orgId, id]
   );
+
   return rows[0] || null;
 }
 async function listVendorPayments({ orgId, query }) {
