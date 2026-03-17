@@ -2,6 +2,8 @@ const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
+const { buildOperationalDocumentJournal } = require("./operationalDocPosting.service");
+const { runApprovalPostingHook } = require("./approvalPostingHooks");
 const repo = require("./opsDocs.repository");
 
 async function getOrgBaseCurrency(client, orgId) {
@@ -52,7 +54,8 @@ function createOpsDocService(config) {
     prefix,
     partnerRole,
     finalAction = "issue",
-    defaultMeta = () => ({})
+    defaultMeta = () => ({}),
+    runPostingHookOnApproval = finalAction === "post"
   } = config;
 
   async function assertCounterparty({ orgId, partnerId }) {
@@ -166,6 +169,8 @@ function createOpsDocService(config) {
 
   async function approveWorkflow({ orgId, actorUserId, documentId, comment }) {
     const client = await pool.connect();
+    let updated;
+    let workflowDocument;
     try {
       await client.query("BEGIN");
       const header = await repo.getLockedDocument(client, orgId, documentId);
@@ -173,7 +178,7 @@ function createOpsDocService(config) {
       if (!header.workflow_document_id) throw new AppError(409, "Document has no workflow document");
       if (!["submitted", "approved"].includes(header.status)) throw new AppError(409, "Only submitted documents can be approved");
 
-      const workflowDocument = await documentableSvc.approveEntityDocument({
+      workflowDocument = await documentableSvc.approveEntityDocument({
         orgId,
         actorUserId,
         entityType,
@@ -183,15 +188,24 @@ function createOpsDocService(config) {
         client
       });
 
-      const updated = await repo.setStatus(client, orgId, documentId, "approved", actorUserId);
+      updated = await repo.setStatus(client, orgId, documentId, "approved", actorUserId);
       await client.query("COMMIT");
-      return { document: updated, workflowDocument };
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
     } finally {
       client.release();
     }
+
+    let posting = null;
+    if (runPostingHookOnApproval) {
+      posting = await runApprovalPostingHook({ entityType, orgId, actorUserId, entityId: documentId });
+      if (posting?.status === "success" && posting.entity) {
+        updated = posting.entity;
+      }
+    }
+
+    return { document: updated, workflowDocument, posting };
   }
 
   async function rejectWorkflow({ orgId, actorUserId, documentId, comment }) {
@@ -230,6 +244,14 @@ function createOpsDocService(config) {
       await client.query("BEGIN");
       const header = await repo.getLockedDocument(client, orgId, documentId);
       if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
+      if (finalAction === "post" && header.status === "posted") {
+        await client.query("COMMIT");
+        return header;
+      }
+      if (finalAction === "issue" && header.status === "issued") {
+        await client.query("COMMIT");
+        return header;
+      }
       if (!["draft", "approved"].includes(header.status)) throw new AppError(409, `Only draft or approved documents can be ${finalAction}ed`);
 
       await documentableSvc.assertEntityApprovedForAction({
@@ -243,16 +265,31 @@ function createOpsDocService(config) {
       const status = finalAction === "post" ? "posted" : "issued";
       const stampField = finalAction === "post" ? "posted_at" : "issued_at";
       const byField = finalAction === "post" ? "posted_by" : "issued_by";
+
+      let periodId = header.period_id || null;
+      let journalEntryId = header.journal_entry_id || null;
+      if (finalAction === "post") {
+        const lines = await repo.getDocumentLines(documentId, client);
+        if (!lines.length && !Number(header.amount_total || 0)) {
+          throw new AppError(400, "Document has no posting content");
+        }
+        const posting = await buildOperationalDocumentJournal({ orgId, actorUserId, header, lines, client });
+        periodId = posting.period.id;
+        journalEntryId = posting.journalId;
+      }
+
       const { rows } = await client.query(
         `UPDATE operational_documents
             SET ${stampField} = NOW(),
                 ${byField} = $3,
                 updated_by = $3,
                 updated_at = NOW(),
-                status = $4
+                status = $4,
+                period_id = COALESCE($5, period_id),
+                journal_entry_id = COALESCE($6, journal_entry_id)
           WHERE organization_id = $1 AND id = $2
       RETURNING *`,
-        [orgId, documentId, actorUserId, status]
+        [orgId, documentId, actorUserId, status, periodId, journalEntryId]
       );
       await client.query("COMMIT");
       return rows[0];
@@ -271,6 +308,9 @@ function createOpsDocService(config) {
       const header = await repo.getLockedDocument(client, orgId, documentId);
       if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
       if (header.status === "void") throw new AppError(409, "Document already voided");
+      if (header.status === "posted" || header.journal_entry_id) {
+        throw new AppError(409, "Posted documents cannot be voided directly. Reverse the journal first.");
+      }
       const { rows } = await client.query(
         `UPDATE operational_documents
             SET status = 'void',

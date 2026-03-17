@@ -12,6 +12,10 @@ const lineSchema = z.object({
   meta: z.record(z.any()).optional().nullable()
 });
 
+const postingLineSchema = lineSchema.extend({
+  accountId: z.string().uuid()
+});
+
 const voidSchema = z.object({
   reason: z.string().min(2)
 });
@@ -34,7 +38,7 @@ const baseCreateSchema = z.object({
 
 const quotationSchema = baseCreateSchema.extend({
   partnerId: z.string().uuid(),
-  lines: z.array(lineSchema).min(1)
+  lines: z.array(postingLineSchema).min(1)
 });
 
 const salesOrderSchema = baseCreateSchema.extend({
@@ -55,19 +59,20 @@ const purchaseOrderSchema = baseCreateSchema.extend({
 
 const goodsReceiptSchema = baseCreateSchema.extend({
   partnerId: z.string().uuid().optional().nullable(),
+  primaryAccountId: z.string().uuid(),
   sourceDocumentId: z.string().uuid().optional().nullable(),
-  lines: z.array(lineSchema).min(1)
+  lines: z.array(postingLineSchema).min(1)
 });
 
 const expenseSchema = baseCreateSchema.extend({
   primaryAccountId: z.string().uuid(),
-  lines: z.array(lineSchema).min(1)
+  lines: z.array(postingLineSchema).min(1)
 });
 
 const pettyCashSchema = baseCreateSchema.extend({
   cashAccountId: z.string().uuid(),
   primaryAccountId: z.string().uuid().optional().nullable(),
-  lines: z.array(lineSchema).min(1)
+  lines: z.array(postingLineSchema).min(1)
 });
 
 const advanceSchema = baseCreateSchema.extend({
@@ -91,7 +96,7 @@ const returnSchema = baseCreateSchema.extend({
   returnType: z.enum(["sales_return", "purchase_return"]),
   partnerId: z.string().uuid(),
   sourceDocumentId: z.string().uuid().optional().nullable(),
-  lines: z.array(lineSchema).min(1)
+  lines: z.array(postingLineSchema).min(1)
 });
 
 const refundSchema = baseCreateSchema.extend({
