@@ -454,7 +454,7 @@ async function run() {
       ON CONFLICT (code) DO NOTHING;
     `);
 
-   // 2) Permissions (Phase 1 + Phase 2)
+    // 2) Permissions (Phase 1 + Phase 2)
     const perms = [
       // Accounting kernel
       ["accounting.period.read", "Read periods"],
@@ -591,28 +591,30 @@ async function run() {
       ["assets.fixed_assets.manage", "Manage fixed assets"],
       ["assets.depreciation.run", "Run depreciation posting"],
 
-      // Inventory (Tier 5)
-      ["inventory.units.read", "Read item units"],
-      ["inventory.units.manage", "Manage item units"],
+      // Inventory (Tier 5) - Expanded with all permissions
       ["inventory.categories.read", "Read item categories"],
       ["inventory.categories.manage", "Manage item categories"],
+      ["inventory.units.read", "Read item units"],
+      ["inventory.units.manage", "Manage item units"],
       ["inventory.items.read", "Read inventory items"],
       ["inventory.items.manage", "Manage inventory items"],
       ["inventory.warehouses.read", "Read warehouses"],
       ["inventory.warehouses.manage", "Manage warehouses"],
       ["inventory.transactions.read", "Read inventory transactions"],
+      ["inventory.transactions.manage", "Manage draft inventory transactions"],
+      ["inventory.transactions.approve", "Approve inventory transactions"],
       ["inventory.transactions.post", "Post inventory transactions"],
-      ["inventory.settings.manage", "Manage inventory settings"],
       ["inventory.reservations.read", "Read stock reservations"],
       ["inventory.reservations.manage", "Manage stock reservations"],
       ["inventory.transfers.read", "Read stock transfer requests"],
-      ["inventory.transfers.manage", "Manage stock transfer requests"],
+      ["inventory.transfers.manage", "Manage draft stock transfer requests"],
       ["inventory.transfers.approve", "Approve stock transfer requests"],
       ["inventory.transfers.post", "Post stock transfer requests"],
       ["inventory.traceability.read", "Read batch and serial traceability"],
       ["inventory.traceability.manage", "Manage batch and serial traceability"],
       ["inventory.reorder.read", "Read reorder settings and suggestions"],
       ["inventory.reorder.manage", "Manage reorder settings and automation"],
+      ["inventory.settings.manage", "Manage inventory settings"],
 
       // Banking (Tier 7)
       ["banking.accounts.read", "Read bank accounts"],
@@ -670,6 +672,7 @@ async function run() {
       ["notifications.manage", "Managing of notifications"],
     ];
 
+    
     for (const [code, description] of perms) {
       await upsertPermission(code, description);
     }
