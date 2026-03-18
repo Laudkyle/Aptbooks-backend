@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "entity_type": "expense",
+  "entity_id": "cfb55796-5e99-4b50-afc2-c332d9fe7912",
+  "snapshot_at": "2026-03-18T13:29:25.211Z",
+  "header": {
+    "id": "cfb55796-5e99-4b50-afc2-c332d9fe7912",
+    "organization_id": "948e6692-de36-4b47-8ade-ff447793c0e0",
+    "module_code": "expense",
+    "document_no": "EXP-000001",
+    "counterparty_partner_id": null,
+    "employee_id": null,
+    "document_date": "2026-03-18T00:00:00.000Z",
+    "due_date": null,
+    "status": "draft",
+    "memo": "gfsdgkfsdlg",
+    "reference": "gkljfad",
+    "source_document_id": null,
+    "cash_account_id": null,
+    "primary_account_id": "c2c56e8f-905a-4a31-97ac-81f446c4641d",
+    "amount_total": "1.10",
+    "currency_code": "GHS",
+    "workflow_document_id": null,
+    "meta": {},
+    "rejection_comment": null,
+    "issued_at": null,
+    "issued_by": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "created_by": "6ac80a30-f01c-49fb-8c68-4cad17adb85f",
+    "updated_by": "6ac80a30-f01c-49fb-8c68-4cad17adb85f",
+    "created_at": "2026-03-18T13:29:19.723Z",
+    "updated_at": "2026-03-18T13:29:19.723Z",
+    "period_id": null,
+    "journal_entry_id": null
+  },
+  "lines": [
+    {
+      "id": "8b6a1890-8399-45e0-aacb-c7104e1cf869",
+      "document_id": "cfb55796-5e99-4b50-afc2-c332d9fe7912",
+      "line_no": 1,
+      "description": "gdfgfsdg",
+      "quantity": "1.0000",
+      "unit_price": "1.1000",
+      "line_total": "1.10",
+      "account_id": "ec70300a-8179-4ad7-9381-4ca8b9a08795",
+      "item_id": null,
+      "tax_code_id": null,
+      "meta": {},
+      "created_at": "2026-03-18T13:29:19.723Z",
+      "updated_at": "2026-03-18T13:29:19.723Z"
+    }
+  ],
+  "totals": {
+    "amountTotal": "1.10"
+  },
+  "meta": {
+    "moduleCode": "expense"
+  }
+}

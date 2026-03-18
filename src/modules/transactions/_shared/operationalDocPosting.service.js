@@ -133,11 +133,39 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
   const draft = await journalIF.createDraftJournal({ orgId, actorUserId, payload, client });
   const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
+  // Update the operational document with period_id and journal_entry_id
+  const tableName = getTableNameForModule(header.module_code);
+  if (tableName) {
+    await client.query(
+      `
+      UPDATE ${tableName}
+      SET period_id = $1,
+          journal_entry_id = $2,
+          updated_at = NOW()
+      WHERE organization_id = $3 AND id = $4
+      `,
+      [period.id, posted.journalId || posted.id || posted.journal_id, orgId, header.id]
+    );
+  }
+
   return {
     period,
     journalId: posted.journalId || posted.id || posted.journal_id,
     payload
   };
+}
+
+// Helper function to map module codes to table names
+function getTableNameForModule(moduleCode) {
+  const tableMap = {
+    'expenses': 'expenses',
+    'petty_cash': 'petty_cash_transactions',
+    'advance': 'advances',
+    'refund': 'refunds',
+    'goods_receipt': 'goods_receipts',
+    'return': 'returns'
+  };
+  return tableMap[moduleCode];
 }
 
 module.exports = {
