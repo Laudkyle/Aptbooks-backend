@@ -3,10 +3,10 @@ const { pool } = require("../../../db/pool");
 async function createItem(orgId, payload) {
   const { categoryId, unitId, sku, name, isActive, barcode, reorderPoint, reorderQty } = payload;
   const { rows } = await pool.query(
-    `INSERT INTO inventory_items(organization_id, category_id, unit_id, sku, name, is_active, status, barcode, reorder_point, reorder_qty)
+    `INSERT INTO inventory_items(organization_id, category_id, unit_id, sku, name, is_active, status, barcode, reorder_point, reorder_quantity)
      VALUES($1,$2,$3,$4,$5,$6, CASE WHEN $6 THEN 'active' ELSE 'inactive' END, $7,$8,$9)
      RETURNING *`,
-    [orgId, categoryId, unitId, sku, name, isActive !== false, barcode || null, reorderPoint ?? null, reorderQty ?? null]
+    [orgId, categoryId, unitId, sku, name, isActive !== false, barcode || null, reorderPoint ?? 0, reorderQty ?? 0]
   );
   return rows[0];
 }
@@ -45,7 +45,7 @@ async function updateItem(orgId, itemId, payload) {
          status=COALESCE($8, status),
          barcode=COALESCE($9, barcode),
          reorder_point=COALESCE($10, reorder_point),
-         reorder_qty=COALESCE($11, reorder_qty),
+         reorder_quantity=COALESCE($11, reorder_quantity),
          updated_at=NOW()
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
