@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS operational_documents (
   cash_account_id UUID NULL REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
   primary_account_id UUID NULL REFERENCES chart_of_accounts(id) ON DELETE RESTRICT,
   amount_total NUMERIC(18,2) NOT NULL DEFAULT 0,
-  currency_code CHAR(3) NOT NULL,
+  currency_code CHAR(3) NOT NULL REFERENCES currencies(code) ON DELETE RESTRICT,
   workflow_document_id UUID NULL REFERENCES documents(id) ON DELETE SET NULL,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   rejection_comment TEXT NULL,

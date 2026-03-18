@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "entity_type": "quotation",
+  "entity_id": "cb9dfa80-3a56-436f-9f3c-a0e52ef5895a",
+  "snapshot_at": "2026-03-17T16:38:26.156Z",
+  "header": {
+    "id": "cb9dfa80-3a56-436f-9f3c-a0e52ef5895a",
+    "organization_id": "1c26b678-a51d-4140-95e1-d09989919cf2",
+    "module_code": "quotation",
+    "document_no": "QTN-000001",
+    "counterparty_partner_id": "9c4c2a15-b890-49cb-bf96-41aa2cb46de7",
+    "employee_id": null,
+    "document_date": "2026-03-17T00:00:00.000Z",
+    "due_date": "2026-03-18T00:00:00.000Z",
+    "status": "draft",
+    "memo": "gfdsgfds",
+    "reference": "fdsafdfdsa",
+    "source_document_id": null,
+    "cash_account_id": null,
+    "primary_account_id": null,
+    "amount_total": "43.00",
+    "currency_code": "GHD",
+    "workflow_document_id": null,
+    "meta": {},
+    "rejection_comment": null,
+    "issued_at": null,
+    "issued_by": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "created_by": "52458dc0-e43d-4a5e-b82e-e2004aacbfee",
+    "updated_by": "52458dc0-e43d-4a5e-b82e-e2004aacbfee",
+    "created_at": "2026-03-17T16:36:38.742Z",
+    "updated_at": "2026-03-17T16:36:38.742Z",
+    "period_id": null,
+    "journal_entry_id": null
+  },
+  "lines": [
+    {
+      "id": "fe248bf0-77f2-42b6-8d1c-f9d68c6aa06d",
+      "document_id": "cb9dfa80-3a56-436f-9f3c-a0e52ef5895a",
+      "line_no": 1,
+      "description": "fdsgfds",
+      "quantity": "1.0000",
+      "unit_price": "43.0000",
+      "line_total": "43.00",
+      "account_id": "655d569d-4077-484c-88a1-578db418b213",
+      "item_id": null,
+      "tax_code_id": null,
+      "meta": {},
+      "created_at": "2026-03-17T16:36:38.742Z",
+      "updated_at": "2026-03-17T16:36:38.742Z"
+    }
+  ],
+  "totals": {
+    "amountTotal": "43.00"
+  },
+  "meta": {
+    "moduleCode": "quotation"
+  }
+}

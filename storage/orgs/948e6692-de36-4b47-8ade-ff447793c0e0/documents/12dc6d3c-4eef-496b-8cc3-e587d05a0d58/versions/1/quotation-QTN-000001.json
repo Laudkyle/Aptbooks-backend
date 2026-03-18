@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "entity_type": "quotation",
+  "entity_id": "72f1d414-c776-4560-9af6-ae342bce6939",
+  "snapshot_at": "2026-03-17T16:44:26.880Z",
+  "header": {
+    "id": "72f1d414-c776-4560-9af6-ae342bce6939",
+    "organization_id": "948e6692-de36-4b47-8ade-ff447793c0e0",
+    "module_code": "quotation",
+    "document_no": "QTN-000001",
+    "counterparty_partner_id": "3269a7b2-99e2-4e02-af30-305b83130b50",
+    "employee_id": null,
+    "document_date": "2026-03-17T00:00:00.000Z",
+    "due_date": "2026-03-18T00:00:00.000Z",
+    "status": "draft",
+    "memo": "FDASKFJDLSAKFDSA",
+    "reference": "This is external reference",
+    "source_document_id": null,
+    "cash_account_id": null,
+    "primary_account_id": null,
+    "amount_total": "32.00",
+    "currency_code": "GHS",
+    "workflow_document_id": null,
+    "meta": {},
+    "rejection_comment": null,
+    "issued_at": null,
+    "issued_by": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "created_by": "6ac80a30-f01c-49fb-8c68-4cad17adb85f",
+    "updated_by": "6ac80a30-f01c-49fb-8c68-4cad17adb85f",
+    "created_at": "2026-03-17T16:43:35.614Z",
+    "updated_at": "2026-03-17T16:43:35.614Z",
+    "period_id": null,
+    "journal_entry_id": null
+  },
+  "lines": [
+    {
+      "id": "cbdda649-987f-444e-8827-1bf99d3024a2",
+      "document_id": "72f1d414-c776-4560-9af6-ae342bce6939",
+      "line_no": 1,
+      "description": "FDSANM,WEKERW",
+      "quantity": "1.0000",
+      "unit_price": "32.0000",
+      "line_total": "32.00",
+      "account_id": "ec70300a-8179-4ad7-9381-4ca8b9a08795",
+      "item_id": null,
+      "tax_code_id": null,
+      "meta": {},
+      "created_at": "2026-03-17T16:43:35.614Z",
+      "updated_at": "2026-03-17T16:43:35.614Z"
+    }
+  ],
+  "totals": {
+    "amountTotal": "32.00"
+  },
+  "meta": {
+    "moduleCode": "quotation"
+  }
+}

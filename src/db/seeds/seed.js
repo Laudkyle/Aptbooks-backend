@@ -454,7 +454,7 @@ async function run() {
       ON CONFLICT (code) DO NOTHING;
     `);
 
-    // 2) Permissions (Phase 1 + Phase 2)
+   // 2) Permissions (Phase 1 + Phase 2)
     const perms = [
       // Accounting kernel
       ["accounting.period.read", "Read periods"],
@@ -523,46 +523,67 @@ async function run() {
       ["transactions.customer_receipt.manage", "Create customer receipts"],
       ["transactions.customer_receipt.post", "Post customer receipts"],
       ["transactions.customer_receipt.void", "Void customer receipts"],
+
+      // Quotations
       ["transactions.quotation.read", "Read quotations"],
-      ["transactions.quotation.manage", "Create draft quotations"],
+      ["transactions.quotation.manage", "Create/manage quotations"],
       ["transactions.quotation.issue", "Issue quotations"],
       ["transactions.quotation.void", "Void quotations"],
+
+      // Sales Orders
       ["transactions.sales_order.read", "Read sales orders"],
-      ["transactions.sales_order.manage", "Create draft sales orders"],
+      ["transactions.sales_order.manage", "Create/manage sales orders"],
       ["transactions.sales_order.issue", "Issue sales orders"],
       ["transactions.sales_order.void", "Void sales orders"],
+
+      // Purchase Requisitions
       ["transactions.purchase_requisition.read", "Read purchase requisitions"],
-      ["transactions.purchase_requisition.manage", "Create draft purchase requisitions"],
+      ["transactions.purchase_requisition.manage", "Create/manage purchase requisitions"],
       ["transactions.purchase_requisition.issue", "Issue purchase requisitions"],
       ["transactions.purchase_requisition.void", "Void purchase requisitions"],
+
+      // Purchase Orders
       ["transactions.purchase_order.read", "Read purchase orders"],
-      ["transactions.purchase_order.manage", "Create draft purchase orders"],
+      ["transactions.purchase_order.manage", "Create/manage purchase orders"],
       ["transactions.purchase_order.issue", "Issue purchase orders"],
       ["transactions.purchase_order.void", "Void purchase orders"],
+
+      // Goods Receipts
       ["transactions.goods_receipt.read", "Read goods receipts"],
-      ["transactions.goods_receipt.manage", "Create draft goods receipts"],
+      ["transactions.goods_receipt.manage", "Create/manage goods receipts"],
       ["transactions.goods_receipt.post", "Post goods receipts"],
       ["transactions.goods_receipt.void", "Void goods receipts"],
+
+      // Expenses
       ["transactions.expense.read", "Read expenses"],
-      ["transactions.expense.manage", "Create draft expenses"],
+      ["transactions.expense.manage", "Create/manage expenses"],
       ["transactions.expense.post", "Post expenses"],
       ["transactions.expense.void", "Void expenses"],
+
+      // Petty Cash
       ["transactions.petty_cash.read", "Read petty cash transactions"],
-      ["transactions.petty_cash.manage", "Create draft petty cash transactions"],
+      ["transactions.petty_cash.manage", "Create/manage petty cash transactions"],
       ["transactions.petty_cash.post", "Post petty cash transactions"],
       ["transactions.petty_cash.void", "Void petty cash transactions"],
+
+      // Advances
       ["transactions.advance.read", "Read advances"],
-      ["transactions.advance.manage", "Create draft advances"],
+      ["transactions.advance.manage", "Create/manage advances"],
       ["transactions.advance.post", "Post advances"],
       ["transactions.advance.void", "Void advances"],
+
+      // Returns
       ["transactions.return.read", "Read returns"],
-      ["transactions.return.manage", "Create draft returns"],
+      ["transactions.return.manage", "Create/manage returns"],
       ["transactions.return.post", "Post returns"],
       ["transactions.return.void", "Void returns"],
+
+      // Refunds
       ["transactions.refund.read", "Read refunds"],
-      ["transactions.refund.manage", "Create draft refunds"],
+      ["transactions.refund.manage", "Create/manage refunds"],
       ["transactions.refund.post", "Post refunds"],
       ["transactions.refund.void", "Void refunds"],
+
       // Assets (Tier 4)
       ["assets.categories.read", "Read asset categories"],
       ["assets.categories.manage", "Manage asset categories"],
@@ -570,26 +591,25 @@ async function run() {
       ["assets.fixed_assets.manage", "Manage fixed assets"],
       ["assets.depreciation.run", "Run depreciation posting"],
 
-      
-// Inventory (Tier 5)
-["inventory.units.read", "Read item units"],
-["inventory.units.manage", "Manage item units"],
-["inventory.categories.read", "Read item categories"],
-["inventory.categories.manage", "Manage item categories"],
-["inventory.items.read", "Read inventory items"],
-["inventory.items.manage", "Manage inventory items"],
-["inventory.warehouses.read", "Read warehouses"],
-["inventory.warehouses.manage", "Manage warehouses"],
-["inventory.transactions.read", "Read inventory transactions"],
-["inventory.transactions.post", "Post inventory transactions"],
-["inventory.settings.manage", "Manage inventory settings"],
+      // Inventory (Tier 5)
+      ["inventory.units.read", "Read item units"],
+      ["inventory.units.manage", "Manage item units"],
+      ["inventory.categories.read", "Read item categories"],
+      ["inventory.categories.manage", "Manage item categories"],
+      ["inventory.items.read", "Read inventory items"],
+      ["inventory.items.manage", "Manage inventory items"],
+      ["inventory.warehouses.read", "Read warehouses"],
+      ["inventory.warehouses.manage", "Manage warehouses"],
+      ["inventory.transactions.read", "Read inventory transactions"],
+      ["inventory.transactions.post", "Post inventory transactions"],
+      ["inventory.settings.manage", "Manage inventory settings"],
 
-// Banking (Tier 7)
-["banking.accounts.read", "Read bank accounts"],
-["banking.accounts.manage", "Manage bank accounts"],
-["banking.statements.read", "Read bank statements"],
-["banking.statements.manage", "Manage bank statements"],
-["banking.reconciliation.run", "Run bank reconciliation"],
+      // Banking (Tier 7)
+      ["banking.accounts.read", "Read bank accounts"],
+      ["banking.accounts.manage", "Manage bank accounts"],
+      ["banking.statements.read", "Read bank statements"],
+      ["banking.statements.manage", "Manage bank statements"],
+      ["banking.reconciliation.run", "Run bank reconciliation"],
 
       // Compliance (Tier 8) - IFRS 16 Leases
       ["compliance.ifrs16.read", "Read IFRS16 leases and schedules"],
@@ -635,9 +655,9 @@ async function run() {
       ["reporting.tax.read", "Read tax reports"],
       
       ["reporting.inventory.read", "Read inventory reports"],
-// Optional override
+
+      // Optional override
       ["notifications.manage", "Managing of notifications"],
-      
     ];
 
     for (const [code, description] of perms) {
