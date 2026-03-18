@@ -622,6 +622,10 @@ async function run() {
       ["banking.statements.read", "Read bank statements"],
       ["banking.statements.manage", "Manage bank statements"],
       ["banking.reconciliation.run", "Run bank reconciliation"],
+      ["banking.treasury.read", "Read treasury and cash-management data"],
+      ["banking.treasury.manage", "Manage treasury instructions and cash-management records"],
+      ["banking.treasury.approve", "Approve treasury payment batches and transfers"],
+      ["banking.treasury.execute", "Execute treasury payments, transfers, and cheques"],
 
       // Compliance (Tier 8) - IFRS 16 Leases
       ["compliance.ifrs16.read", "Read IFRS16 leases and schedules"],
