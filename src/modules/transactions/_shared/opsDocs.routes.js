@@ -37,7 +37,7 @@ function createOpsDocRouter(config) {
 
   router.get("/:id", requirePermission(`${permissionPrefix}.read`), async (req, res, next) => {
     try {
-      res.json(await service.getDetails({ orgId: req.user.organization_id, documentId: req.params.id }));
+      res.json(await service.getDetails({ orgId: req.user.organization_id, documentId: req.params.id, currentUserId: req.user.id }));
     } catch (e) { next(e); }
   });
 

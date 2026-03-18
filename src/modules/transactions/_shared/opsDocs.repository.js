@@ -90,24 +90,40 @@ async function insertLine(client, documentId, lineNo, line) {
   return rows[0];
 }
 
-function resolveDbArgs(a, b, c) {
+function resolveDbArgs(a, b, c,d) {
   if (typeof a?.query === "function" && typeof b === "string") {
-    return { db: a, orgId: b, documentId: c };
+    return { db: a, orgId: b, documentId: c, currentUserId: d };
   }
-  return { db: pool, orgId: a, documentId: b };
+  return { db: pool, orgId: a, documentId: b, currentUserId: c };
 }
 
-async function getDocumentById(a, b, c) {
-  const { db, orgId, documentId } = resolveDbArgs(a, b, c);
+async function getDocumentById(a, b, c, d) {
+  const { orgId, documentId, currentUserId, db} = resolveDbArgs(a, b, c, d);
+console.log({ orgId, documentId, currentUserId });
   const { rows } = await db.query(
     `
     SELECT d.*,
+           doc.created_by_user_id,
+           $3::uuid AS current_user_id,
+           doc.document_type_id,
+           dws.creator_can_approve,
+           dws.creator_can_post,
            p.name AS partner_name,
            p.type AS partner_type,
            e.first_name AS employee_first_name,
            e.last_name AS employee_last_name,
            doc.workflow_state_code,
-           LOWER(doc.workflow_state_code) AS workflow_status
+           LOWER(doc.workflow_state_code) AS workflow_status,
+           CASE
+             WHEN doc.id IS NOT NULL AND doc.created_by_user_id = $3::uuid
+             THEN COALESCE(dws.creator_can_approve, FALSE)
+             ELSE FALSE
+           END AS can_approve,
+           CASE
+             WHEN doc.id IS NOT NULL AND doc.created_by_user_id = $3::uuid
+             THEN COALESCE(dws.creator_can_post, FALSE)
+             ELSE FALSE
+           END AS can_post
       FROM operational_documents d
  LEFT JOIN business_partners p
         ON p.id = d.counterparty_partner_id
@@ -116,14 +132,33 @@ async function getDocumentById(a, b, c) {
  LEFT JOIN documents doc
         ON doc.id = d.workflow_document_id
        AND doc.organization_id = d.organization_id
+ LEFT JOIN LATERAL (
+       SELECT
+         s.creator_can_approve,
+         s.creator_can_post,
+         s.document_type_id
+       FROM document_workflow_statics s
+       WHERE s.organization_id = d.organization_id
+         AND (
+           (doc.document_type_id IS NOT NULL AND s.document_type_id = doc.document_type_id)
+           OR s.document_type_id IS NULL
+         )
+       ORDER BY
+         CASE
+           WHEN s.document_type_id = doc.document_type_id THEN 0
+           ELSE 1
+         END,
+         s.document_type_id NULLS LAST
+       LIMIT 1
+     ) dws ON TRUE
      WHERE d.organization_id = $1
        AND d.id = $2
     `,
-    [orgId, documentId]
+    [orgId, documentId, currentUserId]
   );
+console.log({ doc: rows[0] });
   return rows[0] || null;
 }
-
 async function getDocumentLines(documentId, db = pool) {
   const { rows } = await db.query(
     `SELECT * FROM operational_document_lines WHERE document_id = $1 ORDER BY line_no`,

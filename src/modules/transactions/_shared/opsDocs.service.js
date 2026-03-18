@@ -122,8 +122,8 @@ function createOpsDocService(config) {
     return repo.listDocuments({ orgId, moduleCode, query });
   }
 
-  async function getDetails({ orgId, documentId }) {
-    const header = await repo.getDocumentById(orgId, documentId);
+  async function getDetails({ orgId, documentId, currentUserId }) {
+    const header = await repo.getDocumentById(orgId, documentId, currentUserId);
     if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
     const lines = await repo.getDocumentLines(documentId);
     return { header, lines };
@@ -156,7 +156,7 @@ function createOpsDocService(config) {
         }
       });
 
-      const updated = await repo.setStatus(client, orgId, documentId, "submitted", actorUserId);
+      const updated = await repo.setStatus(client, orgId, documentId, "draft", actorUserId);
       await client.query("COMMIT");
       return { document: updated, workflowDocument };
     } catch (e) {
@@ -176,7 +176,7 @@ function createOpsDocService(config) {
       const header = await repo.getLockedDocument(client, orgId, documentId);
       if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
       if (!header.workflow_document_id) throw new AppError(409, "Document has no workflow document");
-      if (!["submitted", "approved"].includes(header.status)) throw new AppError(409, "Only submitted documents can be approved");
+      if (!["submitted","draft", "approved"].includes(header.status)) throw new AppError(409, "Only submitted documents can be approved");
 
       workflowDocument = await documentableSvc.approveEntityDocument({
         orgId,
