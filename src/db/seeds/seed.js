@@ -603,6 +603,16 @@ async function run() {
       ["inventory.transactions.read", "Read inventory transactions"],
       ["inventory.transactions.post", "Post inventory transactions"],
       ["inventory.settings.manage", "Manage inventory settings"],
+      ["inventory.reservations.read", "Read stock reservations"],
+      ["inventory.reservations.manage", "Manage stock reservations"],
+      ["inventory.transfers.read", "Read stock transfer requests"],
+      ["inventory.transfers.manage", "Manage stock transfer requests"],
+      ["inventory.transfers.approve", "Approve stock transfer requests"],
+      ["inventory.transfers.post", "Post stock transfer requests"],
+      ["inventory.traceability.read", "Read batch and serial traceability"],
+      ["inventory.traceability.manage", "Manage batch and serial traceability"],
+      ["inventory.reorder.read", "Read reorder settings and suggestions"],
+      ["inventory.reorder.manage", "Manage reorder settings and automation"],
 
       // Banking (Tier 7)
       ["banking.accounts.read", "Read bank accounts"],

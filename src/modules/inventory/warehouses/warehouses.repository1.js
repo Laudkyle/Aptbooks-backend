@@ -18,4 +18,26 @@ async function listWarehouses(orgId) {
   return rows;
 }
 
-module.exports = { createWarehouse, listWarehouses };
+
+async function getWarehouse(orgId, warehouseId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM warehouses WHERE organization_id=$1 AND id=$2`,
+    [orgId, warehouseId]
+  );
+  return rows[0] || null;
+}
+
+async function updateWarehouse(orgId, warehouseId, { code, name, isActive }) {
+  const current = await getWarehouse(orgId, warehouseId);
+  if (!current) return null;
+  const { rows } = await pool.query(
+    `UPDATE warehouses
+        SET code=$3, name=$4, is_active=$5
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *`,
+    [orgId, warehouseId, code || current.code, name || current.name, isActive == null ? current.is_active : isActive]
+  );
+  return rows[0] || null;
+}
+
+module.exports = { createWarehouse, listWarehouses, getWarehouse, updateWarehouse };

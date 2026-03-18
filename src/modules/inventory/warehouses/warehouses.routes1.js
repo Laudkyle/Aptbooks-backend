@@ -18,4 +18,15 @@ router.post("/", idempotency({ required: true }), requirePermission("inventory.w
   } catch (e) { next(e); }
 });
 
+
+router.get('/:id', requirePermission('inventory.warehouses.read'), async (req, res, next) => {
+  try { res.json(await svc.getWarehouse(req.user.organization_id, req.params.id)); }
+  catch (e) { next(e); }
+});
+
+router.patch('/:id', idempotency({ required: true }), requirePermission('inventory.warehouses.manage'), async (req, res, next) => {
+  try { res.json(await svc.updateWarehouse(req.user.organization_id, req.params.id, req.body)); }
+  catch (e) { next(e); }
+});
+
 module.exports = router;
