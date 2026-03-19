@@ -104,7 +104,7 @@ async function execute(orgId, paymentRunId, actorUserId) {
       actorUserId,
       client,
       payload: {
-        journalDate: header.execution_date,
+        entryDate: header.execution_date,
         periodId,
         memo: header.memo || `Payment run ${header.code}`,
         sourceType: 'payment_run',

@@ -104,7 +104,7 @@ async function post(orgId, bankTransferId, actorUserId) {
       actorUserId,
       client,
       payload: {
-        journalDate: row.transfer_date,
+        entryDate: row.transfer_date,
         periodId,
         memo: row.memo || `Bank transfer ${row.code}`,
         sourceType: 'bank_transfer',

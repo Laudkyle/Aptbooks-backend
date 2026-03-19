@@ -6,7 +6,9 @@ async function list(orgId, filters = {}) {
   const where = ['bt.organization_id=$1'];
   if (filters.status) { params.push(filters.status); where.push(`bt.status=$${params.length}`); }
   const { rows } = await pool.query(
-    `SELECT bt.*, fba.code AS from_bank_code, fba.name AS from_bank_name, tba.code AS to_bank_code, tba.name AS to_bank_name
+    `SELECT bt.*, fba.code AS from_bank_code, fba.name AS from_bank_name, tba.code AS to_bank_code, tba.name AS to_bank_name,
+            fba.code AS from_bank_account_code, fba.name AS from_bank_account_name,
+            tba.code AS to_bank_account_code, tba.name AS to_bank_account_name
        FROM bank_transfers bt
        JOIN bank_accounts fba ON fba.id = bt.from_bank_account_id
        JOIN bank_accounts tba ON tba.id = bt.to_bank_account_id
@@ -19,7 +21,9 @@ async function list(orgId, filters = {}) {
 
 async function get(orgId, bankTransferId, client = pool) {
   const { rows } = await client.query(
-    `SELECT bt.*, fba.code AS from_bank_code, fba.name AS from_bank_name, tba.code AS to_bank_code, tba.name AS to_bank_name
+    `SELECT bt.*, fba.code AS from_bank_code, fba.name AS from_bank_name, tba.code AS to_bank_code, tba.name AS to_bank_name,
+            fba.code AS from_bank_account_code, fba.name AS from_bank_account_name,
+            tba.code AS to_bank_account_code, tba.name AS to_bank_account_name
        FROM bank_transfers bt
        JOIN bank_accounts fba ON fba.id = bt.from_bank_account_id
        JOIN bank_accounts tba ON tba.id = bt.to_bank_account_id

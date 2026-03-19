@@ -52,7 +52,7 @@ async function issue(orgId, chequeId, actorUserId, payload) {
         actorUserId,
         client,
         payload: {
-          journalDate: issueDate,
+          entryDate: issueDate,
           periodId,
           memo: payload.memo || cheque.memo || `Cheque ${cheque.cheque_no}`,
           sourceType: 'cheque',

@@ -17,7 +17,11 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client = null }
  * Creates a draft journal and immediately posts it.
  */
 async function postJournal({ orgId, actorUserId, payload, client = null }) {
-  const draft = await journalSvc.createDraftJournal({ orgId, actorUserId, payload, client });
+  const normalizedPayload = {
+    ...(payload || {}),
+    entryDate: payload?.entryDate || payload?.journalDate || null,
+  };
+  const draft = await journalSvc.createDraftJournal({ orgId, actorUserId, payload: normalizedPayload, client });
   return journalSvc.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 }
 
