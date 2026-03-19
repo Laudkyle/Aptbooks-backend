@@ -13,22 +13,28 @@ async function get(orgId, chequeId) {
 }
 
 async function createLeaf(orgId, actorUserId, payload) {
-  if (!payload?.bankAccountId) throw new AppError(400, 'bankAccountId is required');
-  if (!payload?.chequeNo) throw new AppError(400, 'chequeNo is required');
+  const bankAccountId = payload?.bankAccountId || payload?.bank_account_id;
+  const chequeNo = payload?.chequeNo || payload?.cheque_no;
+  const issueDate = payload?.issueDate || payload?.issue_date;
+  const currencyCode = payload?.currencyCode || payload?.currency_code;
+  const paymentRunId = payload?.paymentRunId || payload?.payment_run_id;
+  const journalEntryId = payload?.journalEntryId || payload?.journal_entry_id;
+  if (!bankAccountId) throw new AppError(400, 'bankAccountId is required');
+  if (!chequeNo) throw new AppError(400, 'chequeNo is required');
   return withTransaction(async (client) => {
-    const { rows } = await client.query(`SELECT id, currency_code FROM bank_accounts WHERE organization_id=$1 AND id=$2`, [orgId, payload.bankAccountId]);
+    const { rows } = await client.query(`SELECT id, currency_code FROM bank_accounts WHERE organization_id=$1 AND id=$2`, [orgId, bankAccountId]);
     if (!rows.length) throw new AppError(404, 'Bank account not found');
     return repo.create(orgId, {
-      bankAccountId: payload.bankAccountId,
-      chequeNo: payload.chequeNo,
-      payeeName: payload.payeeName || null,
-      issueDate: payload.issueDate || null,
+      bankAccountId,
+      chequeNo,
+      payeeName: payload.payeeName || payload.payee_name || null,
+      issueDate: issueDate || null,
       amount: payload.amount != null ? normalizeAmount(payload.amount) : null,
-      currencyCode: payload.currencyCode || rows[0].currency_code,
+      currencyCode: currencyCode || rows[0].currency_code,
       status: payload.status || 'available',
       memo: payload.memo || null,
-      paymentRunId: payload.paymentRunId || null,
-      journalEntryId: payload.journalEntryId || null,
+      paymentRunId: paymentRunId || null,
+      journalEntryId: journalEntryId || null,
     }, actorUserId, client);
   });
 }
@@ -38,14 +44,20 @@ async function issue(orgId, chequeId, actorUserId, payload) {
     const cheque = await repo.get(orgId, chequeId, client);
     if (!cheque) throw new AppError(404, 'Cheque not found');
     if (!['available'].includes(cheque.status)) throw new AppError(409, 'Only available cheques can be issued');
+    const postOnIssue = payload?.postOnIssue ?? payload?.post_on_issue;
+    const offsetAccountId = payload?.offsetAccountId || payload?.offset_account_id;
+    const issueDate = payload?.issueDate || payload?.issue_date || cheque.issue_date;
+    const paymentRunId = payload?.paymentRunId || payload?.payment_run_id || null;
+    const dimensionsJson = payload?.dimensionsJson || payload?.dimensions_json || {};
+    const finalAmount = payload?.amount != null ? normalizeAmount(payload.amount) : (cheque.amount != null ? normalizeAmount(cheque.amount) : null);
+    if (!issueDate) throw new AppError(400, 'issueDate is required');
+    if (finalAmount == null) throw new AppError(400, 'amount is required before a cheque can be issued');
     let journalEntryId = cheque.journal_entry_id || null;
-    if (payload?.postOnIssue) {
-      if (!payload.offsetAccountId) throw new AppError(400, 'offsetAccountId is required when postOnIssue is true');
-      if (!cheque.issue_date && !payload.issueDate) throw new AppError(400, 'issueDate is required when posting a cheque issue');
+    if (postOnIssue) {
+      if (!offsetAccountId) throw new AppError(400, 'offsetAccountId is required when postOnIssue is true');
       const { rows } = await client.query(`SELECT gl_account_id, currency_code FROM bank_accounts WHERE organization_id=$1 AND id=$2`, [orgId, cheque.bank_account_id]);
       if (!rows.length) throw new AppError(404, 'Bank account not found');
       const bank = rows[0];
-      const issueDate = payload.issueDate || cheque.issue_date;
       const periodId = await findOpenPeriodId(orgId, issueDate, client);
       const posted = await journalIF.postJournal({
         orgId,
@@ -54,18 +66,25 @@ async function issue(orgId, chequeId, actorUserId, payload) {
         payload: {
           entryDate: issueDate,
           periodId,
-          memo: payload.memo || cheque.memo || `Cheque ${cheque.cheque_no}`,
+          memo: payload?.memo || cheque.memo || `Cheque ${cheque.cheque_no}`,
           sourceType: 'cheque',
           sourceId: cheque.id,
           lines: [
-            { accountId: payload.offsetAccountId, debit: Number(cheque.amount || 0), credit: 0, currencyCode: cheque.currency_code || bank.currency_code, memo: payload.memo || `Cheque ${cheque.cheque_no}`, dimensionsJson: payload.dimensionsJson || {} },
-            { accountId: bank.gl_account_id, debit: 0, credit: Number(cheque.amount || 0), currencyCode: bank.currency_code, memo: `Bank outflow cheque ${cheque.cheque_no}`, dimensionsJson: {} }
+            { accountId: offsetAccountId, debit: Number(finalAmount || 0), credit: 0, currencyCode: cheque.currency_code || bank.currency_code, memo: payload?.memo || `Cheque ${cheque.cheque_no}`, dimensionsJson },
+            { accountId: bank.gl_account_id, debit: 0, credit: Number(finalAmount || 0), currencyCode: bank.currency_code, memo: `Bank outflow cheque ${cheque.cheque_no}`, dimensionsJson: {} }
           ]
         }
       });
       journalEntryId = posted.journalId;
     }
-    return repo.update(orgId, chequeId, { status: 'issued', journalEntryId, memo: payload?.memo || null, paymentRunId: payload?.paymentRunId || null }, client);
+    return repo.update(orgId, chequeId, {
+      status: 'issued',
+      issueDate,
+      amount: finalAmount,
+      journalEntryId,
+      memo: payload?.memo || null,
+      paymentRunId
+    }, client);
   });
 }
 
@@ -74,8 +93,9 @@ async function clear(orgId, chequeId, payload) {
     const cheque = await repo.get(orgId, chequeId, client);
     if (!cheque) throw new AppError(404, 'Cheque not found');
     if (cheque.status !== 'issued') throw new AppError(409, 'Only issued cheques can be cleared');
-    if (!payload?.clearedDate) throw new AppError(400, 'clearedDate is required');
-    return repo.update(orgId, chequeId, { status: 'cleared', clearedDate: payload.clearedDate }, client);
+    const clearedDate = payload?.clearedDate || payload?.cleared_date;
+    if (!clearedDate) throw new AppError(400, 'clearedDate is required');
+    return repo.update(orgId, chequeId, { status: 'cleared', clearedDate }, client);
   });
 }
 

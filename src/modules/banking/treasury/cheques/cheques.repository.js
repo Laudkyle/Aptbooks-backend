@@ -41,7 +41,17 @@ async function create(orgId, payload, actorUserId, client = pool) {
 }
 
 async function update(orgId, chequeId, patch = {}, client = pool) {
-  const params = [orgId, chequeId, patch.status ?? null, patch.clearedDate ?? null, patch.journalEntryId ?? null, patch.memo ?? null, patch.paymentRunId ?? null];
+  const params = [
+    orgId,
+    chequeId,
+    patch.status ?? null,
+    patch.clearedDate ?? null,
+    patch.journalEntryId ?? null,
+    patch.memo ?? null,
+    patch.paymentRunId ?? null,
+    patch.issueDate ?? null,
+    patch.amount ?? null
+  ];
   const { rows } = await client.query(
     `UPDATE cheques
         SET status=COALESCE($3,status),
@@ -49,6 +59,8 @@ async function update(orgId, chequeId, patch = {}, client = pool) {
             journal_entry_id=COALESCE($5,journal_entry_id),
             memo=COALESCE($6,memo),
             payment_run_id=COALESCE($7,payment_run_id),
+            issue_date=COALESCE($8,issue_date),
+            amount=COALESCE($9,amount),
             updated_at=NOW()
       WHERE organization_id=$1 AND id=$2
       RETURNING *`,

@@ -15,46 +15,52 @@ async function get(orgId, paymentRunId) {
 }
 
 async function create(orgId, actorUserId, payload) {
-  if (!payload?.bankAccountId) throw new AppError(400, 'bankAccountId is required');
-  if (!payload?.executionDate) throw new AppError(400, 'executionDate is required');
+  const bankAccountId = payload?.bankAccountId || payload?.bank_account_id;
+  const executionDate = payload?.executionDate || payload?.execution_date;
+  const currencyCode = payload?.currencyCode || payload?.currency_code;
+  if (!bankAccountId) throw new AppError(400, 'bankAccountId is required');
+  if (!executionDate) throw new AppError(400, 'executionDate is required');
   return withTransaction(async (client) => {
     const { rows: bankRows } = await client.query(
       `SELECT id, currency_code FROM bank_accounts WHERE organization_id=$1 AND id=$2`,
-      [orgId, payload.bankAccountId]
+      [orgId, bankAccountId]
     );
     if (!bankRows.length) throw new AppError(404, 'Bank account not found');
     const bank = bankRows[0];
     return repo.create(orgId, {
       code: payload.code || genCode('PR'),
-      bankAccountId: payload.bankAccountId,
-      executionDate: payload.executionDate,
-      currencyCode: payload.currencyCode || bank.currency_code,
+      bankAccountId,
+      executionDate,
+      currencyCode: currencyCode || bank.currency_code,
       memo: payload.memo || null,
     }, actorUserId, client);
   });
 }
 
 async function addLines(orgId, paymentRunId, payload) {
-  const lines = Array.isArray(payload?.lines) ? payload.lines : [];
+  const lines = Array.isArray(payload) ? payload : (Array.isArray(payload?.lines) ? payload.lines : []);
   if (!lines.length) throw new AppError(400, 'lines[] is required');
   return withTransaction(async (client) => {
+    const locked = await repo.lockHeader(orgId, paymentRunId, client);
+    if (!locked) throw new AppError(404, 'Payment run not found');
     const header = await repo.get(orgId, paymentRunId, client);
     if (!header) throw new AppError(404, 'Payment run not found');
     if (header.status !== 'draft') throw new AppError(409, 'Only draft payment runs can be edited');
-    let lineNo = 1;
+    let lineNo = await repo.getNextLineNo(orgId, paymentRunId, client);
     const normalized = [];
     for (const line of lines) {
-      if (!line.offsetAccountId) throw new AppError(400, 'offsetAccountId is required on each line');
+      const offsetAccountId = line.offsetAccountId || line.offset_account_id;
+      if (!offsetAccountId) throw new AppError(400, 'offsetAccountId is required on each line');
       normalized.push({
         lineNo: lineNo++,
-        partnerId: line.partnerId || null,
-        payeeName: line.payeeName || null,
-        sourceType: line.sourceType || null,
-        sourceId: line.sourceId || null,
-        offsetAccountId: line.offsetAccountId,
+        partnerId: line.partnerId || line.partner_id || null,
+        payeeName: line.payeeName || line.payee_name || null,
+        sourceType: line.sourceType || line.source_type || null,
+        sourceId: line.sourceId || line.source_id || null,
+        offsetAccountId,
         description: line.description || null,
         amount: normalizeAmount(line.amount),
-        currencyCode: line.currencyCode || header.currency_code,
+        currencyCode: line.currencyCode || line.currency_code || header.currency_code,
         dimensionsJson: line.dimensionsJson || line.dimensions_json || {},
       });
     }

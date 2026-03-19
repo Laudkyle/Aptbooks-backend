@@ -111,4 +111,22 @@ async function replaceStatus(orgId, paymentRunId, status, patch = {}, client = p
   return rows[0] || null;
 }
 
-module.exports = { list, get, getLines, create, addLines, replaceStatus };
+async function lockHeader(orgId, paymentRunId, client = pool) {
+  const { rows } = await client.query(
+    `SELECT id FROM payment_runs WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+    [orgId, paymentRunId]
+  );
+  return rows[0] || null;
+}
+
+async function getNextLineNo(orgId, paymentRunId, client = pool) {
+  const { rows } = await client.query(
+    `SELECT COALESCE(MAX(line_no), 0) + 1 AS next_line_no
+       FROM payment_run_lines
+      WHERE organization_id=$1 AND payment_run_id=$2`,
+    [orgId, paymentRunId]
+  );
+  return Number(rows[0]?.next_line_no || 1);
+}
+
+module.exports = { list, get, getLines, create, addLines, replaceStatus, lockHeader, getNextLineNo };

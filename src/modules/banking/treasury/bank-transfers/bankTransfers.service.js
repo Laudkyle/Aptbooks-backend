@@ -13,24 +13,29 @@ async function get(orgId, bankTransferId) {
 }
 
 async function create(orgId, actorUserId, payload) {
-  if (!payload?.fromBankAccountId) throw new AppError(400, 'fromBankAccountId is required');
-  if (!payload?.toBankAccountId) throw new AppError(400, 'toBankAccountId is required');
-  if (!payload?.transferDate) throw new AppError(400, 'transferDate is required');
-  if (payload.fromBankAccountId === payload.toBankAccountId) throw new AppError(400, 'fromBankAccountId and toBankAccountId must differ');
+  const fromBankAccountId = payload?.fromBankAccountId || payload?.from_bank_account_id;
+  const toBankAccountId = payload?.toBankAccountId || payload?.to_bank_account_id;
+  const transferDate = payload?.transferDate || payload?.transfer_date;
+  const feeAmount = payload?.feeAmount ?? payload?.fee_amount;
+  const feeAccountId = payload?.feeAccountId || payload?.fee_account_id;
+  if (!fromBankAccountId) throw new AppError(400, 'fromBankAccountId is required');
+  if (!toBankAccountId) throw new AppError(400, 'toBankAccountId is required');
+  if (!transferDate) throw new AppError(400, 'transferDate is required');
+  if (fromBankAccountId === toBankAccountId) throw new AppError(400, 'fromBankAccountId and toBankAccountId must differ');
   return withTransaction(async (client) => {
     const { rows } = await client.query(
       `SELECT id FROM bank_accounts WHERE organization_id=$1 AND id = ANY($2::uuid[])`,
-      [orgId, [payload.fromBankAccountId, payload.toBankAccountId]]
+      [orgId, [fromBankAccountId, toBankAccountId]]
     );
     if (rows.length !== 2) throw new AppError(404, 'One or more bank accounts were not found');
     return repo.create(orgId, {
       code: payload.code || genCode('BT'),
-      fromBankAccountId: payload.fromBankAccountId,
-      toBankAccountId: payload.toBankAccountId,
-      transferDate: payload.transferDate,
+      fromBankAccountId,
+      toBankAccountId,
+      transferDate,
       amount: normalizeAmount(payload.amount),
-      feeAmount: parseOptionalAmount(payload.feeAmount, 'feeAmount'),
-      feeAccountId: payload.feeAccountId || null,
+      feeAmount: parseOptionalAmount(feeAmount, 'feeAmount'),
+      feeAccountId: feeAccountId || null,
       reference: payload.reference || null,
       memo: payload.memo || null,
     }, actorUserId, client);
