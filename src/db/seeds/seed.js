@@ -674,6 +674,24 @@ async function run() {
 
       // Optional override
       ["notifications.manage", "Managing of notifications"],
+      ["automation.recurring.read", "Read recurring transaction automations"],
+      ["automation.recurring.manage", "Manage recurring transaction automations"],
+      ["automation.recurring.run", "Run recurring transaction automations"],
+      ["automation.jobs.read", "Read accounting job automation tasks"],
+      ["automation.jobs.manage", "Manage accounting job automation tasks"],
+      ["automation.jobs.run", "Run accounting job automation tasks"],
+      ["automation.reconciliation.read", "Read auto reconciliation profiles and results"],
+      ["automation.reconciliation.manage", "Manage auto reconciliation profiles"],
+      ["automation.reconciliation.run", "Run auto reconciliation profiles"],
+      ["automation.document-matching.read", "Read intelligent document matching"],
+      ["automation.document-matching.manage", "Manage intelligent document matching profiles"],
+      ["automation.document-matching.run", "Run intelligent document matching"],
+      ["automation.classification.read", "Read automation classification rules and logs"],
+      ["automation.classification.manage", "Manage automation classification rules"],
+      ["automation.classification.run", "Run automation classification"],
+      ["automation.notifications.read", "Read smart notification rules"],
+      ["automation.notifications.manage", "Manage smart notification rules"],
+      ["automation.notifications.run", "Run smart notification rules"],
     ];
 
     

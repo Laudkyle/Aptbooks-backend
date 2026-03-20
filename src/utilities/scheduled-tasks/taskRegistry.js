@@ -19,6 +19,8 @@ const {
   purgeSavedReportRunsDaily,
 } = require("./maintenance.jobs");
 
+const { recurringTransactionsHourly, autoReconciliationHourly, smartNotificationsHourly } = require('./automation.jobs');
+
 function listTasks() {
   return [
     {
@@ -104,6 +106,24 @@ function listTasks() {
       name: "Purge saved report run history per retention (daily)",
       schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 20 },
       handler: async () => purgeSavedReportRunsDaily(),
+    },
+    {
+      code: "automation.recurring_transactions.process.hourly",
+      name: "Process due recurring transactions (hourly)",
+      schedule: { type: "interval_seconds", intervalSeconds: 3600 },
+      handler: async () => recurringTransactionsHourly(),
+    },
+    {
+      code: "automation.auto_reconciliation.scan.hourly",
+      name: "Scan bank lines for auto reconciliation suggestions (hourly)",
+      schedule: { type: "interval_seconds", intervalSeconds: 3600 },
+      handler: async () => autoReconciliationHourly(),
+    },
+    {
+      code: "automation.smart_notifications.dispatch.hourly",
+      name: "Dispatch smart automation notifications (hourly)",
+      schedule: { type: "interval_seconds", intervalSeconds: 3600 },
+      handler: async () => smartNotificationsHourly(),
     }
   ];
 }
