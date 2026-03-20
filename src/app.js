@@ -50,9 +50,6 @@ const app = express();
 // Correct client IP/Proto when behind a reverse proxy (e.g., Nginx, ALB).
 app.set("trust proxy", env.TRUST_PROXY);
 
-// Liveness / readiness / comprehensive health report
-app.use("/", healthRouter);
-
 
 const swaggerUi = require("swagger-ui-express");
 const { swaggerDocument } = require("./docs/swagger");
@@ -117,6 +114,8 @@ app.use(globalRateLimit);
 
 
 app.use(auditMiddleware);
+// Liveness / readiness / comprehensive health report
+app.use("/", healthRouter);
 
 app.use("/auth", authRateLimit, authRoutes);
 app.use("/core/users", usersRoutes);
