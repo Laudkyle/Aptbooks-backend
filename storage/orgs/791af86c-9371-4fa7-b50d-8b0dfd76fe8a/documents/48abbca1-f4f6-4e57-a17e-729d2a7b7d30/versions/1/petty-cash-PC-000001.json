@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "entity_type": "petty_cash",
+  "entity_id": "ae14bb1b-79f0-4bb4-931c-17d833079ae1",
+  "snapshot_at": "2026-03-20T04:28:07.197Z",
+  "header": {
+    "id": "ae14bb1b-79f0-4bb4-931c-17d833079ae1",
+    "organization_id": "791af86c-9371-4fa7-b50d-8b0dfd76fe8a",
+    "module_code": "petty_cash",
+    "document_no": "PC-000001",
+    "counterparty_partner_id": null,
+    "employee_id": null,
+    "document_date": "2026-03-20T00:00:00.000Z",
+    "due_date": null,
+    "status": "draft",
+    "memo": "fdsafmdsamf",
+    "reference": ";ljglksgg",
+    "source_document_id": null,
+    "cash_account_id": "b7d42cae-4286-4297-8159-b49bc60a741f",
+    "primary_account_id": null,
+    "amount_total": "2545.00",
+    "currency_code": "GHS",
+    "workflow_document_id": null,
+    "meta": {},
+    "rejection_comment": null,
+    "issued_at": null,
+    "issued_by": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "created_by": "6e1eca50-d38d-4dd3-9245-804b3403d6b9",
+    "updated_by": "6e1eca50-d38d-4dd3-9245-804b3403d6b9",
+    "created_at": "2026-03-20T04:28:00.044Z",
+    "updated_at": "2026-03-20T04:28:00.044Z",
+    "period_id": null,
+    "journal_entry_id": null
+  },
+  "lines": [
+    {
+      "id": "b703c327-9c24-4052-bf47-ab66d4ffba6c",
+      "document_id": "ae14bb1b-79f0-4bb4-931c-17d833079ae1",
+      "line_no": 1,
+      "description": "fdasfdsaf.4",
+      "quantity": "1.0000",
+      "unit_price": "2545.0000",
+      "line_total": "2545.00",
+      "account_id": "7450e487-0f96-4d80-b3af-397ab2d0e3d5",
+      "item_id": null,
+      "tax_code_id": null,
+      "meta": {},
+      "created_at": "2026-03-20T04:28:00.044Z",
+      "updated_at": "2026-03-20T04:28:00.044Z"
+    }
+  ],
+  "totals": {
+    "amountTotal": "2545.00"
+  },
+  "meta": {
+    "moduleCode": "petty_cash"
+  }
+}

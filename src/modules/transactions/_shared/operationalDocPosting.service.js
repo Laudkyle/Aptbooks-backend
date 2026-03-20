@@ -159,7 +159,7 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
 function getTableNameForModule(moduleCode) {
   const tableMap = {
     'expenses': 'expenses',
-    'petty_cash': 'petty_cash_transactions',
+    'petty_cash': 'operational_documents',
     'advance': 'advances',
     'refund': 'refunds',
     'goods_receipt': 'goods_receipts',
