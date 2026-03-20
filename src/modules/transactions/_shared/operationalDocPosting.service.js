@@ -158,12 +158,12 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
 // Helper function to map module codes to table names
 function getTableNameForModule(moduleCode) {
   const tableMap = {
-    'expenses': 'expenses',
+    'expenses': 'operational_documents',
     'petty_cash': 'operational_documents',
-    'advance': 'advances',
-    'refund': 'refunds',
-    'goods_receipt': 'goods_receipts',
-    'return': 'returns'
+    'advance': 'operational_documents',
+    'refund': 'operational_documents',
+    'goods_receipt': 'operational_documents',
+    'return': 'operational_documentsreturns'
   };
   return tableMap[moduleCode];
 }
