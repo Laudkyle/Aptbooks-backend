@@ -150,6 +150,7 @@ app.use("/modules/assets", require("./modules/assets/assets.routes"));
 app.use("/modules/inventory", require("./modules/inventory/inventory.routes"));
 app.use("/modules/banking", require("./modules/banking/banking.routes"));
 app.use("/modules/automation", require("./modules/automation/automation.routes"));
+app.use("/modules/printing", require("./modules/printing/printing.routes"));
 
 // Stage 6: Integrations (payments, e-invoicing, tax forms)
 app.use("/modules/integrations", integrationsRoutes);

@@ -619,6 +619,9 @@ async function initializeOrganizationDefaults({
       ["automation.notifications.read", "Read smart notification rules"],
       ["automation.notifications.manage", "Manage smart notification rules"],
       ["automation.notifications.run", "Run smart notification rules"],
+      ["printing.templates.read", "Read document templates and assignments"],
+      ["printing.templates.manage", "Manage document templates, versions, and assignments"],
+      ["printing.render", "Render transaction documents using assigned templates"],
   ];
 
   for (const [code, description] of perms) {
