@@ -4,6 +4,7 @@ const cors = require("cors");
 const logger = require("./config/logger");
 
 const { errorMiddleware } = require("./middleware/error.middleware");
+const { notFoundMiddleware } = require("./middleware/notFound.middleware");
 const { auditMiddleware } = require("./middleware/audit.middleware");
 const { requestIdMiddleware } = require("./middleware/requestId.middleware");
 const { globalRateLimit, authRateLimit } = require("./middleware/rateLimit.middleware");
@@ -54,20 +55,6 @@ app.set("trust proxy", env.TRUST_PROXY);
 const swaggerUi = require("swagger-ui-express");
 const { swaggerDocument } = require("./docs/swagger");
 
-// Public docs (recommended)
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
-app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
-app.use("/utilities/client-logs", require("./utilities/client-logs/clientLogs.routes"));
-app.use("/utilities/i18n", require("./utilities/i18n/i18n.routes"));
-app.use("/utilities/a11y", require("./utilities/a11y/a11y.routes"));
-app.use("/utilities/release", require("./utilities/release/release.routes"));
-app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
-
-app.use(helmet({
-  // API-first backend; Swagger UI uses inline scripts/styles.
-  contentSecurityPolicy: false
-}));
 
 const corsOptions = {
   origin: function (origin, cb) {
@@ -100,6 +87,20 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+// Public docs (recommended)
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
+app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
+app.use("/utilities/client-logs", require("./utilities/client-logs/clientLogs.routes"));
+app.use("/utilities/i18n", require("./utilities/i18n/i18n.routes"));
+app.use("/utilities/a11y", require("./utilities/a11y/a11y.routes"));
+app.use("/utilities/release", require("./utilities/release/release.routes"));
+app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
+
+app.use(helmet({
+  // API-first backend; Swagger UI uses inline scripts/styles.
+  contentSecurityPolicy: false
+}));
 
 app.use(express.json({
   limit: "10mb",
@@ -172,6 +173,7 @@ app.use("/core/notifications", notificationsRoutes);
 app.use("/search", searchRoutes);
 
 
+app.use(notFoundMiddleware);
 app.use(errorMiddleware);
 
 module.exports = app;

@@ -1,6 +1,7 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const svc = require("./managementReports.service");
+const { AppError } = require('../../shared/errors/AppError');
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ router.get(
   async (req, res, next) => {
     try {
       const { periodId, costCenterId, profitCenterId, projectId } = req.query;
-      if (!periodId) return res.status(400).json({ error: "periodId is required" });
+      if (!periodId) throw new AppError(400, "Please select an accounting period and try again.", { field: "periodId" }, "missing_period_id");
       const data = await svc.departmentalPnL({
         organizationId: orgId(req),
         periodId,
@@ -31,7 +32,7 @@ router.get(
   async (req, res, next) => {
     try {
       const { periodId } = req.query;
-      if (!periodId) return res.status(400).json({ error: "periodId is required" });
+      if (!periodId) throw new AppError(400, "Please select an accounting period and try again.", { field: "periodId" }, "missing_period_id");
       const data = await svc.costCenterSummary({ organizationId: orgId(req), periodId });
       res.json({ data });
     } catch (e) { next(e); }

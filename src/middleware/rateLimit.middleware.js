@@ -63,8 +63,11 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
 
         if (count > MAX) {
           res.status(429).json({
-            error: "Too Many Requests",
-            message: "Rate limit exceeded. Please try again later."
+            ok: false,
+            error: "Too many requests. Please wait a moment and try again.",
+            code: "rate_limit_exceeded",
+            details: undefined,
+            requestId: req.request_id || null
           });
           return;
         }
@@ -89,8 +92,11 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
 
       if (current.count > MAX) {
         res.status(429).json({
-          error: "Too Many Requests",
-          message: "Rate limit exceeded. Please try again later."
+          ok: false,
+          error: "Too many requests. Please wait a moment and try again.",
+          code: "rate_limit_exceeded",
+          details: undefined,
+          requestId: req.request_id || null
         });
         return;
       }

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "entity_type": "journal_entry",
+  "entity_id": "81dc2938-a5f7-42f7-9738-e54025967e6e",
+  "snapshot_at": "2026-03-20T13:58:44.202Z",
+  "header": {
+    "id": "81dc2938-a5f7-42f7-9738-e54025967e6e",
+    "organization_id": "08a3ce8d-8070-425c-a23e-880977db05cd",
+    "entry_no": "5",
+    "journal_entry_type_id": "5a375ceb-4d6f-4337-957c-0a647768d3e4",
+    "period_id": "c82ab5ac-a83d-478b-aedd-b65ef26acfd3",
+    "entry_date": "2026-03-21T00:00:00.000Z",
+    "memo": null,
+    "status": "draft",
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "idempotency_key": null,
+    "created_at": "2026-03-20T13:58:31.162Z",
+    "updated_at": "2026-03-20T13:58:31.162Z",
+    "created_by": "90b44e32-b150-40ba-8b63-1a7cca9a64a6",
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "canceled_at": null,
+    "canceled_by": null,
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "3968ea69-4a05-48e5-a987-59e54db41331",
+      "journal_entry_id": "81dc2938-a5f7-42f7-9738-e54025967e6e",
+      "line_no": 1,
+      "account_id": "90de9668-c33d-48c9-a265-d2a51adaad2f",
+      "description": "ghjhj",
+      "debit": "7687687.00",
+      "credit": "0.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "7687687.00"
+    },
+    {
+      "id": "2ba100b6-c5d1-4901-8ac0-f0f6749a48ec",
+      "journal_entry_id": "81dc2938-a5f7-42f7-9738-e54025967e6e",
+      "line_no": 2,
+      "account_id": "dec70074-05b0-4131-a479-ec945de8c60b",
+      "description": "fghgfh",
+      "debit": "0.00",
+      "credit": "7687687.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "7687687.00"
+    }
+  ],
+  "totals": {
+    "debit_base": "7687687.00",
+    "credit_base": "7687687.00"
+  },
+  "meta": {
+    "status": "draft",
+    "period_id": "c82ab5ac-a83d-478b-aedd-b65ef26acfd3",
+    "entry_date": "2026-03-21T00:00:00.000Z"
+  }
+}

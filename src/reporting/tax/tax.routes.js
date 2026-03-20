@@ -3,6 +3,7 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const svc = require("./tax.service");
+const { AppError } = require('../../shared/errors/AppError');
 
 const router = express.Router();
 
@@ -37,7 +38,7 @@ router.get("/returns/:returnId", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
     const data = await svc.getReturnById({ orgId, returnId: req.params.returnId });
-    if (!data) return res.status(404).json({ error: "Tax return not found" });
+    if (!data) throw new AppError(404, "The selected tax return could not be found.", { returnId: req.params.returnId }, "tax_return_not_found");
     res.json({ data });
   } catch (err) {
     next(err);

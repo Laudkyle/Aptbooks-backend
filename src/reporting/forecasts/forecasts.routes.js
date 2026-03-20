@@ -2,6 +2,7 @@ const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./forecasts.service");
+const { AppError } = require('../../shared/errors/AppError');
 const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
@@ -105,9 +106,7 @@ router.put(
       const { organization_id: orgId, id: actorUserId } = req.user;
       
       if (Object.keys(req.body).length === 0) {
-        return res.status(400).json({ 
-          error: "At least one field required for update" 
-        });
+        throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
       }
       
       const data = await svc.updateScenario({
@@ -135,9 +134,7 @@ router.patch(
       const { organization_id: orgId, id: actorUserId } = req.user;
       
       if (Object.keys(req.body).length === 0) {
-        return res.status(400).json({ 
-          error: "At least one field required for update" 
-        });
+        throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
       }
       
       const data = await svc.updateScenario({
@@ -275,9 +272,7 @@ router.put("/:id",
       const { organization_id: orgId, id: actorUserId } = req.user;
       
       if (Object.keys(req.body).length === 0) {
-        return res.status(400).json({ 
-          error: "At least one field required for update" 
-        });
+        throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
       }
       
       const data = await svc.updateForecast({
@@ -304,9 +299,7 @@ router.patch("/:id",
       const { organization_id: orgId, id: actorUserId } = req.user;
       
       if (Object.keys(req.body).length === 0) {
-        return res.status(400).json({ 
-          error: "At least one field required for update" 
-        });
+        throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
       }
       
       const data = await svc.updateForecast({
@@ -368,9 +361,7 @@ router.put("/:id/versions/:versionId",
       const { organization_id: orgId, id: actorUserId } = req.user;
       
       if (Object.keys(req.body).length === 0) {
-        return res.status(400).json({ 
-          error: "At least one field required for update" 
-        });
+        throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
       }
       
       const data = await svc.updateForecastVersion({
@@ -398,9 +389,7 @@ router.patch("/:id/versions/:versionId",
       const { organization_id: orgId, id: actorUserId } = req.user;
       
       if (Object.keys(req.body).length === 0) {
-        return res.status(400).json({ 
-          error: "At least one field required for update" 
-        });
+        throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
       }
       
       const data = await svc.updateForecastVersion({

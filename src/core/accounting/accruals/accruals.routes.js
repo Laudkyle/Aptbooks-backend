@@ -10,6 +10,7 @@ const {
 const { getSystemActorUserId } = require("../../../core/foundation/users/systemActor.service");
 const svc = require("./accruals.service");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
+const { AppError } = require("../../../shared/errors/AppError");
 
 router.use(authRequired);
 
@@ -76,7 +77,7 @@ router.post("/run/reversals", requirePermission("accounting.accruals.run"), asyn
     const actorUserId = await getSystemActorUserId({ orgId });
 
     const { periodId } = req.body || {};
-    if (!periodId) return res.status(400).json({ error: "periodId required" });
+    if (!periodId) throw new AppError(400, "Please select an accounting period and try again.", { field: "periodId" }, "missing_period_id");
 
     const out = await svc.runReversals({ orgId, actorUserId, periodId });
 

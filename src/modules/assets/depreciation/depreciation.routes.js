@@ -58,7 +58,7 @@ router.get("/preview", requirePermission("assets.depreciation.run"), async (req,
   try {
     const orgId = req.user.organization_id;
     const { periodId } = req.query;
-    if (!periodId) return res.status(400).json({ error: "periodId is required" });
+    if (!periodId) throw new AppError(400, "Please select an accounting period and try again.", { field: "periodId" }, "missing_period_id");
     res.json(await svc.previewPeriodEndDepreciation({ orgId, periodId }));
   } catch (e) { next(e); }
 });

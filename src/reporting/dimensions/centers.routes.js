@@ -2,6 +2,7 @@ const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./centers.service");
+const { AppError } = require('../../shared/errors/AppError');
 
 const router = express.Router();
 
@@ -59,7 +60,7 @@ router.get("/by-id/:id", requirePermission("reporting.centers.read"), async (req
     const data = await svc.getCenterById({ orgId, id });
     
     if (!data) {
-      return res.status(404).json({ error: "Center not found" });
+      throw new AppError(404, "The selected center could not be found.", { id }, "center_not_found");
     }
     
     res.json({ data });

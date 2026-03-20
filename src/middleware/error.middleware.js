@@ -1,20 +1,21 @@
 const logger = require("../config/logger");
-const { AppError } = require("../shared/errors/AppError");
 const { pool } = require("../db/pool");
+const { normalizeError } = require("../shared/errors/normalizeError");
 
 function errorMiddleware(err, req, res, _next) {
-  let status = err instanceof AppError ? err.status : 500;
+  const normalized = normalizeError(err, req);
 
-  // Normalise common framework errors
-  if (status === 500 && typeof err?.message === "string" && err.message.toLowerCase().includes("cors")) {
-    status = 403;
+  if (normalized.status >= 500) {
+    logger.error({ err, path: req.path, requestId: normalized.requestId }, "Unhandled error");
+  } else {
+    logger.warn({
+      code: normalized.code,
+      message: normalized.originalMessage || normalized.message,
+      path: req.path,
+      requestId: normalized.requestId
+    }, "Handled request error");
   }
 
-  if (status >= 500) {
-    logger.error({ err, path: req.path }, "Unhandled error");
-  }
-
-  // Best-effort persistence for admin error viewer. Never block response.
   (async () => {
     try {
       await pool.query(
@@ -27,29 +28,28 @@ function errorMiddleware(err, req, res, _next) {
         `,
         [
           req.user?.organization_id || null,
-          req.request_id || null,
+          normalized.requestId,
           req.path,
           req.method,
-          status,
-          String(err?.message || ""),
-          String(err?.stack || ""),
+          normalized.status,
+          normalized.originalMessage || normalized.message,
+          normalized.status >= 500 ? String(normalized.stack || "") : String(err?.stack || ""),
           req.audit?.ip || req.ip || null,
           req.audit?.userAgent || req.headers["user-agent"] || null,
           req.user?.id || null
         ]
       );
     } catch (_) {
-      // ignore
+      // ignore logging failures
     }
   })();
 
-  // Do not leak internal error details on 5xx.
-  const safeMessage = status >= 500 ? "Internal Server Error" : (err.message || "Error");
-  const details = status >= 500 ? undefined : (err.details || undefined);
-
-  res.status(status).json({
-    error: safeMessage,
-    details
+  res.status(normalized.status).json({
+    ok: false,
+    error: normalized.message,
+    code: normalized.code,
+    details: normalized.details,
+    requestId: normalized.requestId
   });
 }
 
