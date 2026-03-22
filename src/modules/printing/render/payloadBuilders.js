@@ -1,7 +1,19 @@
-
 const { pool } = require('../../../db/pool');
 const { AppError } = require('../../../shared/errors/AppError');
 const opsRepo = require('../../transactions/_shared/opsDocs.repository');
+
+function addressFromJson(addressJson) {
+  if (!addressJson) return null;
+  return {
+    label: addressJson.label || null,
+    line1: addressJson.addressLine1 || null,
+    line2: addressJson.addressLine2 || null,
+    city: addressJson.city || null,
+    region: addressJson.region || addressJson.state || null,
+    postalCode: addressJson.postalCode || null,
+    country: addressJson.country || null
+  };
+}
 
 function addressFromRow(prefix, row) {
   return {
@@ -17,11 +29,57 @@ function addressFromRow(prefix, row) {
 
 async function getOrganization(orgId) {
   const { rows } = await pool.query(
-    `SELECT id, name, base_currency_code, email, phone FROM organizations WHERE id = $1 LIMIT 1`,
+    `SELECT 
+       id, 
+       name, 
+       base_currency_code,
+       contact_email,
+       contact_phone,
+       address_json,
+       branding_json,
+       logo_document_id
+     FROM organizations 
+     WHERE id = $1 LIMIT 1`,
     [orgId]
   );
   if (!rows.length) throw new AppError(400, 'Invalid organization');
-  return rows[0];
+  
+  const org = rows[0];
+  
+  // Parse address_json if it exists
+  let address = null;
+  if (org.address_json && typeof org.address_json === 'object') {
+    address = addressFromJson(org.address_json);
+  } else if (org.address_json && typeof org.address_json === 'string') {
+    try {
+      address = addressFromJson(JSON.parse(org.address_json));
+    } catch (e) {
+      // Invalid JSON, ignore
+    }
+  }
+  
+  // Parse branding_json if it exists
+  let branding = null;
+  if (org.branding_json && typeof org.branding_json === 'object') {
+    branding = org.branding_json;
+  } else if (org.branding_json && typeof org.branding_json === 'string') {
+    try {
+      branding = JSON.parse(org.branding_json);
+    } catch (e) {
+      // Invalid JSON, ignore
+    }
+  }
+  
+  return {
+    id: org.id,
+    name: org.name,
+    base_currency_code: org.base_currency_code,
+    email: org.contact_email,
+    phone: org.contact_phone,
+    address,
+    branding,
+    logo_document_id: org.logo_document_id
+  };
 }
 
 function makeMeta({ entityType, documentNo, documentDate, dueDate, status, reference, currencyCode, workflowStatus, issuedAt }) {
@@ -300,7 +358,17 @@ async function buildPayload({ orgId, entityType, documentId }) {
 
 function samplePayload(entityType = 'invoice') {
   return {
-    organization: { name: 'Your Organization', base_currency_code: 'GHS', email: 'finance@example.com', phone: '+233000000000' },
+    organization: { 
+      name: 'Your Organization', 
+      base_currency_code: 'GHS', 
+      email: 'finance@example.com', 
+      phone: '+233000000000',
+      address: {
+        line1: '123 Main Street',
+        city: 'Accra',
+        country: 'Ghana'
+      }
+    },
     meta: { entityType, documentNo: 'DOC-000001', documentDate: '2026-03-20', dueDate: '2026-03-27', status: 'issued', reference: 'REF-001', currencyCode: 'GHS', workflowStatus: 'approved' },
     counterparty: { name: 'Sample Counterparty Ltd', email: 'accounts@example.com', phone: '+233000000111', address: { line1: '123 Sample Street', city: 'Accra', country: 'Ghana' } },
     summary: { subtotal: 1250.00, total: 1250.00, memo: 'Sample generated preview payload.', paymentMethodName: 'Bank Transfer', cashAccount: '1010 - Main Bank' },
