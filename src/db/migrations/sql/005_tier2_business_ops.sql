@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS payment_methods (
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   code TEXT NOT NULL,
   name TEXT NOT NULL,
+  description TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (organization_id, code),
