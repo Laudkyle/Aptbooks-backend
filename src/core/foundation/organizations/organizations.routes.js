@@ -13,7 +13,6 @@ const initializeOrganizationDefaults = require('./organizations.service')
 
 router.post("/", async (req, res, next) => {
  const client = await pool.connect();
-  console.log("Create organization done")
   try {
     await client.query("BEGIN");
     
@@ -62,7 +61,6 @@ router.get("/me", authRequired, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// Update organization profile fields
 router.patch(
   "/me",
   authRequired,
@@ -70,36 +68,103 @@ router.patch(
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
-      const allowed = {
-        name: req.body?.name,
-        contact_email: req.body?.contact_email,
-        contact_phone: req.body?.contact_phone,
-        address_json: req.body?.address_json,
-        branding_json: req.body?.branding_json
-      };
 
-      const { rows: before } = await pool.query(`SELECT * FROM organizations WHERE id=$1`, [orgId]);
-      if (!before.length) throw new AppError(404, "Org not found");
+      const { rows: before } = await pool.query(
+        `SELECT * FROM organizations WHERE id = $1`,
+        [orgId]
+      );
+      if (!before.length) throw new AppError(404, "Organization not found.");
+
+      const current = before[0];
+
+      const currentAddress =
+        current.address_json && typeof current.address_json === "object"
+          ? current.address_json
+          : {};
+
+      const currentBranding =
+        current.branding_json && typeof current.branding_json === "object"
+          ? current.branding_json
+          : {};
+
+      const nextAddress =
+        req.body?.address_json !== undefined
+          ? req.body.address_json
+          : {
+              ...currentAddress,
+              ...(req.body?.address_line_1 !== undefined
+                ? { addressLine1: req.body.address_line_1 }
+                : {}),
+              ...(req.body?.address_line_2 !== undefined
+                ? { addressLine2: req.body.address_line_2 }
+                : {}),
+              ...(req.body?.city !== undefined ? { city: req.body.city } : {}),
+              ...(req.body?.state !== undefined ? { state: req.body.state } : {}),
+              ...(req.body?.postal_code !== undefined
+                ? { postalCode: req.body.postal_code }
+                : {}),
+              ...(req.body?.country !== undefined
+                ? { country: req.body.country }
+                : {})
+            };
+
+      const nextBranding =
+        req.body?.branding_json !== undefined
+          ? req.body.branding_json
+          : {
+              ...currentBranding,
+              ...(req.body?.website !== undefined
+                ? { website: req.body.website }
+                : {}),
+              ...(req.body?.registration_number !== undefined
+                ? { registrationNumber: req.body.registration_number }
+                : {}),
+              ...(req.body?.tax_id !== undefined
+                ? { taxId: req.body.tax_id }
+                : {}),
+              ...(req.body?.primary_color !== undefined
+                ? { primaryColor: req.body.primary_color }
+                : {}),
+              ...(req.body?.secondary_color !== undefined
+                ? { secondaryColor: req.body.secondary_color }
+                : {}),
+              ...(req.body?.logo_url !== undefined
+                ? { logoUrl: req.body.logo_url }
+                : {})
+            };
+
+      const nextName =
+        req.body?.name !== undefined ? req.body.name : current.name;
+
+      const nextContactEmail =
+        req.body?.contact_email !== undefined
+          ? req.body.contact_email
+          : current.contact_email;
+
+      const nextContactPhone =
+        req.body?.contact_phone !== undefined
+          ? req.body.contact_phone
+          : current.contact_phone;
 
       const { rows } = await pool.query(
         `
         UPDATE organizations
-           SET name = COALESCE($2, name),
-               contact_email = COALESCE($3, contact_email),
-               contact_phone = COALESCE($4, contact_phone),
-               address_json = COALESCE($5::jsonb, address_json),
-               branding_json = COALESCE($6::jsonb, branding_json),
+           SET name = $2,
+               contact_email = $3,
+               contact_phone = $4,
+               address_json = $5::jsonb,
+               branding_json = $6::jsonb,
                updated_at = NOW()
-         WHERE id=$1
+         WHERE id = $1
          RETURNING *
         `,
         [
           orgId,
-          allowed.name || null,
-          allowed.contact_email || null,
-          allowed.contact_phone || null,
-          allowed.address_json !== undefined ? JSON.stringify(allowed.address_json) : null,
-          allowed.branding_json !== undefined ? JSON.stringify(allowed.branding_json) : null
+          nextName,
+          nextContactEmail,
+          nextContactPhone,
+          JSON.stringify(nextAddress || {}),
+          JSON.stringify(nextBranding || {})
         ]
       );
 
@@ -116,10 +181,11 @@ router.patch(
       });
 
       res.json(rows[0]);
-    } catch (e) { next(e); }
+    } catch (e) {
+      next(e);
+    }
   }
 );
-
 // Upload organization logo (multipart/form-data, field name: file)
 router.post(
   "/me/logo",
