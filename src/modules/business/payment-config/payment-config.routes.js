@@ -67,16 +67,54 @@ router.get("/payment-methods", requirePermission("partners.read"), async (req, r
   } catch (e) { next(e); }
 });
 
+// ---- Payment methods (manage)
+const paymentMethodPayloadSchema = z.object({
+  name: z.string().min(1),
+  code: z.string().min(1),
+  description: z.string().optional(),
+  status: z.enum(["active", "inactive"]).optional()
+});
+
+const paymentMethodPatchSchema = z.object({
+  name: z.string().min(1).optional(),
+  code: z.string().min(1).optional(),
+  description: z.string().optional(),
+  status: z.enum(["active", "inactive"]).optional()
+});
+
+router.post("/payment-methods", requirePermission("payment_config.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(paymentMethodPayloadSchema, req.body);
+    res.status(201).json(await svc.createPaymentMethod({ orgId, payload }));
+  } catch (e) { next(e); }
+});
+
+router.patch("/payment-methods/:id", requirePermission("payment_config.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(paymentMethodPatchSchema, req.body || {});
+    const out = await svc.updatePaymentMethod({ orgId, id: req.params.id, payload });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.delete("/payment-methods/:id", requirePermission("payment_config.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const ok = await svc.deletePaymentMethod({ orgId, id: req.params.id });
+    res.json({ ok });
+  } catch (e) { next(e); }
+});
+
 // ---- Payment settings
 const paymentSettingsSchema = z.object({
-  arUnappliedAccountId: z.number().int().nullable().optional(),
-  arDiscountAccountId: z.number().int().nullable().optional(),
-  apPrepaymentsAccountId: z.number().int().nullable().optional(),
-  apDiscountIncomeAccountId: z.number().int().nullable().optional(),
-
-  // Stage 6: defaults for posting online payments
-  onlineCashAccountId: z.number().int().nullable().optional(),
-  onlinePaymentMethodId: z.number().int().nullable().optional()
+  arUnappliedAccountId: z.string().uuid().nullable().optional(),  // Changed from number to UUID string
+  arDiscountAccountId: z.string().uuid().nullable().optional(),   // Changed from number to UUID string
+  apPrepaymentsAccountId: z.string().uuid().nullable().optional(), // Changed from number to UUID string
+  apDiscountIncomeAccountId: z.string().uuid().nullable().optional(), // Changed from number to UUID string
+  onlineCashAccountId: z.string().uuid().nullable().optional(),   // Changed from number to UUID string
+  onlinePaymentMethodId: z.string().uuid().nullable().optional()   // Changed from number to UUID string
 });
 
 router.get("/payment-settings", requirePermission("payment_config.manage"), async (req, res, next) => {

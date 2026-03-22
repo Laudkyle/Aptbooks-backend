@@ -113,6 +113,78 @@ async function listPaymentMethods({ orgId }) {
   return rows;
 }
 
+async function createPaymentMethod({ orgId, payload }) {
+  const { name, code, description, status = "active" } = payload;
+  
+  const { rows } = await pool.query(
+    `
+    INSERT INTO payment_methods(
+      organization_id, name, code, description, status
+    )
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *
+    `,
+    [orgId, name, code, description, status]
+  );
+  return rows[0];
+}
+
+async function updatePaymentMethod({ orgId, id, payload }) {
+  const client = await pool.connect();
+  try {
+    const fields = [];
+    const params = [orgId, id];
+    let i = 3;
+
+    if (payload.name !== undefined) { 
+      fields.push(`name=$${i++}`); 
+      params.push(payload.name); 
+    }
+    if (payload.code !== undefined) { 
+      fields.push(`code=$${i++}`); 
+      params.push(payload.code); 
+    }
+    if (payload.description !== undefined) { 
+      fields.push(`description=$${i++}`); 
+      params.push(payload.description); 
+    }
+    if (payload.status !== undefined) { 
+      fields.push(`status=$${i++}`); 
+      params.push(payload.status); 
+    }
+
+    if (!fields.length) {
+      const { rows } = await client.query(
+        `SELECT * FROM payment_methods WHERE organization_id=$1 AND id=$2`,
+        [orgId, id]
+      );
+      return rows[0] || null;
+    }
+
+    const { rows } = await client.query(
+      `
+      UPDATE payment_methods
+      SET ${fields.join(", ")}
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *
+      `,
+      params
+    );
+
+    return rows[0] || null;
+  } finally {
+    client.release();
+  }
+}
+
+async function deletePaymentMethod({ orgId, id }) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM payment_methods WHERE organization_id=$1 AND id=$2`,
+    [orgId, id]
+  );
+  return rowCount > 0;
+}
+
 async function getPaymentSettings({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM payment_settings WHERE organization_id=$1`,
@@ -141,16 +213,16 @@ async function upsertPaymentSettings({ orgId, payload }) {
       online_payment_method_id,
       updated_at
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
     ON CONFLICT (organization_id)
     DO UPDATE SET
-      ar_unapplied_account_id=EXCLUDED.ar_unapplied_account_id,
-      ar_discount_account_id=EXCLUDED.ar_discount_account_id,
-      ap_prepayments_account_id=EXCLUDED.ap_prepayments_account_id,
-      ap_discount_income_account_id=EXCLUDED.ap_discount_income_account_id,
-      online_cash_account_id=EXCLUDED.online_cash_account_id,
-      online_payment_method_id=EXCLUDED.online_payment_method_id,
-      updated_at=NOW()
+      ar_unapplied_account_id = EXCLUDED.ar_unapplied_account_id,
+      ar_discount_account_id = EXCLUDED.ar_discount_account_id,
+      ap_prepayments_account_id = EXCLUDED.ap_prepayments_account_id,
+      ap_discount_income_account_id = EXCLUDED.ap_discount_income_account_id,
+      online_cash_account_id = EXCLUDED.online_cash_account_id,
+      online_payment_method_id = EXCLUDED.online_payment_method_id,
+      updated_at = NOW()
     RETURNING *
     `,
     [orgId, arUnappliedAccountId, arDiscountAccountId, apPrepaymentsAccountId, apDiscountIncomeAccountId, onlineCashAccountId, onlinePaymentMethodId]
@@ -164,6 +236,9 @@ module.exports = {
   updatePaymentTerm,
   deletePaymentTerm,
   listPaymentMethods,
+  createPaymentMethod,
+  updatePaymentMethod,
+  deletePaymentMethod,
   getPaymentSettings,
   upsertPaymentSettings
 };

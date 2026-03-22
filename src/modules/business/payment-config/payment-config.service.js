@@ -20,6 +20,18 @@ async function listPaymentMethods({ orgId }) {
   return paymentIF.listPaymentMethods({ orgId });
 }
 
+async function createPaymentMethod({ orgId, payload }) {
+  return paymentIF.createPaymentMethod({ orgId, payload });
+}
+
+async function updatePaymentMethod({ orgId, id, payload }) {
+  return paymentIF.updatePaymentMethod({ orgId, id, payload });
+}
+
+async function deletePaymentMethod({ orgId, id }) {
+  return paymentIF.deletePaymentMethod({ orgId, id });
+}
+
 async function getPaymentSettings({ orgId }) {
   return paymentIF.getPaymentSettings({ orgId });
 }
@@ -34,6 +46,9 @@ module.exports = {
   updatePaymentTerm,
   deletePaymentTerm,
   listPaymentMethods,
+  createPaymentMethod,
+  updatePaymentMethod,
+  deletePaymentMethod,
   getPaymentSettings,
   upsertPaymentSettings
 };
