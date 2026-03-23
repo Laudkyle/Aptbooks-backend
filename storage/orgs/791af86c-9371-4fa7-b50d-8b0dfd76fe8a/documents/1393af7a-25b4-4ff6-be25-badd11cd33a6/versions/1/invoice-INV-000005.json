@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "6c2c4385-e18b-473d-8578-75e4981c0cdc",
+  "snapshot_at": "2026-03-23T08:06:18.588Z",
+  "header": {
+    "id": "6c2c4385-e18b-473d-8578-75e4981c0cdc",
+    "organization_id": "791af86c-9371-4fa7-b50d-8b0dfd76fe8a",
+    "customer_id": "518ae0d5-fdb2-4602-860a-c7fb8f29d437",
+    "invoice_no": "INV-000005",
+    "invoice_date": "2026-01-03T00:00:00.000Z",
+    "due_date": "2026-01-04T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "ty34",
+    "subtotal": "4343.00",
+    "total": "4343.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": null,
+    "created_at": "2026-03-23T08:06:16.072Z",
+    "updated_at": "2026-03-23T08:06:16.072Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "b4f154f6-a3e3-44ef-8554-e61d93bdcb17",
+      "invoice_id": "6c2c4385-e18b-473d-8578-75e4981c0cdc",
+      "line_no": 1,
+      "description": "gsg",
+      "quantity": "1.0000",
+      "unit_price": "4343.00",
+      "line_total": "4343.00",
+      "revenue_account_id": "b7d42cae-4286-4297-8159-b49bc60a741f",
+      "created_at": "2026-03-23T08:06:16.072Z",
+      "tax_code_id": null,
+      "tax_amount": "0.00"
+    }
+  ],
+  "totals": {
+    "subtotal": "4343.00",
+    "total": "4343.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

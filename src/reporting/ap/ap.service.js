@@ -44,7 +44,6 @@ function assignBucketLabel(buckets, daysPastDue) {
   }
   return buckets[buckets.length - 1]?.label || 'CURRENT';
 }
-
 async function agedPayables({ orgId, asOfDate, bucketSetId }) {
   assertDate(asOfDate, "asOfDate");
 
@@ -64,10 +63,17 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
         oi.notes_applied,
         COALESCE(oi.written_off,0) AS written_off,
         oi.outstanding,
-        GREATEST(0, DATE_PART('day', $2::date - oi.due_date::date))::int AS days_past_due
+        -- Calculate days past due correctly (same fix as agedReceivables)
+        GREATEST(0, 
+          CASE 
+            WHEN oi.due_date IS NULL THEN 0
+            ELSE ($2::date - oi.due_date::date)
+          END
+        )::int AS days_past_due
      FROM reporting_ap_open_items oi
      JOIN business_partners bp ON bp.id=oi.vendor_id AND bp.organization_id=oi.organization_id
-     WHERE oi.organization_id=$1 AND oi.outstanding > 0
+     WHERE oi.organization_id=$1 
+       AND oi.outstanding > 0
      ORDER BY bp.name, oi.due_date NULLS LAST, oi.bill_no`,
     [orgId, asOfDate]
   );
@@ -108,7 +114,11 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
     });
   }
 
-  return { as_of_date: asOfDate, totals, vendors: Array.from(byVendor.values()) };
+  return { 
+    as_of_date: asOfDate, 
+    totals, 
+    vendors: Array.from(byVendor.values()) 
+  };
 }
 
 async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {

@@ -67,7 +67,13 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
         oi.notes_applied,
         COALESCE(oi.written_off,0) AS written_off,
         oi.outstanding,
-        GREATEST(0, DATE_PART('day', $2::date - oi.due_date::date))::int AS days_past_due
+        -- Calculate days past due correctly
+        GREATEST(0, 
+          CASE 
+            WHEN oi.due_date IS NULL THEN 0
+            ELSE ($2::date - oi.due_date::date)
+          END
+        )::int AS days_past_due
      FROM reporting_ar_open_items oi
      JOIN business_partners bp ON bp.id=oi.customer_id AND bp.organization_id=oi.organization_id
      WHERE oi.organization_id=$1

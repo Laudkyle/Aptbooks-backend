@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "e8282769-0c31-4400-be9a-c2d1b384a978",
+  "snapshot_at": "2026-03-23T08:47:08.079Z",
+  "header": {
+    "id": "e8282769-0c31-4400-be9a-c2d1b384a978",
+    "organization_id": "791af86c-9371-4fa7-b50d-8b0dfd76fe8a",
+    "vendor_id": "127bd8e3-3fed-45fe-be4a-2916a2d7a78e",
+    "bill_no": "BILL-000004",
+    "bill_date": "2026-01-01T00:00:00.000Z",
+    "due_date": "2026-01-02T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "erjlkr",
+    "subtotal": "8508.00",
+    "total": "8508.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": null,
+    "created_at": "2026-03-23T08:47:05.532Z",
+    "updated_at": "2026-03-23T08:47:05.532Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "63e61f23-bf2a-4478-ac00-28d0fedeb449",
+      "bill_id": "e8282769-0c31-4400-be9a-c2d1b384a978",
+      "line_no": 1,
+      "description": "gksfgks",
+      "quantity": "13.0000",
+      "unit_price": "652.00",
+      "line_total": "8476.00",
+      "expense_account_id": "7450e487-0f96-4d80-b3af-397ab2d0e3d5",
+      "created_at": "2026-03-23T08:47:05.532Z",
+      "tax_code_id": null,
+      "tax_amount": "0.00"
+    },
+    {
+      "id": "6aa5a137-ab14-489d-89e6-b979d7360831",
+      "bill_id": "e8282769-0c31-4400-be9a-c2d1b384a978",
+      "line_no": 2,
+      "description": "rlkejwq",
+      "quantity": "1.0000",
+      "unit_price": "32.00",
+      "line_total": "32.00",
+      "expense_account_id": "07a01640-01ae-456c-bd09-bd0ba78d2ee9",
+      "created_at": "2026-03-23T08:47:05.532Z",
+      "tax_code_id": null,
+      "tax_amount": "0.00"
+    }
+  ],
+  "totals": {
+    "subtotal": "8508.00",
+    "total": "8508.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}
