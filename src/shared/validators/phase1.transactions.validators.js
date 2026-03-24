@@ -6,6 +6,8 @@ const lineSchema = z.object({
   quantity: z.number().positive().optional(),
   unitPrice: z.number().nonnegative().optional(),
   lineTotal: z.number().nonnegative().optional(),
+  taxableAmount: z.number().nonnegative().optional(),
+  taxAmount: z.number().nonnegative().optional(),
   accountId: z.string().uuid().optional().nullable(),
   itemId: z.string().uuid().optional().nullable(),
   taxCodeId: z.string().uuid().optional().nullable(),

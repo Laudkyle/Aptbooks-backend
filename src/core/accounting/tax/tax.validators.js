@@ -33,6 +33,24 @@ const createTaxCodeSchema = z.object({
 
 const updateTaxCodeSchema = createTaxCodeSchema.partial();
 
+
+const createTaxAdjustmentSchema = z.object({
+  adjustmentDate: isoDate,
+  taxType: z.enum(["VAT", "GST", "SALES"]).default("VAT"),
+  direction: z.enum(["output", "input"]),
+  boxCode: z.string().min(1).max(50).optional().nullable(),
+  description: z.string().min(2).max(500),
+  amount: z.coerce.number().refine((v) => Number(v) !== 0, { message: "amount must not be zero" }),
+  accountId: z.string().uuid().optional().nullable(),
+  counterAccountId: z.string().uuid().optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  autoPost: z.coerce.boolean().optional()
+});
+
+const voidTaxAdjustmentSchema = z.object({
+  reason: z.string().min(2).max(500)
+});
+
 const setTaxSettingsSchema = z.object({
   outputTaxAccountId: z.string().uuid().nullable().optional(),
   inputTaxAccountId: z.string().uuid().nullable().optional(),
@@ -44,5 +62,7 @@ module.exports = {
   updateJurisdictionSchema,
   createTaxCodeSchema,
   updateTaxCodeSchema,
-  setTaxSettingsSchema
+  setTaxSettingsSchema,
+  createTaxAdjustmentSchema,
+  voidTaxAdjustmentSchema
 };

@@ -37,6 +37,8 @@ async function insertDocument(client, payload) {
     cashAccountId,
     primaryAccountId,
     amountTotal,
+    subtotal,
+    taxTotal,
     currencyCode,
     meta,
     createdBy,
@@ -48,16 +50,16 @@ async function insertDocument(client, payload) {
     INSERT INTO operational_documents(
       organization_id, module_code, document_no, counterparty_partner_id, employee_id,
       document_date, due_date, memo, reference, source_document_id,
-      cash_account_id, primary_account_id, amount_total, currency_code,
+      cash_account_id, primary_account_id, amount_total, subtotal, tax_total, currency_code,
       meta, created_by, updated_by, status
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,COALESCE($15::jsonb,'{}'::jsonb),$16,$16,$17)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,COALESCE($17::jsonb,'{}'::jsonb),$18,$18,$19)
     RETURNING *
     `,
     [
       orgId, moduleCode, documentNo, partnerId || null, employeeId || null,
       date, dueDate || null, memo || null, reference || null, sourceDocumentId || null,
-      cashAccountId || null, primaryAccountId || null, amountTotal, currencyCode,
+      cashAccountId || null, primaryAccountId || null, amountTotal, subtotal || 0, taxTotal || 0, currencyCode,
       JSON.stringify(meta || {}), createdBy, status || "draft"
     ]
   );
@@ -68,10 +70,10 @@ async function insertLine(client, documentId, lineNo, line) {
   const { rows } = await client.query(
     `
     INSERT INTO operational_document_lines(
-      document_id, line_no, description, quantity, unit_price, line_total,
+      document_id, line_no, description, quantity, unit_price, line_total, taxable_amount, tax_amount,
       account_id, item_id, tax_code_id, meta
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,COALESCE($10::jsonb,'{}'::jsonb))
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12::jsonb,'{}'::jsonb))
     RETURNING *
     `,
     [
@@ -81,6 +83,8 @@ async function insertLine(client, documentId, lineNo, line) {
       line.quantity == null ? 1 : line.quantity,
       line.unitPrice == null ? 0 : line.unitPrice,
       line.lineTotal,
+      line.taxableAmount == null ? Math.max(Number(line.lineTotal || 0) - Number(line.taxAmount || 0), 0) : line.taxableAmount,
+      line.taxAmount || 0,
       line.accountId || null,
       line.itemId || null,
       line.taxCodeId || null,

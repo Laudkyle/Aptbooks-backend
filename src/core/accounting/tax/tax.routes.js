@@ -13,7 +13,9 @@ const {
   updateJurisdictionSchema,
   createTaxCodeSchema,
   updateTaxCodeSchema,
-  setTaxSettingsSchema
+  setTaxSettingsSchema,
+  createTaxAdjustmentSchema,
+  voidTaxAdjustmentSchema
 } = require("./tax.validators");
 
 const router = express.Router();
@@ -207,6 +209,63 @@ router.put("/settings", requirePermission("tax.manage"), async (req, res, next) 
     });
 
     res.json(updated);
+  } catch (e) { next(e); }
+});
+
+
+// Tax adjustments
+router.get("/adjustments", requirePermission("tax.adjustment.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listTaxAdjustments({
+      orgId,
+      query: {
+        status: req.query.status,
+        taxType: req.query.taxType,
+        direction: req.query.direction,
+        fromDate: req.query.from,
+        toDate: req.query.to
+      }
+    });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/adjustments", idempotency({ required: true }), requirePermission("tax.adjustment.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createTaxAdjustmentSchema, req.body);
+    const created = await svc.createTaxAdjustment({ orgId, actorUserId: req.user.id, payload });
+    await writeAudit({
+      organizationId: orgId, actorUserId: req.user.id, action: "tax.adjustment.created",
+      entityType: "tax_adjustment", entityId: created.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: created
+    });
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.post("/adjustments/:id/post", idempotency({ required: true }), requirePermission("tax.adjustment.post"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.postTaxAdjustment({ orgId, actorUserId: req.user.id, adjustmentId: req.params.id });
+    await writeAudit({
+      organizationId: orgId, actorUserId: req.user.id, action: "tax.adjustment.posted",
+      entityType: "tax_adjustment", entityId: data.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: data
+    });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/adjustments/:id/void", idempotency({ required: true }), requirePermission("tax.adjustment.void"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(voidTaxAdjustmentSchema, req.body);
+    const data = await svc.voidTaxAdjustment({ orgId, actorUserId: req.user.id, adjustmentId: req.params.id, reason: payload.reason });
+    await writeAudit({
+      organizationId: orgId, actorUserId: req.user.id, action: "tax.adjustment.voided",
+      entityType: "tax_adjustment", entityId: data.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: data
+    });
+    res.json({ data });
   } catch (e) { next(e); }
 });
 

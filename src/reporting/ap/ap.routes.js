@@ -10,16 +10,23 @@ router.get("/aged-payables", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
     const { asOfDate, bucketSetId } = req.query;
+    
+    // Handle bucketSetId properly - don't convert to number, just pass undefined if it's "undefined" or empty
+    const validBucketSetId = bucketSetId && bucketSetId !== 'undefined' && bucketSetId.trim() !== '' 
+      ? bucketSetId 
+      : undefined;
+    
     const data = await svc.agedPayables({ 
       orgId, 
       asOfDate, 
-      bucketSetId: bucketSetId ? bucketSetId : undefined 
+      bucketSetId: validBucketSetId
     });
     res.json({ data });
   } catch (err) {
     next(err);
   }
 });
+
 
 // Drill-down / open items - Fixed UUID handling
 router.get("/open-items", async (req, res, next) => {

@@ -17,18 +17,20 @@ function requireAccountId(accountId, message) {
   return accountId;
 }
 
-function buildGroupedSide({ lines, side, descriptionPrefix, requireLineAccounts = true }) {
+function groupBaseAmounts(lines, requireLineAccounts = true) {
   const grouped = new Map();
   for (const line of (lines || [])) {
     const accountId = line.account_id || line.accountId || null;
-    if (requireLineAccounts && !accountId) {
-      throw new AppError(400, "All posting lines must have accountId");
-    }
+    if (requireLineAccounts && !accountId) throw new AppError(400, "All posting lines must have accountId");
     if (!accountId) continue;
-    grouped.set(accountId, round2((grouped.get(accountId) || 0) + Number(line.line_total || 0)));
+    const baseAmount = round2(line.taxable_amount ?? line.taxableAmount ?? Math.max(Number(line.line_total || 0) - Number(line.tax_amount || line.taxAmount || 0), 0));
+    grouped.set(accountId, round2((grouped.get(accountId) || 0) + baseAmount));
   }
+  return grouped;
+}
 
-  return Array.from(grouped.entries()).map(([accountId, amount]) => ({
+function buildGroupedBaseSide({ lines, side, descriptionPrefix, requireLineAccounts = true }) {
+  return Array.from(groupBaseAmounts(lines, requireLineAccounts).entries()).map(([accountId, amount]) => ({
     accountId,
     debit: side === "debit" ? amount : 0,
     credit: side === "credit" ? amount : 0,
@@ -36,16 +38,35 @@ function buildGroupedSide({ lines, side, descriptionPrefix, requireLineAccounts 
   }));
 }
 
+function buildTaxLines({ header, lines, side, taxAccountId, descriptionPrefix }) {
+  if (!taxAccountId) return [];
+  const totalTax = round2((lines || []).reduce((sum, line) => sum + Number(line.tax_amount || line.taxAmount || 0), 0));
+  if (!totalTax) return [];
+  return [{
+    accountId: taxAccountId,
+    debit: side === "debit" ? totalTax : 0,
+    credit: side === "credit" ? totalTax : 0,
+    description: `${descriptionPrefix} tax ${header.document_no}`
+  }];
+}
+
+async function getTaxSettings({ orgId, client }) {
+  const { rows } = await client.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
+  return rows[0] || null;
+}
+
 async function buildReturnLines({ orgId, header, lines, client }) {
   const partnerId = requireAccountId(header.counterparty_partner_id, "Return is missing partnerId");
   const partner = await partnerIF.getPartnerForOrg({ orgId, partnerId, client });
   const total = amountFromHeaderOrLines(header, lines);
   const type = header.meta?.returnType || header.meta?.return_type || null;
+  const taxSettings = await getTaxSettings({ orgId, client });
 
   if (type === "sales_return") {
     const arAccountId = requireAccountId(partner.default_receivable_account_id, "Customer missing defaultReceivableAccountId");
     return [
-      ...buildGroupedSide({ lines, side: "debit", descriptionPrefix: `Sales return ${header.document_no}` }),
+      ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Sales return ${header.document_no}` }),
+      ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.output_tax_account_id, descriptionPrefix: "Sales return" }),
       { accountId: arAccountId, debit: 0, credit: total, description: `A/R reversal for ${header.document_no}` }
     ];
   }
@@ -54,32 +75,33 @@ async function buildReturnLines({ orgId, header, lines, client }) {
     const apAccountId = requireAccountId(partner.default_payable_account_id, "Vendor missing defaultPayableAccountId");
     return [
       { accountId: apAccountId, debit: total, credit: 0, description: `A/P reversal for ${header.document_no}` },
-      ...buildGroupedSide({ lines, side: "credit", descriptionPrefix: `Purchase return ${header.document_no}` })
+      ...buildGroupedBaseSide({ lines, side: "credit", descriptionPrefix: `Purchase return ${header.document_no}` }),
+      ...buildTaxLines({ header, lines, side: "credit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Purchase return" })
     ];
   }
 
   throw new AppError(400, "Unsupported returnType for posting");
 }
 
-function buildPostingLines({ header, lines }) {
+async function buildPostingLines({ orgId, header, lines, client }) {
   const moduleCode = header.module_code;
   const total = amountFromHeaderOrLines(header, lines);
+  const taxSettings = await getTaxSettings({ orgId, client });
 
   switch (moduleCode) {
     case "expense": {
-      const contraAccountId = requireAccountId(
-        header.cash_account_id || header.primary_account_id,
-        "Expense requires cashAccountId or primaryAccountId for posting"
-      );
+      const contraAccountId = requireAccountId(header.cash_account_id || header.primary_account_id, "Expense requires cashAccountId or primaryAccountId for posting");
       return [
-        ...buildGroupedSide({ lines, side: "debit", descriptionPrefix: `Expense ${header.document_no}` }),
+        ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Expense ${header.document_no}` }),
+        ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Expense" }),
         { accountId: contraAccountId, debit: 0, credit: total, description: `Expense offset for ${header.document_no}` }
       ];
     }
     case "petty_cash": {
       const cashAccountId = requireAccountId(header.cash_account_id, "Petty cash requires cashAccountId for posting");
       return [
-        ...buildGroupedSide({ lines, side: "debit", descriptionPrefix: `Petty cash ${header.document_no}` }),
+        ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Petty cash ${header.document_no}` }),
+        ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Petty cash" }),
         { accountId: cashAccountId, debit: 0, credit: total, description: `Petty cash offset for ${header.document_no}` }
       ];
     }
@@ -102,7 +124,7 @@ function buildPostingLines({ header, lines }) {
     case "goods_receipt": {
       const clearingAccountId = requireAccountId(header.primary_account_id, "Goods receipt requires primaryAccountId (clearing/accrual account) for posting");
       return [
-        ...buildGroupedSide({ lines, side: "debit", descriptionPrefix: `Goods receipt ${header.document_no}` }),
+        ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Goods receipt ${header.document_no}` }),
         { accountId: clearingAccountId, debit: 0, credit: total, description: `Goods receipt clearing for ${header.document_no}` }
       ];
     }
@@ -118,7 +140,7 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
   if (header.module_code === "return") {
     journalLines = await buildReturnLines({ orgId, header, lines, client });
   } else {
-    journalLines = buildPostingLines({ header, lines });
+    journalLines = await buildPostingLines({ orgId, header, lines, client });
   }
 
   const payload = {
@@ -133,7 +155,6 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
   const draft = await journalIF.createDraftJournal({ orgId, actorUserId, payload, client });
   const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
-  // Update the operational document with period_id and journal_entry_id
   const tableName = getTableNameForModule(header.module_code);
   if (tableName) {
     await client.query(
@@ -155,15 +176,14 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
   };
 }
 
-// Helper function to map module codes to table names
 function getTableNameForModule(moduleCode) {
   const tableMap = {
-    'expenses': 'operational_documents',
-    'petty_cash': 'operational_documents',
-    'advance': 'operational_documents',
-    'refund': 'operational_documents',
-    'goods_receipt': 'operational_documents',
-    'return': 'operational_documentsreturns'
+    expense: "operational_documents",
+    petty_cash: "operational_documents",
+    advance: "operational_documents",
+    refund: "operational_documents",
+    goods_receipt: "operational_documents",
+    return: "operational_documents"
   };
   return tableMap[moduleCode];
 }

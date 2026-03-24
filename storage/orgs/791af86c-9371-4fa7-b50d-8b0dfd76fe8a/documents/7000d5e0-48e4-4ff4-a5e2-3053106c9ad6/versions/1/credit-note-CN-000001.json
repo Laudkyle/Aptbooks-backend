@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "entity_type": "credit_note",
+  "entity_id": "72627de1-cd8f-43bd-8f8f-46bfe7aa13a6",
+  "snapshot_at": "2026-03-23T11:07:17.983Z",
+  "header": {
+    "id": "72627de1-cd8f-43bd-8f8f-46bfe7aa13a6",
+    "organization_id": "791af86c-9371-4fa7-b50d-8b0dfd76fe8a",
+    "customer_id": "518ae0d5-fdb2-4602-860a-c7fb8f29d437",
+    "credit_note_no": "CN-000001",
+    "credit_note_date": "2026-03-23T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "iuyuyi",
+    "subtotal": "16164.00",
+    "tax_total": "3232.80",
+    "total": "19396.80",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-03-23T11:07:11.986Z",
+    "updated_at": "2026-03-23T11:07:11.986Z",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "customer_name": "Demo Customer Ltd",
+    "customer_code": "CUST-DEMO",
+    "customer_email": "demo.customer@aptbooks.local",
+    "customer_phone": "+233200000001",
+    "workflow_status": null,
+    "canApprove": false,
+    "canPost": false
+  },
+  "lines": [
+    {
+      "id": "4150806c-225f-4045-940d-d2323019fe2c",
+      "credit_note_id": "72627de1-cd8f-43bd-8f8f-46bfe7aa13a6",
+      "line_no": 1,
+      "description": "hj",
+      "quantity": "18.0000",
+      "unit_price": "898.00",
+      "line_total": "16164.00",
+      "revenue_account_id": "b7d42cae-4286-4297-8159-b49bc60a741f",
+      "tax_code_id": "2d762be1-68be-4ec0-b6ef-a21763b74314",
+      "tax_amount": "3232.80",
+      "created_at": "2026-03-23T11:07:11.986Z"
+    }
+  ],
+  "applications": [],
+  "totals": {
+    "subtotal": "16164.00",
+    "tax_total": "3232.80",
+    "total": "19396.80"
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}

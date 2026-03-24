@@ -34,6 +34,33 @@ router.get("/vat-return", async (req, res, next) => {
 });
 
 
+router.get("/transactions", async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to, taxType, direction, entityType } = req.query;
+    const data = await svc.taxTransactions({ orgId, fromDate: from, toDate: to, taxType, direction, entityType });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.get("/reconciliation", async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to, taxType } = req.query;
+    const data = await svc.taxReconciliation({ orgId, fromDate: from, toDate: to, taxType });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.get("/diagnostics", async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    const data = await svc.taxDiagnostics({ orgId, fromDate: from, toDate: to });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 router.get("/returns/:returnId", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;

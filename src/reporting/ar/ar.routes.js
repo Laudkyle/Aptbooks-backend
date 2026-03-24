@@ -10,10 +10,16 @@ router.get("/aged-receivables", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
     const { asOfDate, bucketSetId } = req.query;
+    
+    // Handle bucketSetId properly - don't convert to number, just pass undefined if it's "undefined" or empty
+    const validBucketSetId = bucketSetId && bucketSetId !== 'undefined' && bucketSetId.trim() !== '' 
+      ? bucketSetId 
+      : undefined;
+    
     const data = await svc.agedReceivables({ 
       orgId, 
       asOfDate, 
-      bucketSetId: bucketSetId ? bucketSetId : undefined 
+      bucketSetId: validBucketSetId
     });
     res.json({ data });
   } catch (err) {

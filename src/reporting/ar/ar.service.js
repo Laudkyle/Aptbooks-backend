@@ -7,13 +7,28 @@ function assertDate(value, fieldName) {
 }
 
 async function getAgingBuckets({ orgId, bucketSetId }) {
-  // If bucketSetId not supplied, use default.
-  const set = bucketSetId
-    ? (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND id=$2`, [orgId, bucketSetId])).rows[0]
-    : (await pool.query(`SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`, [orgId])).rows[0];
+  let set;
+  
+  // If bucketSetId is provided and is a valid UUID, try to get that specific set
+  if (bucketSetId && typeof bucketSetId === 'string' && bucketSetId.trim() !== '') {
+    const { rows } = await pool.query(
+      `SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND id=$2`,
+      [orgId, bucketSetId]
+    );
+    set = rows[0];
+  }
+  
+  // If no specific set found or no bucketSetId provided, get the default set
+  if (!set) {
+    const { rows } = await pool.query(
+      `SELECT * FROM aging_bucket_sets WHERE organization_id=$1 AND is_default=TRUE ORDER BY id DESC LIMIT 1`,
+      [orgId]
+    );
+    set = rows[0];
+  }
 
   if (!set) {
-    // Backwards compatibility: if migrations not yet run.
+    // Backwards compatibility: if migrations not yet run or no bucket sets exist
     return {
       bucketSet: { id: null, name: 'Legacy' },
       buckets: [
@@ -21,11 +36,11 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
         { label: '1-30', start_days: 1, end_days: 30, sort_order: 2 },
         { label: '31-60', start_days: 31, end_days: 60, sort_order: 3 },
         { label: '61-90', start_days: 61, end_days: 90, sort_order: 4 },
-        { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
-        { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
+        { label: '90+', start_days: 91, end_days: null, sort_order: 5 }
       ]
     };
   }
+  
   const { rows: buckets } = await pool.query(
     `SELECT label, start_days, end_days, sort_order
        FROM aging_buckets
@@ -33,6 +48,7 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
       ORDER BY sort_order ASC, id ASC`,
     [orgId, set.id]
   );
+  
   return { bucketSet: set, buckets };
 }
 
@@ -46,11 +62,93 @@ function assignBucketLabel(buckets, daysPastDue) {
   // Fallback
   return buckets[buckets.length - 1]?.label || 'CURRENT';
 }
-
 async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
   assertDate(asOfDate, "asOfDate");
 
+  // Pass bucketSetId as is (can be undefined, null, or a valid ID)
   const { buckets } = await getAgingBuckets({ orgId, bucketSetId });
+
+  // If no buckets were returned (shouldn't happen with fallback), use default buckets
+  if (!buckets || buckets.length === 0) {
+    // Use default buckets if none found
+    const defaultBuckets = [
+      { label: 'CURRENT', start_days: -999999, end_days: 0, sort_order: 1 },
+      { label: '1-30', start_days: 1, end_days: 30, sort_order: 2 },
+      { label: '31-60', start_days: 31, end_days: 60, sort_order: 3 },
+      { label: '61-90', start_days: 61, end_days: 90, sort_order: 4 },
+      { label: '90+', start_days: 91, end_days: null, sort_order: 5 }
+    ];
+    
+    const { rows } = await pool.query(
+      `SELECT
+          oi.invoice_id,
+          oi.customer_id,
+          bp.name AS customer_name,
+          oi.invoice_no,
+          oi.invoice_date,
+          oi.due_date,
+          oi.currency_code,
+          oi.total,
+          oi.allocated,
+          oi.notes_applied,
+          COALESCE(oi.written_off,0) AS written_off,
+          oi.outstanding,
+          GREATEST(0, 
+            CASE 
+              WHEN oi.due_date IS NULL THEN 0
+              ELSE ($2::date - oi.due_date::date)
+            END
+          )::int AS days_past_due
+       FROM reporting_ar_open_items oi
+       JOIN business_partners bp ON bp.id=oi.customer_id AND bp.organization_id=oi.organization_id
+       WHERE oi.organization_id=$1
+         AND oi.outstanding > 0
+       ORDER BY bp.name, oi.due_date NULLS LAST, oi.invoice_no`,
+      [orgId, asOfDate]
+    );
+
+    const byCustomer = new Map();
+    const totals = { total: 0 };
+    for (const b of defaultBuckets) totals[b.label] = 0;
+
+    for (const r of rows) {
+      const bucket = assignBucketLabel(defaultBuckets, Number(r.days_past_due || 0));
+      const outstanding = Number(r.outstanding || 0);
+      if (!byCustomer.has(r.customer_id)) {
+        byCustomer.set(r.customer_id, {
+          customer_id: r.customer_id,
+          customer_name: r.customer_name,
+          buckets: Object.assign({ total: 0 }, Object.fromEntries(defaultBuckets.map(b => [b.label, 0]))),
+          invoices: []
+        });
+      }
+      const c = byCustomer.get(r.customer_id);
+      c.buckets[bucket] += outstanding;
+      c.buckets.total += outstanding;
+      totals[bucket] += outstanding;
+      totals.total += outstanding;
+      c.invoices.push({
+        invoice_id: r.invoice_id,
+        invoice_no: r.invoice_no,
+        invoice_date: r.invoice_date,
+        due_date: r.due_date,
+        currency_code: r.currency_code,
+        total: Number(r.total || 0),
+        allocated: Number(r.allocated || 0),
+        notes_applied: Number(r.notes_applied || 0),
+        written_off: Number(r.written_off || 0),
+        outstanding,
+        days_past_due: Number(r.days_past_due || 0),
+        bucket
+      });
+    }
+
+    return {
+      as_of_date: asOfDate,
+      totals,
+      customers: Array.from(byCustomer.values())
+    };
+  }
 
   // Use operational view (includes receipts allocations, discounts, credit notes, and write-offs).
   const { rows } = await pool.query(
@@ -124,7 +222,6 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
     customers: Array.from(byCustomer.values())
   };
 }
-
 async function customerStatement({ orgId, customerId, fromDate, toDate }) {
   if (!customerId) throw new AppError(400, "customerId is required");
   assertDate(fromDate, "from");

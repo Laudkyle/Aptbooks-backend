@@ -26,25 +26,80 @@ async function assertPostableActiveAccount({ orgId, accountId }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
 }
 
+async function assertTaxCodeBelongsToOrg({ orgId, taxCodeId }) {
+  if (!taxCodeId) return null;
+  const { rows } = await pool.query(
+    `
+    SELECT id, code, name, tax_type, rate, direction, box_code, status,
+           effective_from, effective_to
+    FROM tax_codes
+    WHERE organization_id=$1 AND id=$2
+    `,
+    [orgId, taxCodeId]
+  );
+  if (!rows.length) throw new AppError(400, `Invalid tax code: ${taxCodeId}`);
+  const taxCode = rows[0];
+  if (taxCode.status !== "active") throw new AppError(400, "Inactive tax code used");
+  return taxCode;
+}
+
 function round2(n) {
   return Number((Number(n || 0)).toFixed(2));
 }
 
-function computeLines(lines = []) {
-  let total = 0;
-  const computed = (lines || []).map((line) => {
+async function computeLinesWithTax({ orgId, lines = [] }) {
+  let subtotal = 0;
+  let taxTotal = 0;
+  const computed = [];
+
+  for (const line of (lines || [])) {
     const quantity = line.quantity == null ? 1 : Number(line.quantity);
     const unitPrice = line.unitPrice == null ? 0 : Number(line.unitPrice);
-    const lineTotal = line.lineTotal == null ? round2(quantity * unitPrice) : round2(line.lineTotal);
-    total += lineTotal;
-    return {
+    const taxableAmount = line.taxableAmount == null
+      ? (line.lineTotal == null ? round2(quantity * unitPrice) : round2(line.lineTotal))
+      : round2(line.taxableAmount);
+
+    let taxAmount = round2(line.taxAmount);
+    let taxCode = null;
+    if (line.taxCodeId) {
+      taxCode = await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: line.taxCodeId });
+      if (line.taxAmount == null) {
+        taxAmount = round2(taxableAmount * Number(taxCode.rate || 0));
+      }
+    } else {
+      taxAmount = 0;
+    }
+
+    const lineTotal = line.lineTotal == null ? round2(taxableAmount + taxAmount) : round2(line.lineTotal);
+
+    subtotal += taxableAmount;
+    taxTotal += taxAmount;
+
+    computed.push({
       ...line,
       quantity,
       unitPrice,
-      lineTotal
-    };
-  });
-  return { lines: computed, total: round2(total) };
+      taxableAmount,
+      taxAmount,
+      lineTotal,
+      resolvedTax: taxCode ? {
+        id: taxCode.id,
+        code: taxCode.code,
+        name: taxCode.name,
+        direction: taxCode.direction,
+        boxCode: taxCode.box_code,
+        rate: Number(taxCode.rate || 0),
+        taxType: taxCode.tax_type
+      } : null
+    });
+  }
+
+  return {
+    lines: computed,
+    subtotal: round2(subtotal),
+    taxTotal: round2(taxTotal),
+    total: round2(subtotal + taxTotal)
+  };
 }
 
 function createOpsDocService(config) {
@@ -77,7 +132,7 @@ function createOpsDocService(config) {
       await assertPostableActiveAccount({ orgId, accountId: line.accountId || null });
     }
 
-    const computed = computeLines(payload.lines || []);
+    const computed = await computeLinesWithTax({ orgId, lines: payload.lines || [] });
     const amountTotal = payload.amountTotal == null ? computed.total : round2(payload.amountTotal);
     const client = await pool.connect();
     try {
@@ -98,6 +153,8 @@ function createOpsDocService(config) {
         cashAccountId: payload.cashAccountId || null,
         primaryAccountId: payload.primaryAccountId || null,
         amountTotal,
+        subtotal: computed.subtotal,
+        taxTotal: computed.taxTotal,
         currencyCode: baseCurrency,
         meta: { ...(defaultMeta(payload) || {}), ...(payload.meta || {}) },
         createdBy: actorUserId,
@@ -147,7 +204,7 @@ function createOpsDocService(config) {
         snapshot: {
           header,
           lines,
-          totals: { amountTotal: header.amount_total },
+          totals: { amountTotal: header.amount_total, subtotal: header.subtotal, taxTotal: header.tax_total },
           meta: { moduleCode }
         },
         client,
@@ -262,37 +319,16 @@ function createOpsDocService(config) {
         actionLabel: finalAction
       });
 
-      const status = finalAction === "post" ? "posted" : "issued";
-      const stampField = finalAction === "post" ? "posted_at" : "issued_at";
-      const byField = finalAction === "post" ? "posted_by" : "issued_by";
-
-      let periodId = header.period_id || null;
-      let journalEntryId = header.journal_entry_id || null;
+      const lines = await repo.getDocumentLines(documentId, client);
+      let finalEntity = header;
       if (finalAction === "post") {
-        const lines = await repo.getDocumentLines(documentId, client);
-        if (!lines.length && !Number(header.amount_total || 0)) {
-          throw new AppError(400, "Document has no posting content");
-        }
-        const posting = await buildOperationalDocumentJournal({ orgId, actorUserId, header, lines, client });
-        periodId = posting.period.id;
-        journalEntryId = posting.journalId;
+        await buildOperationalDocumentJournal({ orgId, actorUserId, header, lines, client });
+        finalEntity = await repo.setStatus(client, orgId, documentId, "posted", actorUserId);
+      } else {
+        finalEntity = await repo.setStatus(client, orgId, documentId, "issued", actorUserId);
       }
-
-      const { rows } = await client.query(
-        `UPDATE operational_documents
-            SET ${stampField} = NOW(),
-                ${byField} = $3,
-                updated_by = $3,
-                updated_at = NOW(),
-                status = $4,
-                period_id = COALESCE($5, period_id),
-                journal_entry_id = COALESCE($6, journal_entry_id)
-          WHERE organization_id = $1 AND id = $2
-      RETURNING *`,
-        [orgId, documentId, actorUserId, status, periodId, journalEntryId]
-      );
       await client.query("COMMIT");
-      return rows[0];
+      return finalEntity;
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
@@ -302,35 +338,7 @@ function createOpsDocService(config) {
   }
 
   async function voidDocument({ orgId, actorUserId, documentId, reason }) {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const header = await repo.getLockedDocument(client, orgId, documentId);
-      if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
-      if (header.status === "void") throw new AppError(409, "Document already voided");
-      if (header.status === "posted" || header.journal_entry_id) {
-        throw new AppError(409, "Posted documents cannot be voided directly. Reverse the journal first.");
-      }
-      const { rows } = await client.query(
-        `UPDATE operational_documents
-            SET status = 'void',
-                voided_at = NOW(),
-                voided_by = $3,
-                rejection_comment = COALESCE($4, rejection_comment),
-                updated_by = $3,
-                updated_at = NOW()
-          WHERE organization_id = $1 AND id = $2
-      RETURNING *`,
-        [orgId, documentId, actorUserId, reason || null]
-      );
-      await client.query("COMMIT");
-      return rows[0];
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+    return repo.voidDocument({ orgId, moduleCode, actorUserId, documentId, reason });
   }
 
   return {
