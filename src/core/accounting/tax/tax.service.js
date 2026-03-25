@@ -114,12 +114,12 @@ async function createTaxCode({ orgId, payload }) {
   const { rows } = await pool.query(
     `INSERT INTO tax_codes(
         organization_id, jurisdiction_id, code, name, tax_type, rate, is_compound,
-        box_code, direction,
+        box_code, direction, category_code, tax_scope, application_scope, calculation_method, exemption_reason_code, exemption_reason, reverse_charge, recoverable_percent, reporting_group, posting_account_id,
         effective_from, effective_to, status
      ) VALUES (
         $1,$2,$3,$4,$5,$6,COALESCE($7,false),
-        $8,$9,
-        COALESCE($10,CURRENT_DATE),$11,COALESCE($12,'active')
+        $8,$9,$10,COALESCE($11,'taxable'),COALESCE($12,'both'),COALESCE($13,'standard'),$14,$15,COALESCE($16,false),COALESCE($17,1),$18,$19,
+        COALESCE($20,CURRENT_DATE),$21,COALESCE($22,'active')
      )
      RETURNING *`,
     [
@@ -132,6 +132,16 @@ async function createTaxCode({ orgId, payload }) {
       payload.isCompound === true,
       payload.boxCode ?? null,
       payload.direction ?? null,
+      payload.categoryCode ?? null,
+      payload.taxScope ?? null,
+      payload.applicationScope ?? null,
+      payload.calculationMethod ?? null,
+      payload.exemptionReasonCode ?? null,
+      payload.exemptionReason ?? null,
+      payload.reverseCharge === true,
+      payload.recoverablePercent ?? null,
+      payload.reportingGroup ?? null,
+      payload.postingAccountId ?? null,
       payload.effectiveFrom || null,
       payload.effectiveTo ?? null,
       payload.status || null
@@ -165,6 +175,16 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
     isCompound: "is_compound",
     boxCode: "box_code",
     direction: "direction",
+    categoryCode: "category_code",
+    taxScope: "tax_scope",
+    applicationScope: "application_scope",
+    calculationMethod: "calculation_method",
+    exemptionReasonCode: "exemption_reason_code",
+    exemptionReason: "exemption_reason",
+    reverseCharge: "reverse_charge",
+    recoverablePercent: "recoverable_percent",
+    reportingGroup: "reporting_group",
+    postingAccountId: "posting_account_id",
     effectiveFrom: "effective_from",
     effectiveTo: "effective_to",
     status: "status"
@@ -222,13 +242,30 @@ async function setTaxSettings({ orgId, payload }) {
   if (payload.defaultTaxCodeId !== undefined) {
     await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId });
   }
+  for (const [fieldName, accountId] of Object.entries({
+    nonRecoverableInputTaxAccountId: payload.nonRecoverableInputTaxAccountId,
+    withholdingTaxPayableAccountId: payload.withholdingTaxPayableAccountId,
+    withholdingTaxReceivableAccountId: payload.withholdingTaxReceivableAccountId,
+    reverseChargeTaxAccountId: payload.reverseChargeTaxAccountId
+  })) {
+    if (accountId !== undefined) {
+      await assertAccountBelongsToOrg({ orgId, accountId, fieldName });
+    }
+  }
 
   const current = await getTaxSettings({ orgId });
 
   const out = {
     output_tax_account_id: payload.outputTaxAccountId ?? current.output_tax_account_id,
     input_tax_account_id: payload.inputTaxAccountId ?? current.input_tax_account_id,
-    default_tax_code_id: payload.defaultTaxCodeId ?? current.default_tax_code_id
+    default_tax_code_id: payload.defaultTaxCodeId ?? current.default_tax_code_id,
+    non_recoverable_input_tax_account_id: payload.nonRecoverableInputTaxAccountId ?? current.non_recoverable_input_tax_account_id,
+    withholding_tax_payable_account_id: payload.withholdingTaxPayableAccountId ?? current.withholding_tax_payable_account_id,
+    withholding_tax_receivable_account_id: payload.withholdingTaxReceivableAccountId ?? current.withholding_tax_receivable_account_id,
+    reverse_charge_tax_account_id: payload.reverseChargeTaxAccountId ?? current.reverse_charge_tax_account_id,
+    tax_rounding_strategy: payload.taxRoundingStrategy ?? current.tax_rounding_strategy,
+    enforce_partner_tax_profile: payload.enforcePartnerTaxProfile ?? current.enforce_partner_tax_profile,
+    require_tax_jurisdiction: payload.requireTaxJurisdiction ?? current.require_tax_jurisdiction
   };
 
   const { rows } = await pool.query(
@@ -236,10 +273,20 @@ async function setTaxSettings({ orgId, payload }) {
      SET output_tax_account_id=$2,
          input_tax_account_id=$3,
          default_tax_code_id=$4,
+         non_recoverable_input_tax_account_id=$5,
+         withholding_tax_payable_account_id=$6,
+         withholding_tax_receivable_account_id=$7,
+         reverse_charge_tax_account_id=$8,
+         tax_rounding_strategy=$9,
+         enforce_partner_tax_profile=$10,
+         require_tax_jurisdiction=$11,
          updated_at=NOW()
      WHERE organization_id=$1
      RETURNING *`,
-    [orgId, out.output_tax_account_id || null, out.input_tax_account_id || null, out.default_tax_code_id || null]
+    [orgId, out.output_tax_account_id || null, out.input_tax_account_id || null, out.default_tax_code_id || null,
+      out.non_recoverable_input_tax_account_id || null, out.withholding_tax_payable_account_id || null,
+      out.withholding_tax_receivable_account_id || null, out.reverse_charge_tax_account_id || null,
+      out.tax_rounding_strategy || 'line', !!out.enforce_partner_tax_profile, !!out.require_tax_jurisdiction]
   );
 
   return rows[0];
@@ -442,5 +489,84 @@ module.exports = {
   postTaxAdjustment,
   voidTaxAdjustment,
   listTaxCodeComponents,
-  setTaxCodeComponents
+  setTaxCodeComponents,
+  listCountryPacks,
+  installCountryPack,
+  listAutomationRules,
+  upsertAutomationRule
 };
+
+
+async function listCountryPacks({ orgId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM tax_country_packs WHERE organization_id=$1 OR organization_id IS NULL ORDER BY is_active DESC, country_code`,
+    [orgId]
+  );
+  return rows;
+}
+
+async function installCountryPack({ orgId, actorUserId, payload }) {
+  const packCode = payload.packCode || payload.countryCode;
+  const { rows: packRows } = await pool.query(
+    `SELECT * FROM tax_country_packs WHERE (organization_id=$1 OR organization_id IS NULL) AND (pack_code=$2 OR country_code=$2) ORDER BY organization_id NULLS FIRST LIMIT 1`,
+    [orgId, packCode]
+  );
+  const pack = packRows[0];
+  if (!pack) throw new AppError(404, "Tax country pack not found");
+
+  return withTransaction(async (client) => {
+    if (Array.isArray(pack.default_templates)) {
+      for (const tpl of pack.default_templates) {
+        const { rows: tRows } = await client.query(
+          `INSERT INTO tax_return_templates(organization_id, tax_type, code, name)
+           VALUES($1,$2,$3,$4)
+           ON CONFLICT (organization_id, tax_type, code) DO UPDATE SET name=EXCLUDED.name
+           RETURNING id`,
+          [orgId, tpl.taxType || 'VAT', tpl.code, tpl.name]
+        );
+        const templateId = tRows[0].id;
+        if (Array.isArray(tpl.boxes)) {
+          await client.query(`DELETE FROM tax_return_template_boxes WHERE template_id=$1`, [templateId]);
+          for (const box of tpl.boxes) {
+            await client.query(
+              `INSERT INTO tax_return_template_boxes(template_id, box_code, label, sort_order, direction)
+               VALUES($1,$2,$3,$4,$5)`,
+              [templateId, box.boxCode, box.label, box.sortOrder || 0, box.direction || null]
+            );
+          }
+        }
+      }
+    }
+
+    await client.query(
+      `INSERT INTO tax_country_pack_installs(organization_id, pack_id, installed_by, installed_at)
+       VALUES ($1,$2,$3,NOW())
+       ON CONFLICT (organization_id, pack_id) DO UPDATE SET installed_by=EXCLUDED.installed_by, installed_at=EXCLUDED.installed_at`,
+      [orgId, pack.id, actorUserId || null]
+    );
+    return { installed: true, pack };
+  });
+}
+
+async function listAutomationRules({ orgId }) {
+  const { rows } = await pool.query(`SELECT * FROM tax_automation_rules WHERE organization_id=$1 ORDER BY created_at DESC`, [orgId]);
+  return rows;
+}
+
+async function upsertAutomationRule({ orgId, actorUserId, payload }) {
+  const { rows } = await pool.query(
+    `INSERT INTO tax_automation_rules(organization_id, name, trigger_code, schedule_code, scope_json, action_json, is_enabled, created_by, updated_by)
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,COALESCE($7,TRUE),$8,$8)
+     ON CONFLICT (organization_id, name) DO UPDATE
+       SET trigger_code=EXCLUDED.trigger_code,
+           schedule_code=EXCLUDED.schedule_code,
+           scope_json=EXCLUDED.scope_json,
+           action_json=EXCLUDED.action_json,
+           is_enabled=EXCLUDED.is_enabled,
+           updated_by=EXCLUDED.updated_by,
+           updated_at=NOW()
+     RETURNING *`,
+    [orgId, payload.name, payload.triggerCode, payload.scheduleCode || null, JSON.stringify(payload.scope || {}), JSON.stringify(payload.action || {}), payload.isEnabled, actorUserId || null]
+  );
+  return rows[0];
+}

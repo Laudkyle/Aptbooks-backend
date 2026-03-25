@@ -17,8 +17,8 @@ async function assertPaymentTermsBelongsToOrg({ orgId, paymentTermsId }) {
   if (!rows.length) throw new AppError(400, "paymentTermsId is invalid for this organization");
 }
 
-async function getPartnerForOrg({ orgId, partnerId }) {
-  const { rows } = await pool.query(
+async function getPartnerForOrg({ orgId, partnerId, client = pool }) {
+  const { rows } = await client.query(
     `SELECT * FROM business_partners WHERE organization_id=$1 AND id=$2`,
     [orgId, partnerId]
   );
@@ -104,7 +104,83 @@ async function getPartnerDetails({ orgId, partnerId }) {
     [orgId, partnerId]
   );
 
-  return { partner, contacts, addresses };
+  return { partner, contacts, addresses, taxProfile: await getPartnerTaxProfile({ orgId, partnerId }) };
+}
+
+async function assertTaxCodeBelongsToOrg({ orgId, taxCodeId }) {
+  if (!taxCodeId) return;
+  const { rows } = await pool.query(`SELECT id FROM tax_codes WHERE organization_id=$1 AND id=$2`, [orgId, taxCodeId]);
+  if (!rows.length) throw new AppError(400, 'tax code is invalid for this organization');
+}
+
+async function assertJurisdictionBelongsToOrg({ orgId, jurisdictionId }) {
+  if (!jurisdictionId) return;
+  const { rows } = await pool.query(`SELECT id FROM tax_jurisdictions WHERE organization_id=$1 AND id=$2`, [orgId, jurisdictionId]);
+  if (!rows.length) throw new AppError(400, 'jurisdictionId is invalid for this organization');
+}
+
+async function getPartnerTaxProfile({ orgId, partnerId }) {
+  await getPartnerForOrg({ orgId, partnerId });
+  const { rows } = await pool.query(`SELECT * FROM tax_partner_profiles WHERE organization_id=$1 AND partner_id=$2`, [orgId, partnerId]);
+  return rows[0] || null;
+}
+
+async function upsertPartnerTaxProfile({ orgId, partnerId, payload }) {
+  await getPartnerForOrg({ orgId, partnerId });
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId || null });
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.purchaseTaxCodeId || null });
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.salesTaxCodeId || null });
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.withholdingTaxCodeId || null });
+  await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+
+  const before = await getPartnerTaxProfile({ orgId, partnerId });
+  const { rows } = await pool.query(`
+    INSERT INTO tax_partner_profiles (
+      organization_id, partner_id, tax_registration_no, legal_name, tax_class, default_tax_code_id, purchase_tax_code_id, sales_tax_code_id,
+      jurisdiction_id, place_of_supply, is_tax_registered, is_tax_exempt, exemption_reason_code, exemption_reason, reverse_charge_applicable,
+      withholding_applicable, withholding_tax_code_id, withholding_rate_override, recoverable_percent_override, certificate_reference, certificate_expiry, withholding_certificate_no, filing_contact_email, customer_tax_identifier_type, vendor_tax_identifier_type, metadata
+    ) VALUES (
+      $1,$2,$3,$4,COALESCE($5,'standard'),$6,$7,$8,$9,$10,COALESCE($11,false),COALESCE($12,false),$13,$14,COALESCE($15,false),
+      COALESCE($16,false),$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb
+    )
+    ON CONFLICT (organization_id, partner_id) DO UPDATE SET
+      tax_registration_no=EXCLUDED.tax_registration_no,
+      legal_name=EXCLUDED.legal_name,
+      tax_class=EXCLUDED.tax_class,
+      default_tax_code_id=EXCLUDED.default_tax_code_id,
+      purchase_tax_code_id=EXCLUDED.purchase_tax_code_id,
+      sales_tax_code_id=EXCLUDED.sales_tax_code_id,
+      jurisdiction_id=EXCLUDED.jurisdiction_id,
+      place_of_supply=EXCLUDED.place_of_supply,
+      is_tax_registered=EXCLUDED.is_tax_registered,
+      is_tax_exempt=EXCLUDED.is_tax_exempt,
+      exemption_reason_code=EXCLUDED.exemption_reason_code,
+      exemption_reason=EXCLUDED.exemption_reason,
+      reverse_charge_applicable=EXCLUDED.reverse_charge_applicable,
+      withholding_applicable=EXCLUDED.withholding_applicable,
+      withholding_tax_code_id=EXCLUDED.withholding_tax_code_id,
+      withholding_rate_override=EXCLUDED.withholding_rate_override,
+      recoverable_percent_override=EXCLUDED.recoverable_percent_override,
+      certificate_reference=EXCLUDED.certificate_reference,
+      certificate_expiry=EXCLUDED.certificate_expiry,
+      withholding_certificate_no=EXCLUDED.withholding_certificate_no,
+      filing_contact_email=EXCLUDED.filing_contact_email,
+      customer_tax_identifier_type=EXCLUDED.customer_tax_identifier_type,
+      vendor_tax_identifier_type=EXCLUDED.vendor_tax_identifier_type,
+      metadata=EXCLUDED.metadata,
+      updated_at=NOW()
+    RETURNING *
+  `, [
+    orgId, partnerId, payload.taxRegistrationNo || null, payload.legalName || null, payload.taxClass || null, payload.defaultTaxCodeId || null,
+    payload.purchaseTaxCodeId || null, payload.salesTaxCodeId || null, payload.jurisdictionId || null, payload.placeOfSupply || null,
+    payload.isTaxRegistered === true, payload.isTaxExempt === true, payload.exemptionReasonCode || null, payload.exemptionReason || null,
+    payload.reverseChargeApplicable === true, payload.withholdingApplicable === true, payload.withholdingTaxCodeId || null,
+    payload.withholdingRateOverride == null ? null : payload.withholdingRateOverride,
+    payload.recoverablePercentOverride == null ? null : payload.recoverablePercentOverride, payload.certificateReference || null, payload.certificateExpiry || null,
+    payload.withholdingCertificateNo || null, payload.filingContactEmail || null, payload.customerTaxIdentifierType || null, payload.vendorTaxIdentifierType || null, JSON.stringify(payload.metadata || {})
+  ]);
+
+  return { before, after: rows[0] };
 }
 
 async function updatePartner({ orgId, partnerId, payload }) {

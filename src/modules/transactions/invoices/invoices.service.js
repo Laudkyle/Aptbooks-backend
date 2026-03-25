@@ -1,6 +1,6 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
-  const { withTransaction } = require("../../../db/tx");
+const { withTransaction } = require("../../../db/tx");
 
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
@@ -12,7 +12,8 @@ const {
   multiplyQtyByUnitPriceToMoney,
   bigIntToDecimalString
 } = require("../../../shared/utils/money");
-const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2 } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2, upsertDocumentTaxSnapshot } = require("../../../shared/tax/multiTax");
+const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -33,7 +34,7 @@ async function assertRevenueAccount({ orgId, accountId }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive revenue account used");
 }
 
-async function prepareInvoiceLines({ client, orgId, lines }) {
+async function prepareInvoiceLines({ client, orgId, payload, lines }) {
   let subtotalCents = 0n;
   let taxTotal = 0;
   const computed = [];
@@ -44,16 +45,31 @@ async function prepareInvoiceLines({ client, orgId, lines }) {
     const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
     subtotalCents += lineCents;
     const taxableAmount = Number(bigIntToDecimalString(lineCents, 2));
-    const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: taxableAmount });
+    const tax = await resolveLineTaxes({
+      client,
+      orgId,
+      line: l,
+      defaultTaxableAmount: taxableAmount,
+      context: {
+        partnerId: payload.customerId,
+        partnerType: "customer",
+        transactionScope: "sales",
+        documentType: "invoice",
+        documentDate: payload.invoiceDate,
+        jurisdictionId: payload.jurisdictionId || null
+      }
+    });
     taxTotal += Number(tax.taxAmount || 0);
     computed.push({
       ...l,
       quantity: qty,
       unitPrice,
       lineTotal: bigIntToDecimalString(lineCents, 2),
+      taxableAmount,
       taxAmount: round2(tax.taxAmount),
       taxCodeId: tax.selectedTaxCodeId || null,
-      taxDetails: tax.components
+      taxDetails: tax.components,
+      taxSnapshot: tax.snapshot
     });
   }
 
@@ -96,7 +112,7 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
-    const { computed, subtotal, taxTotal, total } = await prepareInvoiceLines({ client, orgId, lines: payload.lines });
+    const { computed, subtotal, taxTotal, total } = await prepareInvoiceLines({ client, orgId, payload, lines: payload.lines });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const invoiceNo = await nextInvoiceNo(client, orgId);
@@ -120,12 +136,12 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
       const { rows } = await client.query(
         `
         INSERT INTO invoice_lines(
-          invoice_id, line_no, description, quantity, unit_price, line_total, revenue_account_id, tax_code_id, tax_amount
+          invoice_id, line_no, description, quantity, unit_price, line_total, revenue_account_id, tax_code_id, tax_amount, taxable_amount, tax_snapshot_json
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
         RETURNING *
         `,
-        [invoice.id, i + 1, l.description, l.quantity, l.unitPrice, l.lineTotal, l.revenueAccountId, l.taxCodeId || null, l.taxAmount || 0]
+        [invoice.id, i + 1, l.description, l.quantity, l.unitPrice, l.lineTotal, l.revenueAccountId, l.taxCodeId || null, l.taxAmount || 0, l.taxableAmount || 0, JSON.stringify(l.taxSnapshot || {})]
       );
       await insertLineTaxDetails({ client, tableName: 'invoice_line_tax_details', lineId: rows[0].id, details: l.taxDetails || [] });
     }
@@ -304,28 +320,39 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
 
     const period = await periodIF.findOpenPeriodForDate({ orgId, date: invoice.invoice_date, client });
 
+    const taxMap = await loadLineTaxDetails({ client, tableName: "invoice_line_tax_details", lineIds: lines.map((l) => l.id) });
     const revenueMap = new Map();
-    for (const l of lines) {
+    const postingLines = lines.map((l) => ({ ...l, taxDetails: taxMap.get(l.id) || [] }));
+    const taxSummary = summarizeLineTaxDetails(postingLines);
+    for (const l of postingLines) {
       await assertRevenueAccount({ orgId, accountId: l.revenue_account_id });
-      const baseAmount = Number(l.line_total || 0);
-      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + baseAmount);
+      const lineTax = taxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
+      const baseAmount = Number((l.taxable_amount ?? l.line_total ?? 0));
+      const revenueAmount = Number((baseAmount + Number(lineTax.nonRecoverable || 0)).toFixed(2));
+      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + revenueAmount);
     }
 
     const total = Number(invoice.total);
-    const taxTotal = Number(invoice.tax_total || 0);
     const arAccountId = customer.default_receivable_account_id;
+    const netReceivable = Number((total - Number(taxSummary.withholdingReceivable || 0)).toFixed(2));
     const { rows: taxSettingsRows } = await client.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
     const outputTaxAccountId = taxSettingsRows[0]?.output_tax_account_id || null;
 
     const journalLines = [
-      { accountId: arAccountId, debit: total, credit: 0, description: `A/R for ${invoice.invoice_no}` }
+      { accountId: arAccountId, debit: netReceivable, credit: 0, description: `A/R for ${invoice.invoice_no}` }
     ];
     for (const [accountId, amt] of revenueMap.entries()) {
       journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Revenue for ${invoice.invoice_no}` });
     }
-    if (taxTotal > 0) {
+    if (taxSummary.outputTax > 0) {
       if (!outputTaxAccountId) throw new AppError(409, 'Output tax account is not configured (tax_settings.output_tax_account_id)');
-      journalLines.push({ accountId: outputTaxAccountId, debit: 0, credit: taxTotal, description: `Output tax for ${invoice.invoice_no}` });
+      journalLines.push({ accountId: outputTaxAccountId, debit: 0, credit: taxSummary.outputTax, description: `Output tax for ${invoice.invoice_no}` });
+    }
+    if (taxSummary.withholdingReceivable > 0) {
+      const withholdingReceivableAccountId = taxSettingsRows[0]?.withholding_tax_receivable_account_id || null;
+      if (withholdingReceivableAccountId) {
+        journalLines.push({ accountId: withholdingReceivableAccountId, debit: taxSummary.withholdingReceivable, credit: 0, description: `Withholding tax receivable for ${invoice.invoice_no}` });
+      }
     }
 
     const idempotencyKey = `invoice:${invoiceId}:issue`;
@@ -345,6 +372,20 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
     });
 
     const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+
+    await upsertDocumentTaxSnapshot({
+      client,
+      orgId,
+      sourceType: "invoice",
+      sourceId: invoiceId,
+      journalEntryId: posted.journalId,
+      snapshot: {
+        header: invoice,
+        lines: postingLines,
+        taxSummary,
+        journalLines
+      }
+    });
 
     const { rows: afterRows } = await client.query(
       `

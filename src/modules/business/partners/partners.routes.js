@@ -13,7 +13,8 @@ const {
   createContactSchema,
   updateContactSchema,
   createAddressSchema,
-  updateAddressSchema
+  updateAddressSchema,
+  setPartnerTaxProfileSchema
 } = require("../../../shared/validators/business/partners.validators");
 
 const { setCreditPolicySchema } = require("../../../shared/validators/business/creditPolicy.validators");
@@ -83,6 +84,34 @@ router.patch("/:id", requirePermission("partners.manage"), async (req, res, next
     if (e?.code === "23505") return next(new AppError(409, "Partner already exists"));
     next(e);
   }
+});
+
+
+router.get("/:id/tax-profile", requirePermission("partners.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json(await svc.getPartnerTaxProfile({ orgId, partnerId: req.params.id }));
+  } catch (e) { next(e); }
+});
+
+router.put("/:id/tax-profile", requirePermission("partners.tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(setPartnerTaxProfileSchema, req.body);
+    const out = await svc.upsertPartnerTaxProfile({ orgId, partnerId: req.params.id, payload });
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "partner.tax_profile.updated",
+      entityType: "tax_partner_profiles",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+    res.json(out.after);
+  } catch (e) { next(e); }
 });
 
 // CREDIT POLICY

@@ -1,4 +1,5 @@
 const { AppError } = require('../errors/AppError');
+const { determineTaxSelections } = require('./determination');
 
 function round2(n) {
   return Number(Number(n || 0).toFixed(2));
@@ -6,7 +7,9 @@ function round2(n) {
 
 async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
   const { rows } = await client.query(
-    `SELECT id, organization_id, code, name, tax_type, rate, is_compound, direction, box_code, status, effective_from, effective_to
+    `SELECT id, organization_id, code, name, tax_type, rate, is_compound, direction, box_code, status, effective_from, effective_to,
+            category_code, tax_scope, application_scope, calculation_method, exemption_reason_code, exemption_reason,
+            reverse_charge, recoverable_percent, reporting_group, posting_account_id, metadata
        FROM tax_codes
       WHERE organization_id=$1 AND id=$2`,
     [orgId, taxCodeId]
@@ -17,7 +20,9 @@ async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
 
   const { rows: comps } = await client.query(
     `SELECT tcc.id, tcc.parent_tax_code_id, tcc.component_tax_code_id, tcc.sequence_no, tcc.rate_override,
-            tc.code, tc.name, tc.tax_type, tc.rate, tc.direction, tc.box_code, tc.status
+            tc.code, tc.name, tc.tax_type, tc.rate, tc.direction, tc.box_code, tc.status,
+            tc.category_code, tc.tax_scope, tc.application_scope, tc.calculation_method, tc.exemption_reason_code, tc.exemption_reason,
+            tc.reverse_charge, tc.recoverable_percent, tc.reporting_group, tc.posting_account_id, tc.metadata
        FROM tax_code_components tcc
        JOIN tax_codes tc ON tc.id = tcc.component_tax_code_id
       WHERE tcc.organization_id=$1 AND tcc.parent_tax_code_id=$2
@@ -27,54 +32,68 @@ async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
   return { code, components: comps };
 }
 
+function computeTaxAmount({ taxableAmount, rate, calculationMethod = 'standard', explicitTaxAmount = null }) {
+  if (explicitTaxAmount != null) return round2(explicitTaxAmount);
+  if (!rate) return 0;
+  const numericRate = Number(rate || 0);
+  if (calculationMethod === 'inclusive') {
+    return round2(taxableAmount - (taxableAmount / (1 + numericRate)));
+  }
+  if (calculationMethod === 'deduction' || calculationMethod === 'withholding') {
+    return round2(taxableAmount * numericRate);
+  }
+  return round2(taxableAmount * numericRate);
+}
+
 async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmount = 0 }) {
   const bundle = await fetchTaxCodeBundle({ client, orgId, taxCodeId: selection.taxCodeId });
   const taxableAmount = round2(selection.taxableAmount == null ? defaultTaxableAmount : selection.taxableAmount);
 
+  const shape = (taxCode, rate) => ({
+    selectedTaxCodeId: bundle.code.id,
+    sourceTaxCodeId: bundle.code.id,
+    sourceRuleId: selection.sourceRuleId || null,
+    taxCodeId: taxCode.id,
+    taxCode: taxCode.code,
+    taxCodeName: taxCode.name,
+    taxType: taxCode.tax_type,
+    direction: taxCode.direction,
+    boxCode: taxCode.box_code,
+    rate,
+    taxableAmount,
+    taxScope: taxCode.tax_scope || null,
+    categoryCode: taxCode.category_code || null,
+    recoverablePercent: selection.recoverablePercent == null ? Number(taxCode.recoverable_percent ?? 1) : Number(selection.recoverablePercent),
+    exemptionReasonCode: selection.exemptionReasonCode || taxCode.exemption_reason_code || null,
+    exemptionReason: selection.exemptionReason || taxCode.exemption_reason || null,
+    reverseCharge: selection.reverseCharge == null ? (taxCode.reverse_charge === true) : selection.reverseCharge === true,
+    postingAccountId: selection.postingAccountId || taxCode.posting_account_id || null,
+    metadata: { ...(taxCode.metadata || {}), ...(selection.metadata || {}) }
+  });
+
   if (!bundle.code.is_compound || !bundle.components.length) {
     const rate = Number(bundle.code.rate || 0);
-    const taxAmount = selection.taxAmount == null ? round2(taxableAmount * rate) : round2(selection.taxAmount);
-    return [{
-      selectedTaxCodeId: bundle.code.id,
-      sourceTaxCodeId: bundle.code.id,
-      taxCodeId: bundle.code.id,
-      taxCode: bundle.code.code,
-      taxCodeName: bundle.code.name,
-      taxType: bundle.code.tax_type,
-      direction: bundle.code.direction,
-      boxCode: bundle.code.box_code,
-      rate,
-      taxableAmount,
-      taxAmount
-    }];
+    const component = shape(bundle.code, rate);
+    component.taxAmount = computeTaxAmount({ taxableAmount, rate, calculationMethod: bundle.code.calculation_method, explicitTaxAmount: selection.taxAmount });
+    component.calculationMethod = bundle.code.calculation_method;
+    return [component];
   }
 
   if (selection.taxAmount != null) {
     throw new AppError(400, `Compound tax code ${bundle.code.code} cannot be submitted with a single taxAmount override; submit component taxes or let the system calculate them`);
   }
 
-  return bundle.components.map((component) => {
-    const rate = Number(component.rate_override == null ? component.rate : component.rate_override) || 0;
-    return {
-      selectedTaxCodeId: bundle.code.id,
-      sourceTaxCodeId: bundle.code.id,
-      taxCodeId: component.component_tax_code_id,
-      taxCode: component.code,
-      taxCodeName: component.name,
-      taxType: component.tax_type,
-      direction: component.direction,
-      boxCode: component.box_code,
-      rate,
-      taxableAmount,
-      taxAmount: round2(taxableAmount * rate)
-    };
+  return bundle.components.map((componentTax) => {
+    const rate = Number(componentTax.rate_override == null ? componentTax.rate : componentTax.rate_override) || 0;
+    const component = shape(componentTax, rate);
+    component.taxAmount = computeTaxAmount({ taxableAmount, rate, calculationMethod: componentTax.calculation_method });
+    component.calculationMethod = componentTax.calculation_method;
+    return component;
   });
 }
 
-async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = 0 }) {
-  const selections = Array.isArray(line.taxes) && line.taxes.length
-    ? line.taxes.map((t) => ({ ...t }))
-    : (line.taxCodeId ? [{ taxCodeId: line.taxCodeId, taxAmount: line.taxAmount, taxableAmount: line.taxableAmount }] : []);
+async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = 0, context = {} }) {
+  const selections = await determineTaxSelections({ client, orgId, line, context });
 
   const components = [];
   for (const selection of selections) {
@@ -83,11 +102,26 @@ async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = 0 
     components.push(...expanded);
   }
 
-  const aggregate = components.reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+  const grossTax = components.reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+  const nonWithholdingTax = components.filter((item) => item.taxType !== 'WITHHOLDING').reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+  const withholdingTax = components.filter((item) => item.taxType === 'WITHHOLDING').reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+
   return {
     selectedTaxCodeId: line.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
-    taxAmount: round2(aggregate),
-    components
+    taxAmount: round2(nonWithholdingTax),
+    withholdingTaxAmount: round2(withholdingTax),
+    grossComputedTaxAmount: round2(grossTax),
+    taxableAmount: round2(defaultTaxableAmount),
+    components,
+    snapshot: {
+      context,
+      selectedTaxCodeId: line.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
+      taxAmount: round2(nonWithholdingTax),
+      withholdingTaxAmount: round2(withholdingTax),
+      grossComputedTaxAmount: round2(grossTax),
+      taxableAmount: round2(defaultTaxableAmount),
+      components
+    }
   };
 }
 
@@ -98,8 +132,9 @@ async function insertLineTaxDetails({ client, tableName, lineId, details = [] })
     const d = details[i];
     const { rows } = await client.query(
       `INSERT INTO ${tableName}
-         (line_id, sequence_no, source_tax_code_id, tax_code_id, taxable_amount, tax_rate, tax_amount, tax_type, direction, box_code)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         (line_id, sequence_no, source_tax_code_id, tax_code_id, taxable_amount, tax_rate, tax_amount, tax_type, direction, box_code,
+          tax_scope, category_code, recoverable_percent, exemption_reason_code, reverse_charge, posting_account_id, source_rule_id, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb)
        RETURNING *`,
       [
         lineId,
@@ -111,7 +146,15 @@ async function insertLineTaxDetails({ client, tableName, lineId, details = [] })
         d.taxAmount,
         d.taxType || null,
         d.direction || null,
-        d.boxCode || null
+        d.boxCode || null,
+        d.taxScope || null,
+        d.categoryCode || null,
+        d.recoverablePercent == null ? 1 : d.recoverablePercent,
+        d.exemptionReasonCode || null,
+        d.reverseCharge === true,
+        d.postingAccountId || null,
+        d.sourceRuleId || null,
+        JSON.stringify(d.metadata || {})
       ]
     );
     inserted.push(rows[0]);
@@ -133,10 +176,23 @@ async function loadLineTaxDetails({ client, tableName, lineIds = [] }) {
   return map;
 }
 
+async function upsertDocumentTaxSnapshot({ client, orgId, sourceType, sourceId, journalEntryId = null, snapshot = {} }) {
+  const { rows } = await client.query(
+    `INSERT INTO tax_document_snapshots (organization_id, source_type, source_id, journal_entry_id, snapshot_json)
+     VALUES ($1,$2,$3,$4,$5::jsonb)
+     ON CONFLICT (organization_id, source_type, source_id)
+     DO UPDATE SET journal_entry_id=EXCLUDED.journal_entry_id, snapshot_json=EXCLUDED.snapshot_json, updated_at=NOW()
+     RETURNING *`,
+    [orgId, sourceType, sourceId, journalEntryId, JSON.stringify(snapshot || {})]
+  );
+  return rows[0];
+}
+
 module.exports = {
   round2,
   resolveLineTaxes,
   insertLineTaxDetails,
   loadLineTaxDetails,
-  fetchTaxCodeBundle
+  fetchTaxCodeBundle,
+  upsertDocumentTaxSnapshot
 };

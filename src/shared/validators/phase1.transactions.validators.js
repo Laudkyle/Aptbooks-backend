@@ -25,7 +25,7 @@ const lineSchema = z.object({
   }
 });
 
-const postingLineSchema = lineSchema.extend({
+const postingLineSchema = lineSchema.safeExtend({
   accountId: z.string().uuid()
 });
 

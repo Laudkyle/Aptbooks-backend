@@ -33,16 +33,16 @@ async function insertBill(client, { orgId, vendorId, billNo, billDate, dueDate, 
   return rows[0];
 }
 
-async function insertBillLine(client, { billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId, taxCodeId, taxAmount, taxDetails = [] }) {
+async function insertBillLine(client, { billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId, taxCodeId, taxAmount, taxableAmount = 0, taxSnapshot = {}, taxDetails = [] }) {
   const { rows } = await client.query(
     `
     INSERT INTO bill_lines(
-      bill_id, line_no, description, quantity, unit_price, line_total, expense_account_id, tax_code_id, tax_amount
+      bill_id, line_no, description, quantity, unit_price, line_total, expense_account_id, tax_code_id, tax_amount, taxable_amount, tax_snapshot_json
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)
     RETURNING *
     `,
-    [billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId, taxCodeId || null, taxAmount || 0]
+    [billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId, taxCodeId || null, taxAmount || 0, taxableAmount || 0, JSON.stringify(taxSnapshot || {})]
   );
   await insertLineTaxDetails({ client, tableName: "bill_line_tax_details", lineId: rows[0].id, details: taxDetails });
 }

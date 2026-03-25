@@ -16,7 +16,9 @@ const {
   setTaxSettingsSchema,
   createTaxAdjustmentSchema,
   voidTaxAdjustmentSchema,
-  setTaxCodeComponentsSchema
+  setTaxCodeComponentsSchema,
+  installCountryPackSchema,
+  upsertTaxAutomationRuleSchema
 } = require("./tax.validators");
 
 const router = express.Router();
@@ -199,6 +201,40 @@ router.put("/codes/:id/components", requirePermission("tax.component.manage"), a
     const payload = validate(setTaxCodeComponentsSchema, req.body);
     const data = await svc.setTaxCodeComponents({ orgId, taxCodeId: req.params.id, payload });
     res.json({ data });
+  } catch (e) { next(e); }
+});
+
+
+
+router.get("/country-packs", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json({ data: await svc.listCountryPacks({ orgId }) });
+  } catch (e) { next(e); }
+});
+
+router.post("/country-packs/install", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(installCountryPackSchema, req.body);
+    const out = await svc.installCountryPack({ orgId, actorUserId: req.user.id, payload });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.get("/automation-rules", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json({ data: await svc.listAutomationRules({ orgId }) });
+  } catch (e) { next(e); }
+});
+
+router.put("/automation-rules", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(upsertTaxAutomationRuleSchema, req.body);
+    const out = await svc.upsertAutomationRule({ orgId, actorUserId: req.user.id, payload });
+    res.json(out);
   } catch (e) { next(e); }
 });
 

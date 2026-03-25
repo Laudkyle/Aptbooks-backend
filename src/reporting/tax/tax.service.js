@@ -259,9 +259,13 @@ async function taxTransactions({ orgId, fromDate, toDate, taxType, direction, en
 }
 
 async function taxReconciliation({ orgId, fromDate, toDate, taxType }) {
-  const rows = await getTaxTransactionRows({ orgId, fromDate, toDate, taxType: taxType || null });
+  assertIsoDate(fromDate, "from");
+  assertIsoDate(toDate, "to");
+  const effectiveTaxType = taxType || 'VAT';
+  const rows = await getTaxTransactionRows({ orgId, fromDate, toDate, taxType: effectiveTaxType || null });
   const bySource = {};
   const byBox = {};
+  const issueItems = [];
   for (const row of rows) {
     const sourceKey = `${row.entity_type}::${row.direction}`;
     bySource[sourceKey] = Number(((bySource[sourceKey] || 0) + row.signed_tax_amount).toFixed(2));
@@ -269,18 +273,95 @@ async function taxReconciliation({ orgId, fromDate, toDate, taxType }) {
       const boxKey = `${row.box_code}::${row.direction}`;
       byBox[boxKey] = Number(((byBox[boxKey] || 0) + row.signed_tax_amount).toFixed(2));
     }
+    if (!row.box_code) issueItems.push({ entity_type: row.entity_type, entity_id: row.entity_id, issue_code: 'missing_box_code', details: row });
+    if (!row.direction) issueItems.push({ entity_type: row.entity_type, entity_id: row.entity_id, issue_code: 'missing_direction', details: row });
   }
-  return {
+
+  const { rows: settingsRows } = await pool.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
+  const settings = settingsRows[0] || {};
+  const taxAccountIds = [
+    settings.output_tax_account_id,
+    settings.input_tax_account_id,
+    settings.non_recoverable_input_tax_account_id,
+    settings.withholding_tax_payable_account_id,
+    settings.withholding_tax_receivable_account_id,
+    settings.reverse_charge_tax_account_id
+  ].filter(Boolean);
+
+  let glRows = [];
+  if (taxAccountIds.length) {
+    const gl = await pool.query(
+      `SELECT jel.account_id, coa.code AS account_code, coa.name AS account_name,
+              SUM(jel.debit) AS debit_total, SUM(jel.credit) AS credit_total,
+              SUM(jel.debit - jel.credit) AS net_amount
+         FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id = jel.journal_entry_id
+         JOIN chart_of_accounts coa ON coa.id = jel.account_id
+        WHERE je.organization_id=$1
+          AND je.status='posted'
+          AND je.entry_date BETWEEN $2::date AND $3::date
+          AND jel.account_id = ANY($4::uuid[])
+        GROUP BY jel.account_id, coa.code, coa.name
+        ORDER BY coa.code`,
+      [orgId, fromDate, toDate, taxAccountIds]
+    );
+    glRows = gl.rows.map((r) => ({
+      ...r,
+      debit_total: Number(r.debit_total || 0),
+      credit_total: Number(r.credit_total || 0),
+      net_amount: Number(r.net_amount || 0)
+    }));
+  }
+
+  const sourceOutput = Number(rows.filter((r) => r.direction === 'output').reduce((s, r) => s + r.signed_tax_amount, 0).toFixed(2));
+  const sourceInput = Number(rows.filter((r) => r.direction === 'input').reduce((s, r) => s + r.signed_tax_amount, 0).toFixed(2));
+  const expectedNet = Number((sourceInput - sourceOutput).toFixed(2));
+  const glNet = Number(glRows.reduce((s, r) => s + r.net_amount, 0).toFixed(2));
+  const difference = Number((glNet - expectedNet).toFixed(2));
+
+  const summary = {
     from: fromDate,
     to: toDate,
+    taxType: effectiveTaxType,
     transactionCount: rows.length,
     bySource,
     byBox,
-    totals: {
-      outputTax: Number(rows.filter((r) => r.direction === 'output').reduce((s, r) => s + r.signed_tax_amount, 0).toFixed(2)),
-      inputTax: Number(rows.filter((r) => r.direction === 'input').reduce((s, r) => s + r.signed_tax_amount, 0).toFixed(2))
-    }
+    sourceTotals: {
+      outputTax: sourceOutput,
+      inputTax: sourceInput,
+      expectedNetTaxAssetLiability: expectedNet
+    },
+    glTotals: {
+      taxAccountCount: glRows.length,
+      netAmount: glNet,
+      accounts: glRows
+    },
+    difference,
+    status: Math.abs(difference) < 0.01 && issueItems.length === 0 ? 'balanced' : 'attention_required',
+    issues: issueItems
   };
+
+  const { rows: runRows } = await pool.query(
+    `INSERT INTO tax_reconciliation_runs (organization_id, tax_type, from_date, to_date, status, summary_json)
+     VALUES ($1,$2,$3::date,$4::date,$5,$6::jsonb)
+     ON CONFLICT (organization_id, tax_type, from_date, to_date)
+     DO UPDATE SET status=EXCLUDED.status, summary_json=EXCLUDED.summary_json
+     RETURNING id`,
+    [orgId, effectiveTaxType, fromDate, toDate, summary.status, JSON.stringify(summary)]
+  );
+  const runId = runRows[0]?.id;
+  if (runId) {
+    await pool.query(`DELETE FROM tax_reconciliation_items WHERE run_id=$1`, [runId]);
+    for (const item of issueItems) {
+      await pool.query(
+        `INSERT INTO tax_reconciliation_items (run_id, entity_type, entity_id, issue_code, details_json)
+         VALUES ($1,$2,$3,$4,$5::jsonb)`,
+        [runId, item.entity_type, item.entity_id || null, item.issue_code, JSON.stringify(item.details || {})]
+      );
+    }
+  }
+
+  return { runId, ...summary };
 }
 
 async function taxDiagnostics({ orgId, fromDate, toDate }) {
@@ -481,6 +562,70 @@ async function listReturns({ orgId, taxType, fromDate, toDate }) {
   return rows.map((r) => ({ id: r.id, tax_type: r.tax_type, from: r.from_date, to: r.to_date, status: r.status, workflow_status: r.workflow_status, workflow_document_id: r.workflow_document_id, created_at: r.created_at, finalized_at: r.finalized_at, template_id: r.template_id }));
 }
 
+
+async function jurisdictionReturn({ orgId, userId, fromDate, toDate, templateCode, jurisdictionId = null }) {
+  assertIsoDate(fromDate, 'from');
+  assertIsoDate(toDate, 'to');
+  const params = [orgId];
+  let sql = `SELECT * FROM tax_return_jurisdiction_templates WHERE organization_id=$1`;
+  if (templateCode) {
+    params.append(templateCode);
+    sql += ` AND code=$${len(params)}`;
+  }
+  if (jurisdictionId) {
+    params.append(jurisdictionId);
+    sql += ` AND jurisdiction_id=$${len(params)}`;
+  }
+  sql += ' ORDER BY updated_at DESC LIMIT 1';
+  const tplRows = await pool.query(sql, params);
+  const template = tplRows.rows[0];
+  if (!template) throw new AppError(404, 'Jurisdiction return template not found');
+
+  const boxRows = await pool.query(`SELECT * FROM tax_return_jurisdiction_boxes WHERE template_id=$1 ORDER BY sort_order, box_code`, [template.id]);
+  const txRows = await getTaxTransactionRows({ orgId, fromDate, toDate, taxType: template.tax_type || 'VAT' });
+  const lines = boxRows.rows.map((box) => {
+    const filtered = txRows.filter((r) => (!box.direction || r.direction === box.direction) && (!box.tax_scope || (r.tax_scope || '') === box.tax_scope) && (!box.box_code || r.box_code === box.box_code));
+    const taxAmount = filtered.reduce((s, r) => s + Number(r.signed_tax_amount || 0), 0);
+    const taxableAmount = filtered.reduce((s, r) => s + Number(r.signed_taxable_amount || 0), 0);
+    return { box_code: box.box_code, label: box.label, direction: box.direction || null, taxable_amount: Number(taxableAmount.toFixed(2)), tax_amount: Number(taxAmount.toFixed(2)), transaction_count: filtered.length };
+  });
+  const totals = { taxable_amount: Number(lines.reduce((s, l) => s + l.taxable_amount, 0).toFixed(2)), tax_amount: Number(lines.reduce((s, l) => s + l.tax_amount, 0).toFixed(2)) };
+  const payload = { tax_type: template.tax_type, from: fromDate, to: toDate, jurisdiction_template: { id: template.id, code: template.code, name: template.name }, lines, totals };
+  const { rows } = await pool.query(`INSERT INTO tax_returns (organization_id, tax_type, from_date, to_date, status, template_id, payload_json, created_by) VALUES ($1,$2,$3::date,$4::date,'draft',$5,$6::jsonb,$7) RETURNING id`, [orgId, template.tax_type, fromDate, toDate, template.id, JSON.stringify(payload), userId || null]);
+  return { return_id: rows[0]?.id, ...payload };
+}
+
+async function listCountryPacks({ orgId }) {
+  const { rows } = await pool.query(`SELECT * FROM tax_country_packs WHERE organization_id=$1 OR organization_id IS NULL ORDER BY country_code, pack_code`, [orgId]);
+  return rows;
+}
+
+async function listFilingAdapters({ orgId }) {
+  const { rows } = await pool.query(`SELECT * FROM tax_filing_adapters WHERE organization_id=$1 ORDER BY adapter_code`, [orgId]);
+  return rows;
+}
+
+async function queueFilingRun({ orgId, actorUserId, taxReturnId, adapterCode }) {
+  const { rows: returnRows } = await pool.query(`SELECT * FROM tax_returns WHERE organization_id=$1 AND id=$2`, [orgId, taxReturnId]);
+  const taxReturn = returnRows[0];
+  if (!taxReturn) throw new AppError(404, 'Tax return not found');
+  const { rows: adapterRows } = await pool.query(`SELECT * FROM tax_filing_adapters WHERE organization_id=$1 AND adapter_code=$2`, [orgId, adapterCode]);
+  const adapter = adapterRows[0];
+  if (!adapter) throw new AppError(404, 'Tax filing adapter not found');
+  const requestPayload = { adapterCode, filingMode: adapter.filing_mode, payload: taxReturn.payload_json || {}, taxType: taxReturn.tax_type };
+  const { rows } = await pool.query(`INSERT INTO tax_filing_runs(organization_id, adapter_id, tax_return_id, source_type, source_id, status, request_payload, transmitted_at) VALUES ($1,$2,$3,'tax_return',$3,'queued',$4::jsonb,NOW()) RETURNING *`, [orgId, adapter.id, taxReturnId, JSON.stringify(requestPayload)]);
+  return rows[0];
+}
+
+async function listFilingRuns({ orgId, status = null }) {
+  const params = [orgId];
+  let sql = `SELECT * FROM tax_filing_runs WHERE organization_id=$1`;
+  if (status) { params.push(status); sql += ` AND status=$2`; }
+  sql += ' ORDER BY created_at DESC';
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
 module.exports = {
   vatSummary,
   vatReturn,
@@ -492,5 +637,10 @@ module.exports = {
   submitReturnForApproval,
   approveReturnWorkflow,
   rejectReturnWorkflow,
-  finalizeReturn
+  finalizeReturn,
+  jurisdictionReturn,
+  listCountryPacks,
+  listFilingAdapters,
+  queueFilingRun,
+  listFilingRuns
 };

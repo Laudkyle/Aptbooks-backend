@@ -8,5 +8,7 @@ router.use('/auto-reconciliation', require('./auto-reconciliation/autoReconcilia
 router.use('/document-matching', require('./document-matching/documentMatching.routes'));
 router.use('/ai-classification', require('./ai-classification/aiClassification.routes'));
 router.use('/smart-notifications', require('./smart-notifications/smartNotifications.routes'));
+router.use('/tax-automation', require('./tax-automation/taxAutomation.routes'));
+router.use('/tax', require('./tax-automation/taxAutomation.routes'));
 
 module.exports = router;
