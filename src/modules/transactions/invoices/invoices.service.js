@@ -12,6 +12,7 @@ const {
   multiplyQtyByUnitPriceToMoney,
   bigIntToDecimalString
 } = require("../../../shared/utils/money");
+const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2 } = require("../../../shared/tax/multiTax");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -32,27 +33,33 @@ async function assertRevenueAccount({ orgId, accountId }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive revenue account used");
 }
 
-function calcTotals(lines) {
+async function prepareInvoiceLines({ client, orgId, lines }) {
   let subtotalCents = 0n;
+  let taxTotal = 0;
+  const computed = [];
 
-  const computed = lines.map((l) => {
+  for (const l of lines) {
     const qty = l.quantity ?? 1;
     const unitPrice = l.unitPrice ?? 0;
-
-    // quantity in NUMERIC(18,4), unit price in NUMERIC(18,2)
     const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
     subtotalCents += lineCents;
-
-    return {
+    const taxableAmount = Number(bigIntToDecimalString(lineCents, 2));
+    const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: taxableAmount });
+    taxTotal += Number(tax.taxAmount || 0);
+    computed.push({
       ...l,
       quantity: qty,
       unitPrice,
-      lineTotal: bigIntToDecimalString(lineCents, 2)
-    };
-  });
+      lineTotal: bigIntToDecimalString(lineCents, 2),
+      taxAmount: round2(tax.taxAmount),
+      taxCodeId: tax.selectedTaxCodeId || null,
+      taxDetails: tax.components
+    });
+  }
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  return { computed, subtotal, total: subtotal };
+  const total = (Number(subtotal) + round2(taxTotal)).toFixed(2);
+  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), total };
 }
 
 async function nextInvoiceNo(client, orgId) {
@@ -85,12 +92,11 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
 
   for (const l of payload.lines) await assertRevenueAccount({ orgId, accountId: l.revenueAccountId });
 
-  const { computed, subtotal, total } = calcTotals(payload.lines);
-
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
+    const { computed, subtotal, taxTotal, total } = await prepareInvoiceLines({ client, orgId, lines: payload.lines });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const invoiceNo = await nextInvoiceNo(client, orgId);
@@ -99,27 +105,29 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
       `
       INSERT INTO invoices(
         organization_id, customer_id, invoice_no, invoice_date, due_date,
-        currency_code, fx_rate, status, memo, subtotal, total
+        currency_code, fx_rate, status, memo, subtotal, tax_total, total
       )
-      VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9,$10)
       RETURNING *
       `,
-      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, total]
+      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, taxTotal, total]
     );
 
     const invoice = invRows[0];
 
     for (let i = 0; i < computed.length; i++) {
       const l = computed[i];
-      await client.query(
+      const { rows } = await client.query(
         `
         INSERT INTO invoice_lines(
-          invoice_id, line_no, description, quantity, unit_price, line_total, revenue_account_id
+          invoice_id, line_no, description, quantity, unit_price, line_total, revenue_account_id, tax_code_id, tax_amount
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        RETURNING *
         `,
-        [invoice.id, i + 1, l.description, l.quantity, l.unitPrice, l.lineTotal, l.revenueAccountId]
+        [invoice.id, i + 1, l.description, l.quantity, l.unitPrice, l.lineTotal, l.revenueAccountId, l.taxCodeId || null, l.taxAmount || 0]
       );
+      await insertLineTaxDetails({ client, tableName: 'invoice_line_tax_details', lineId: rows[0].id, details: l.taxDetails || [] });
     }
 
     await client.query("COMMIT");
@@ -184,8 +192,9 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
      ORDER BY line_no`,
     [invoiceId]
   );
+  const taxMap = await loadLineTaxDetails({ client: pool, tableName: 'invoice_line_tax_details', lineIds: lines.map((l) => l.id) });
 
-  return { invoice, lines };
+  return { invoice, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) };
 }
 
 async function listInvoices({ orgId, query }) {
@@ -298,17 +307,25 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
     const revenueMap = new Map();
     for (const l of lines) {
       await assertRevenueAccount({ orgId, accountId: l.revenue_account_id });
-      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + Number(l.line_total));
+      const baseAmount = Number(l.line_total || 0);
+      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + baseAmount);
     }
 
     const total = Number(invoice.total);
+    const taxTotal = Number(invoice.tax_total || 0);
     const arAccountId = customer.default_receivable_account_id;
+    const { rows: taxSettingsRows } = await client.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
+    const outputTaxAccountId = taxSettingsRows[0]?.output_tax_account_id || null;
 
     const journalLines = [
       { accountId: arAccountId, debit: total, credit: 0, description: `A/R for ${invoice.invoice_no}` }
     ];
     for (const [accountId, amt] of revenueMap.entries()) {
       journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Revenue for ${invoice.invoice_no}` });
+    }
+    if (taxTotal > 0) {
+      if (!outputTaxAccountId) throw new AppError(409, 'Output tax account is not configured (tax_settings.output_tax_account_id)');
+      journalLines.push({ accountId: outputTaxAccountId, debit: 0, credit: taxTotal, description: `Output tax for ${invoice.invoice_no}` });
     }
 
     const idempotencyKey = `invoice:${invoiceId}:issue`;

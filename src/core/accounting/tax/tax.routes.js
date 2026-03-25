@@ -15,7 +15,8 @@ const {
   updateTaxCodeSchema,
   setTaxSettingsSchema,
   createTaxAdjustmentSchema,
-  voidTaxAdjustmentSchema
+  voidTaxAdjustmentSchema,
+  setTaxCodeComponentsSchema
 } = require("./tax.validators");
 
 const router = express.Router();
@@ -180,6 +181,24 @@ router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, ne
     });
 
     res.json(out);
+  } catch (e) { next(e); }
+});
+
+
+router.get("/codes/:id/components", requirePermission("tax.component.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listTaxCodeComponents({ orgId, taxCodeId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.put("/codes/:id/components", requirePermission("tax.component.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(setTaxCodeComponentsSchema, req.body);
+    const data = await svc.setTaxCodeComponents({ orgId, taxCodeId: req.params.id, payload });
+    res.json({ data });
   } catch (e) { next(e); }
 });
 

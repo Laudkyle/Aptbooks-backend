@@ -1,4 +1,5 @@
 const { pool } = require("../../../db/pool");
+const { insertLineTaxDetails } = require("../../../shared/tax/multiTax");
 
 async function nextDocumentNo(client, orgId, moduleCode, prefix) {
   await client.query(
@@ -91,6 +92,7 @@ async function insertLine(client, documentId, lineNo, line) {
       JSON.stringify(line.meta || {})
     ]
   );
+  await insertLineTaxDetails({ client, tableName: "operational_doc_line_tax_details", lineId: rows[0].id, details: line.taxDetails || [] });
   return rows[0];
 }
 

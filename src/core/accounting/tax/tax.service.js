@@ -392,6 +392,39 @@ async function voidTaxAdjustment({ orgId, actorUserId, adjustmentId, reason }) {
   });
 }
 
+
+async function listTaxCodeComponents({ orgId, taxCodeId, client = pool }) {
+  const { rows } = await client.query(
+    `SELECT tcc.*, tc.code AS component_code, tc.name AS component_name, tc.tax_type, tc.rate AS component_rate, tc.direction, tc.box_code
+       FROM tax_code_components tcc
+       JOIN tax_codes tc ON tc.id = tcc.component_tax_code_id
+      WHERE tcc.organization_id=$1 AND tcc.parent_tax_code_id=$2
+      ORDER BY tcc.sequence_no, tc.code`,
+    [orgId, taxCodeId]
+  );
+  return rows;
+}
+
+async function setTaxCodeComponents({ orgId, taxCodeId, payload }) {
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId });
+  for (const c of payload.components || []) {
+    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: c.componentTaxCodeId });
+    if (c.componentTaxCodeId === taxCodeId) throw new AppError(400, 'A tax code cannot include itself as a component');
+  }
+  return withTransaction(async (client) => {
+    await client.query(`DELETE FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2`, [orgId, taxCodeId]);
+    let seq = 1;
+    for (const c of payload.components || []) {
+      await client.query(
+        `INSERT INTO tax_code_components(organization_id, parent_tax_code_id, component_tax_code_id, sequence_no, rate_override)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [orgId, taxCodeId, c.componentTaxCodeId, c.sequenceNo || seq++, c.rateOverride == null ? null : c.rateOverride]
+      );
+    }
+    await client.query(`UPDATE tax_codes SET is_compound = CASE WHEN EXISTS (SELECT 1 FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2) THEN TRUE ELSE is_compound END, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, taxCodeId]);
+    return listTaxCodeComponents({ orgId, taxCodeId, client });
+  });
+}
 module.exports = {
   listJurisdictions,
   createJurisdiction,
@@ -407,5 +440,7 @@ module.exports = {
   listTaxAdjustments,
   createTaxAdjustment,
   postTaxAdjustment,
-  voidTaxAdjustment
+  voidTaxAdjustment,
+  listTaxCodeComponents,
+  setTaxCodeComponents
 };

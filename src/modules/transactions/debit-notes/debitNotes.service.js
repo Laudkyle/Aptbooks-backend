@@ -7,8 +7,9 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 const repo = require("./debitNotes.repository");
+const { resolveLineTaxes, round2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
 
-function calcTotals(lines) {
+async function calcTotals({ client, orgId, lines }) {
   let subtotal = 0;
   let tax_total = 0;
   for (const l of lines) {
@@ -16,9 +17,12 @@ function calcTotals(lines) {
     const up = Number(l.unitPrice ?? 0);
     const lt = Number((qty * up).toFixed(2));
     l.lineTotal = lt;
+    const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: lt });
+    l.taxAmount = round2(tax.taxAmount);
+    l.taxCodeId = tax.selectedTaxCodeId || null;
+    l.taxDetails = tax.components;
     subtotal += lt;
-    const ta = Number(l.taxAmount ?? 0);
-    tax_total += ta;
+    tax_total += Number(l.taxAmount ?? 0);
   }
   subtotal = Number(subtotal.toFixed(2));
   tax_total = Number(tax_total.toFixed(2));
@@ -122,9 +126,10 @@ async function getDebitNoteDetails({ orgId, id, currentUserId }) {
     const dn = await repo.getById({ orgId, id, client, currentUserId});
     if (!dn) throw new AppError(404, "Debit note not found");
     const lines = await repo.getLines({ id, client });
+    const taxMap = await loadLineTaxDetails({ client, tableName: 'debit_note_line_tax_details', lineIds: lines.map((l) => l.id) });
     const applications = await repo.getApplications({ orgId, id, client });
     const bal = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
-    return { ...dn, lines, applications, balance: bal };
+    return { ...dn, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })), applications, balance: bal };
   } finally {
     client.release();
   }
@@ -147,6 +152,7 @@ async function submitDebitNoteForApproval({ orgId, actorUserId, id }) {
     const docEntity = await repo.getById({ orgId, id, client });
     if (!docEntity) throw new AppError(404, "Debit note not found");
     const lines = await repo.getLines({ id, client });
+    const taxMap = await loadLineTaxDetails({ client, tableName: 'debit_note_line_tax_details', lineIds: lines.map((l) => l.id) });
     const applications = await repo.getApplications ? await repo.getApplications({ orgId, id, client }) : [];
     return documentableSvc.submitEntityForApproval({
       orgId,
@@ -244,6 +250,7 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
     if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
 
     const lines = await repo.getLines({ id, client });
+    const taxMap = await loadLineTaxDetails({ client, tableName: 'debit_note_line_tax_details', lineIds: lines.map((l) => l.id) });
     if (!lines.length) throw new AppError(400, "Debit note has no lines");
 
     const taxSettings = await getTaxSettings({ orgId, client });

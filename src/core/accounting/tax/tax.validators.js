@@ -51,6 +51,16 @@ const voidTaxAdjustmentSchema = z.object({
   reason: z.string().min(2).max(500)
 });
 
+const taxComponentSchema = z.object({
+  componentTaxCodeId: z.string().uuid(),
+  sequenceNo: z.coerce.number().int().positive().optional(),
+  rateOverride: z.coerce.number().nonnegative().optional().nullable()
+});
+
+const setTaxCodeComponentsSchema = z.object({
+  components: z.array(taxComponentSchema).min(1)
+});
+
 const setTaxSettingsSchema = z.object({
   outputTaxAccountId: z.string().uuid().nullable().optional(),
   inputTaxAccountId: z.string().uuid().nullable().optional(),
@@ -64,5 +74,6 @@ module.exports = {
   updateTaxCodeSchema,
   setTaxSettingsSchema,
   createTaxAdjustmentSchema,
-  voidTaxAdjustmentSchema
+  voidTaxAdjustmentSchema,
+  setTaxCodeComponentsSchema
 };

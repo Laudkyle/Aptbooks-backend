@@ -5,6 +5,7 @@ const partnerIF = require("../../../interfaces/partnerManagement.interface");
 const { buildOperationalDocumentJournal } = require("./operationalDocPosting.service");
 const { runApprovalPostingHook } = require("./approvalPostingHooks");
 const repo = require("./opsDocs.repository");
+const { resolveLineTaxes, round2: roundTax2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -47,7 +48,7 @@ function round2(n) {
   return Number((Number(n || 0)).toFixed(2));
 }
 
-async function computeLinesWithTax({ orgId, lines = [] }) {
+async function computeLinesWithTax({ client, orgId, lines = [] }) {
   let subtotal = 0;
   let taxTotal = 0;
   const computed = [];
@@ -59,17 +60,8 @@ async function computeLinesWithTax({ orgId, lines = [] }) {
       ? (line.lineTotal == null ? round2(quantity * unitPrice) : round2(line.lineTotal))
       : round2(line.taxableAmount);
 
-    let taxAmount = round2(line.taxAmount);
-    let taxCode = null;
-    if (line.taxCodeId) {
-      taxCode = await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: line.taxCodeId });
-      if (line.taxAmount == null) {
-        taxAmount = round2(taxableAmount * Number(taxCode.rate || 0));
-      }
-    } else {
-      taxAmount = 0;
-    }
-
+    const tax = await resolveLineTaxes({ client, orgId, line, defaultTaxableAmount: taxableAmount });
+    const taxAmount = roundTax2(tax.taxAmount);
     const lineTotal = line.lineTotal == null ? round2(taxableAmount + taxAmount) : round2(line.lineTotal);
 
     subtotal += taxableAmount;
@@ -81,16 +73,9 @@ async function computeLinesWithTax({ orgId, lines = [] }) {
       unitPrice,
       taxableAmount,
       taxAmount,
-      lineTotal,
-      resolvedTax: taxCode ? {
-        id: taxCode.id,
-        code: taxCode.code,
-        name: taxCode.name,
-        direction: taxCode.direction,
-        boxCode: taxCode.box_code,
-        rate: Number(taxCode.rate || 0),
-        taxType: taxCode.tax_type
-      } : null
+      taxCodeId: tax.selectedTaxCodeId || null,
+      taxDetails: tax.components,
+      lineTotal
     });
   }
 
@@ -132,11 +117,11 @@ function createOpsDocService(config) {
       await assertPostableActiveAccount({ orgId, accountId: line.accountId || null });
     }
 
-    const computed = await computeLinesWithTax({ orgId, lines: payload.lines || [] });
-    const amountTotal = payload.amountTotal == null ? computed.total : round2(payload.amountTotal);
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const computed = await computeLinesWithTax({ client, orgId, lines: payload.lines || [] });
+    const amountTotal = payload.amountTotal == null ? computed.total : round2(payload.amountTotal);
       const baseCurrency = payload.currencyCode || await getOrgBaseCurrency(client, orgId);
       const documentNo = await repo.nextDocumentNo(client, orgId, moduleCode, prefix);
       const doc = await repo.insertDocument(client, {
@@ -183,7 +168,8 @@ function createOpsDocService(config) {
     const header = await repo.getDocumentById(orgId, documentId, currentUserId);
     if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
     const lines = await repo.getDocumentLines(documentId);
-    return { header, lines };
+    const taxMap = await loadLineTaxDetails({ client: pool, tableName: "operational_doc_line_tax_details", lineIds: lines.map((l) => l.id) });
+    return { header, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) };
   }
 
   async function submitForApproval({ orgId, actorUserId, documentId }) {

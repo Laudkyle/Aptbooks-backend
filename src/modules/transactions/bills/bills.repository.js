@@ -1,4 +1,5 @@
 const { pool } = require("../../../db/pool");
+const { insertLineTaxDetails } = require("../../../shared/tax/multiTax");
 
 async function nextBillNo(client, orgId) {
   await client.query(
@@ -17,31 +18,33 @@ async function nextBillNo(client, orgId) {
   return `BILL-${String(no).padStart(6, "0")}`;
 }
 
-async function insertBill(client, { orgId, vendorId, billNo, billDate, dueDate, memo, subtotal, total, currencyCode }) {
+async function insertBill(client, { orgId, vendorId, billNo, billDate, dueDate, memo, subtotal, taxTotal, total, currencyCode }) {
   const { rows } = await client.query(
     `
     INSERT INTO bills(
       organization_id, vendor_id, bill_no, bill_date, due_date,
-      currency_code, fx_rate, status, memo, subtotal, total
+      currency_code, fx_rate, status, memo, subtotal, tax_total, total
     )
-    VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9)
+    VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9,$10)
     RETURNING *
     `,
-    [orgId, vendorId, billNo, billDate, dueDate, currencyCode, memo || null, subtotal, total]
+    [orgId, vendorId, billNo, billDate, dueDate, currencyCode, memo || null, subtotal, taxTotal || 0, total]
   );
   return rows[0];
 }
 
-async function insertBillLine(client, { billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId }) {
-  await client.query(
+async function insertBillLine(client, { billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId, taxCodeId, taxAmount, taxDetails = [] }) {
+  const { rows } = await client.query(
     `
     INSERT INTO bill_lines(
-      bill_id, line_no, description, quantity, unit_price, line_total, expense_account_id
+      bill_id, line_no, description, quantity, unit_price, line_total, expense_account_id, tax_code_id, tax_amount
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    RETURNING *
     `,
-    [billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId]
+    [billId, lineNo, description, quantity, unitPrice, lineTotal, expenseAccountId, taxCodeId || null, taxAmount || 0]
   );
+  await insertLineTaxDetails({ client, tableName: "bill_line_tax_details", lineId: rows[0].id, details: taxDetails });
 }
 
 async function getBillById(orgId, billId, currentUserId) {

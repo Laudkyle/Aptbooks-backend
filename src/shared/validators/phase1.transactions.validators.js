@@ -1,6 +1,12 @@
 
 const { z } = require("zod");
 
+const taxSelectionSchema = z.object({
+  taxCodeId: z.string().uuid(),
+  taxableAmount: z.number().nonnegative().optional(),
+  taxAmount: z.number().nonnegative().optional()
+});
+
 const lineSchema = z.object({
   description: z.string().min(1),
   quantity: z.number().positive().optional(),
@@ -11,7 +17,12 @@ const lineSchema = z.object({
   accountId: z.string().uuid().optional().nullable(),
   itemId: z.string().uuid().optional().nullable(),
   taxCodeId: z.string().uuid().optional().nullable(),
+  taxes: z.array(taxSelectionSchema).optional(),
   meta: z.record(z.any()).optional().nullable()
+}).superRefine((val, ctx) => {
+  if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['taxes'], message: 'Use either taxCodeId or taxes, not both' });
+  }
 });
 
 const postingLineSchema = lineSchema.extend({

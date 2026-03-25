@@ -2,11 +2,24 @@ const { z } = require("zod");
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+const taxSelectionSchema = z.object({
+  taxCodeId: z.string().uuid(),
+  taxableAmount: z.coerce.number().nonnegative().optional(),
+  taxAmount: z.coerce.number().nonnegative().optional()
+});
+
 const lineSchema = z.object({
   description: z.string().min(2).max(500),
   quantity: z.coerce.number().positive().default(1),
   unitPrice: z.coerce.number().min(0),
-  revenueAccountId: z.string().uuid()
+  revenueAccountId: z.string().uuid(),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  taxAmount: z.coerce.number().nonnegative().optional(),
+  taxes: z.array(taxSelectionSchema).optional()
+}).superRefine((val, ctx) => {
+  if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
+    ctx.addIssue({ code: 'custom', path: ['taxes'], message: 'Use either taxCodeId or taxes, not both' });
+  }
 });
 
 const createInvoiceSchema = z.object({

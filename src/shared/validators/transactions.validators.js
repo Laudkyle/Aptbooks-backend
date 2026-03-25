@@ -1,5 +1,12 @@
 const { z } = require("zod");
 
+const taxSelectionSchema = z.object({
+  taxCodeId: z.string().uuid(),
+  taxableAmount: z.number().nonnegative().optional(),
+  taxAmount: z.number().nonnegative().optional()
+});
+
+
 /** =========================
  * Bills (AP)
  * ========================= */
@@ -8,7 +15,14 @@ const createBillLineSchema = z.object({
   description: z.string().min(1),
   quantity: z.number().positive().optional(),
   unitPrice: z.number().nonnegative(),
-  expenseAccountId: z.string().uuid()
+  expenseAccountId: z.string().uuid(),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  taxAmount: z.number().nonnegative().optional(),
+  taxes: z.array(taxSelectionSchema).optional()
+}).superRefine((val, ctx) => {
+  if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
+    ctx.addIssue({ code: 'custom', path: ['taxes'], message: 'Use either taxCodeId or taxes, not both' });
+  }
 });
 
 const createBillSchema = z.object({
@@ -80,7 +94,12 @@ const creditNoteLineSchema = z.object({
   unitPrice: z.number().nonnegative(),
   revenueAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
-  taxAmount: z.number().nonnegative().optional()
+  taxAmount: z.number().nonnegative().optional(),
+  taxes: z.array(taxSelectionSchema).optional()
+}).superRefine((val, ctx) => {
+  if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
+    ctx.addIssue({ code: 'custom', path: ['taxes'], message: 'Use either taxCodeId or taxes, not both' });
+  }
 });
 
 const createCreditNoteSchema = z.object({
@@ -105,7 +124,12 @@ const debitNoteLineSchema = z.object({
   unitPrice: z.number().nonnegative(),
   expenseAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
-  taxAmount: z.number().nonnegative().optional()
+  taxAmount: z.number().nonnegative().optional(),
+  taxes: z.array(taxSelectionSchema).optional()
+}).superRefine((val, ctx) => {
+  if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
+    ctx.addIssue({ code: 'custom', path: ['taxes'], message: 'Use either taxCodeId or taxes, not both' });
+  }
 });
 
 const createDebitNoteSchema = z.object({

@@ -23,6 +23,7 @@ async function getOrgBaseCurrency(client, orgId) {
 }
 
 const repo = require("./bills.repository");
+const { resolveLineTaxes, round2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
 
 async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
   const { rows } = await pool.query(
@@ -34,25 +35,32 @@ async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
 }
 
-function calcTotals(lines) {
+async function prepareBillLines({ client, orgId, lines }) {
   let subtotalCents = 0n;
+  let taxTotal = 0;
+  const computed = [];
 
-  const computed = lines.map((l) => {
+  for (const l of lines) {
     const qty = l.quantity ?? 1;
     const unitPrice = l.unitPrice ?? 0;
     const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
     subtotalCents += lineCents;
-
-    return {
+    const taxableAmount = Number(bigIntToDecimalString(lineCents, 2));
+    const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: taxableAmount });
+    taxTotal += Number(tax.taxAmount || 0);
+    computed.push({
       ...l,
       quantity: qty,
       unitPrice,
-      lineTotal: bigIntToDecimalString(lineCents, 2)
-    };
-  });
+      lineTotal: bigIntToDecimalString(lineCents, 2),
+      taxAmount: round2(tax.taxAmount),
+      taxCodeId: tax.selectedTaxCodeId || null,
+      taxDetails: tax.components
+    });
+  }
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  return { computed, subtotal, total: subtotal };
+  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), total: (Number(subtotal) + round2(taxTotal)).toFixed(2) };
 }
 
 async function createDraftBill({ orgId, actorUserId, payload }) {
@@ -65,12 +73,11 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
     await assertPostableActiveAccount({ orgId, accountId: l.expenseAccountId, errMsg: "Invalid expenseAccountId" });
   }
 
-  const { computed, subtotal, total } = calcTotals(payload.lines);
-
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
+    const { computed, subtotal, taxTotal, total } = await prepareBillLines({ client, orgId, lines: payload.lines });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const billNo = await repo.nextBillNo(client, orgId);
@@ -82,6 +89,7 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       dueDate: payload.dueDate,
       memo: payload.memo,
       subtotal,
+      taxTotal,
       total,
       currencyCode: baseCurrency
     });
@@ -95,7 +103,10 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
         quantity: l.quantity,
         unitPrice: l.unitPrice,
         lineTotal: l.lineTotal,
-        expenseAccountId: l.expenseAccountId
+        expenseAccountId: l.expenseAccountId,
+        taxCodeId: l.taxCodeId || null,
+        taxAmount: l.taxAmount || 0,
+        taxDetails: l.taxDetails || []
       });
     }
 
@@ -114,6 +125,7 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
   if (!bill) throw new AppError(404, "Bill not found");
 
   const lines = await repo.getBillLines(billId);
+  const taxMap = await loadLineTaxDetails({ client: pool, tableName: 'bill_line_tax_details', lineIds: lines.map((l) => l.id) });
 
   const { rows: paidRows } = await pool.query(
     `
@@ -131,7 +143,7 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
   const total = Number(bill.total);
   const outstanding = Number((total - paid).toFixed(2));
 
-  return { bill, lines, paid, outstanding };
+  return { bill, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })), paid, outstanding };
 }
 
 async function listBills({ orgId, query }) {
@@ -170,10 +182,17 @@ async function issueBill({ orgId, actorUserId, billId }) {
 
   const apAccountId = vendor.default_payable_account_id;
   const total = Number(bill.total);
+  const taxTotal = Number(bill.tax_total || 0);
+  const { rows: taxSettingsRows } = await client.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
+  const inputTaxAccountId = taxSettingsRows[0]?.input_tax_account_id || null;
 
   const journalLines = [];
   for (const [accountId, amt] of expenseMap.entries()) {
     journalLines.push({ accountId, debit: Number(amt.toFixed(2)), credit: 0, description: `Expense for ${bill.bill_no}` });
+  }
+  if (taxTotal > 0) {
+    if (!inputTaxAccountId) throw new AppError(409, 'Input tax account is not configured (tax_settings.input_tax_account_id)');
+    journalLines.push({ accountId: inputTaxAccountId, debit: taxTotal, credit: 0, description: `Input tax for ${bill.bill_no}` });
   }
   journalLines.push({ accountId: apAccountId, debit: 0, credit: total, description: `A/P for ${bill.bill_no}` });
 

@@ -1,3 +1,4 @@
+const { insertLineTaxDetails } = require("../../../shared/tax/multiTax");
 const { AppError } = require("../../../shared/errors/AppError");
 
 
@@ -115,11 +116,12 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
 
   for (let i = 0; i < payload.lines.length; i++) {
     const l = payload.lines[i];
-    await client.query(
+    const { rows } = await client.query(
       `INSERT INTO credit_note_lines(
           credit_note_id, line_no, description, quantity, unit_price, line_total,
           revenue_account_id, tax_code_id, tax_amount
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
       [
         cn.id,
         i + 1,
@@ -132,6 +134,7 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
         l.taxAmount || 0
       ]
     );
+    await insertLineTaxDetails({ client, tableName: "credit_note_line_tax_details", lineId: rows[0].id, details: l.taxDetails || [] });
   }
 
   return cn;

@@ -28,14 +28,17 @@ async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }
              i.invoice_date AS document_date, i.status,
              i.customer_id AS partner_id, bp.name AS partner_name,
              il.id AS line_id, il.line_no, il.description,
-             COALESCE(il.line_total - COALESCE(il.tax_amount,0), il.line_total, 0) AS taxable_amount,
-             COALESCE(il.tax_amount,0) AS tax_amount,
-             tc.id AS tax_code_id, tc.code AS tax_code, tc.name AS tax_code_name, tc.tax_type,
-             COALESCE(tc.direction,'output') AS direction, tc.box_code,
+             d.taxable_amount,
+             d.tax_amount,
+             d.tax_code_id, tc.code AS tax_code, tc.name AS tax_code_name,
+             COALESCE(d.tax_type, tc.tax_type) AS tax_type,
+             COALESCE(d.direction, tc.direction, 'output') AS direction,
+             COALESCE(d.box_code, tc.box_code) AS box_code,
              1::numeric AS sign_factor
       FROM invoices i
       JOIN invoice_lines il ON il.invoice_id = i.id
-      LEFT JOIN tax_codes tc ON tc.id = il.tax_code_id
+      JOIN invoice_line_tax_details d ON d.line_id = il.id
+      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
       LEFT JOIN business_partners bp ON bp.id = i.customer_id
       WHERE i.organization_id=$1 AND i.status IN ('issued','paid') AND i.invoice_date BETWEEN $2::date AND $3::date
 
@@ -43,14 +46,17 @@ async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }
       SELECT 'bill', b.id, b.bill_no, b.bill_date, b.status,
              b.vendor_id, bp.name,
              bl.id, bl.line_no, bl.description,
-             COALESCE(bl.line_total - COALESCE(bl.tax_amount,0), bl.line_total, 0),
-             COALESCE(bl.tax_amount,0),
-             tc.id, tc.code, tc.name, tc.tax_type,
-             COALESCE(tc.direction,'input'), tc.box_code,
+             d.taxable_amount,
+             d.tax_amount,
+             d.tax_code_id, tc.code, tc.name,
+             COALESCE(d.tax_type, tc.tax_type),
+             COALESCE(d.direction, tc.direction, 'input'),
+             COALESCE(d.box_code, tc.box_code),
              1::numeric
       FROM bills b
       JOIN bill_lines bl ON bl.bill_id = b.id
-      LEFT JOIN tax_codes tc ON tc.id = bl.tax_code_id
+      JOIN bill_line_tax_details d ON d.line_id = bl.id
+      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
       LEFT JOIN business_partners bp ON bp.id = b.vendor_id
       WHERE b.organization_id=$1 AND b.status IN ('issued','paid') AND b.bill_date BETWEEN $2::date AND $3::date
 
@@ -58,14 +64,17 @@ async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }
       SELECT 'credit_note', cn.id, cn.credit_note_no, cn.credit_note_date, cn.status,
              cn.customer_id, bp.name,
              cnl.id, cnl.line_no, cnl.description,
-             COALESCE(cnl.line_total,0),
-             COALESCE(cnl.tax_amount,0),
-             tc.id, tc.code, tc.name, tc.tax_type,
-             COALESCE(tc.direction,'output'), tc.box_code,
+             d.taxable_amount,
+             d.tax_amount,
+             d.tax_code_id, tc.code, tc.name,
+             COALESCE(d.tax_type, tc.tax_type),
+             COALESCE(d.direction, tc.direction, 'output'),
+             COALESCE(d.box_code, tc.box_code),
              -1::numeric
       FROM credit_notes cn
       JOIN credit_note_lines cnl ON cnl.credit_note_id = cn.id
-      LEFT JOIN tax_codes tc ON tc.id = cnl.tax_code_id
+      JOIN credit_note_line_tax_details d ON d.line_id = cnl.id
+      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
       LEFT JOIN business_partners bp ON bp.id = cn.customer_id
       WHERE cn.organization_id=$1 AND cn.status='issued' AND cn.credit_note_date BETWEEN $2::date AND $3::date
 
@@ -73,14 +82,17 @@ async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }
       SELECT 'debit_note', dn.id, dn.debit_note_no, dn.debit_note_date, dn.status,
              dn.vendor_id, bp.name,
              dnl.id, dnl.line_no, dnl.description,
-             COALESCE(dnl.line_total,0),
-             COALESCE(dnl.tax_amount,0),
-             tc.id, tc.code, tc.name, tc.tax_type,
-             COALESCE(tc.direction,'input'), tc.box_code,
+             d.taxable_amount,
+             d.tax_amount,
+             d.tax_code_id, tc.code, tc.name,
+             COALESCE(d.tax_type, tc.tax_type),
+             COALESCE(d.direction, tc.direction, 'input'),
+             COALESCE(d.box_code, tc.box_code),
              -1::numeric
       FROM debit_notes dn
       JOIN debit_note_lines dnl ON dnl.debit_note_id = dn.id
-      LEFT JOIN tax_codes tc ON tc.id = dnl.tax_code_id
+      JOIN debit_note_line_tax_details d ON d.line_id = dnl.id
+      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
       LEFT JOIN business_partners bp ON bp.id = dn.vendor_id
       WHERE dn.organization_id=$1 AND dn.status='issued' AND dn.debit_note_date BETWEEN $2::date AND $3::date
 
@@ -89,22 +101,24 @@ async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }
              od.document_date, od.status,
              od.counterparty_partner_id, bp.name,
              odl.id, odl.line_no, odl.description,
-             COALESCE(odl.taxable_amount, GREATEST(COALESCE(odl.line_total,0) - COALESCE(odl.tax_amount,0), 0)),
-             COALESCE(odl.tax_amount,0),
-             tc.id, tc.code, tc.name, tc.tax_type,
+             d.taxable_amount,
+             d.tax_amount,
+             d.tax_code_id, tc.code, tc.name,
+             COALESCE(d.tax_type, tc.tax_type),
              CASE
                WHEN od.module_code='return' AND COALESCE(od.meta->>'returnType','')='sales_return' THEN 'output'
                WHEN od.module_code='return' AND COALESCE(od.meta->>'returnType','')='purchase_return' THEN 'input'
-               ELSE COALESCE(tc.direction,'input')
-             END AS direction,
-             tc.box_code,
+               ELSE COALESCE(d.direction, tc.direction, 'input')
+             END,
+             COALESCE(d.box_code, tc.box_code),
              CASE
                WHEN od.module_code='return' AND COALESCE(od.meta->>'returnType','') IN ('sales_return','purchase_return') THEN -1::numeric
                ELSE 1::numeric
              END AS sign_factor
       FROM operational_documents od
       JOIN operational_document_lines odl ON odl.document_id = od.id
-      LEFT JOIN tax_codes tc ON tc.id = odl.tax_code_id
+      JOIN operational_doc_line_tax_details d ON d.line_id = odl.id
+      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
       LEFT JOIN business_partners bp ON bp.id = od.counterparty_partner_id
       WHERE od.organization_id=$1
         AND od.status='posted'
@@ -276,38 +290,38 @@ async function taxDiagnostics({ orgId, fromDate, toDate }) {
     `
     WITH src AS (
       SELECT 'invoice'::text AS entity_type, i.id AS entity_id, i.invoice_no AS document_no, i.invoice_date AS document_date,
-             il.line_no, il.description, il.tax_code_id, il.tax_amount, tc.box_code, tc.direction, tc.tax_type
+             il.line_no, il.description, d.tax_code_id, d.tax_amount, d.box_code, d.direction, d.tax_type
       FROM invoices i
       JOIN invoice_lines il ON il.invoice_id=i.id
-      LEFT JOIN tax_codes tc ON tc.id = il.tax_code_id
+      LEFT JOIN invoice_line_tax_details d ON d.line_id = il.id
       WHERE i.organization_id=$1 AND i.status IN ('issued','paid') AND i.invoice_date BETWEEN $2::date AND $3::date
       UNION ALL
       SELECT 'bill', b.id, b.bill_no, b.bill_date,
-             bl.line_no, bl.description, bl.tax_code_id, bl.tax_amount, tc.box_code, tc.direction, tc.tax_type
+             bl.line_no, bl.description, d.tax_code_id, d.tax_amount, d.box_code, d.direction, d.tax_type
       FROM bills b
       JOIN bill_lines bl ON bl.bill_id=b.id
-      LEFT JOIN tax_codes tc ON tc.id = bl.tax_code_id
+      LEFT JOIN bill_line_tax_details d ON d.line_id = bl.id
       WHERE b.organization_id=$1 AND b.status IN ('issued','paid') AND b.bill_date BETWEEN $2::date AND $3::date
       UNION ALL
       SELECT od.module_code, od.id, od.document_no, od.document_date,
-             odl.line_no, odl.description, odl.tax_code_id, odl.tax_amount, tc.box_code, tc.direction, tc.tax_type
+             odl.line_no, odl.description, d.tax_code_id, d.tax_amount, d.box_code, d.direction, d.tax_type
       FROM operational_documents od
       JOIN operational_document_lines odl ON odl.document_id = od.id
-      LEFT JOIN tax_codes tc ON tc.id = odl.tax_code_id
+      LEFT JOIN operational_doc_line_tax_details d ON d.line_id = odl.id
       WHERE od.organization_id=$1 AND od.status='posted' AND od.module_code IN ('expense','petty_cash','return') AND od.document_date BETWEEN $2::date AND $3::date
       UNION ALL
       SELECT 'credit_note', cn.id, cn.credit_note_no, cn.credit_note_date,
-             cnl.line_no, cnl.description, cnl.tax_code_id, cnl.tax_amount, tc.box_code, tc.direction, tc.tax_type
+             cnl.line_no, cnl.description, d.tax_code_id, d.tax_amount, d.box_code, d.direction, d.tax_type
       FROM credit_notes cn
       JOIN credit_note_lines cnl ON cnl.credit_note_id = cn.id
-      LEFT JOIN tax_codes tc ON tc.id = cnl.tax_code_id
+      LEFT JOIN credit_note_line_tax_details d ON d.line_id = cnl.id
       WHERE cn.organization_id=$1 AND cn.status='issued' AND cn.credit_note_date BETWEEN $2::date AND $3::date
       UNION ALL
       SELECT 'debit_note', dn.id, dn.debit_note_no, dn.debit_note_date,
-             dnl.line_no, dnl.description, dnl.tax_code_id, dnl.tax_amount, tc.box_code, tc.direction, tc.tax_type
+             dnl.line_no, dnl.description, d.tax_code_id, d.tax_amount, d.box_code, d.direction, d.tax_type
       FROM debit_notes dn
       JOIN debit_note_lines dnl ON dnl.debit_note_id = dn.id
-      LEFT JOIN tax_codes tc ON tc.id = dnl.tax_code_id
+      LEFT JOIN debit_note_line_tax_details d ON d.line_id = dnl.id
       WHERE dn.organization_id=$1 AND dn.status='issued' AND dn.debit_note_date BETWEEN $2::date AND $3::date
     )
     SELECT *,
