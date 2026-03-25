@@ -543,8 +543,7 @@ async function setCreditPolicy({ orgId, partnerId, payload }) {
   return { before: current, after: rows[0] };
 }
 
-module.exports.getCreditPolicy = getCreditPolicy;
-module.exports.setCreditPolicy = setCreditPolicy;
+
 module.exports = {
   createPartner,
   listPartners,
