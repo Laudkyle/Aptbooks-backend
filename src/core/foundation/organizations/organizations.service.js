@@ -622,6 +622,162 @@ async function initializeOrganizationDefaults({
       ["printing.templates.read", "Read document templates and assignments"],
       ["printing.templates.manage", "Manage document templates, versions, and assignments"],
       ["printing.render", "Render transaction documents using assigned templates"],
+          // Tax administration (Wave 1)
+    ["tax.jurisdiction.read", "Read tax jurisdictions"],
+    ["tax.jurisdiction.create", "Create tax jurisdictions"],
+    ["tax.jurisdiction.update", "Update tax jurisdictions"],
+    ["tax.jurisdiction.delete", "Delete tax jurisdictions"],
+
+    ["tax.registration.read", "Read tax registrations"],
+    ["tax.registration.create", "Create tax registrations"],
+    ["tax.registration.update", "Update tax registrations"],
+    ["tax.registration.delete", "Delete tax registrations"],
+
+    ["tax.code.read", "Read tax codes"],
+    ["tax.code.create", "Create tax codes"],
+    ["tax.code.update", "Update tax codes"],
+    ["tax.code.delete", "Delete tax codes"],
+
+    ["tax.rate.read", "Read tax rates"],
+    ["tax.rate.create", "Create tax rates"],
+    ["tax.rate.update", "Update tax rates"],
+    ["tax.rate.delete", "Delete tax rates"],
+
+    ["tax.category.read", "Read tax categories"],
+    ["tax.category.create", "Create tax categories"],
+    ["tax.category.update", "Update tax categories"],
+    ["tax.category.delete", "Delete tax categories"],
+
+    ["tax.exemption_reason.read", "Read tax exemption reasons"],
+    ["tax.exemption_reason.create", "Create tax exemption reasons"],
+    ["tax.exemption_reason.update", "Update tax exemption reasons"],
+    ["tax.exemption_reason.delete", "Delete tax exemption reasons"],
+
+    // Tax rules / determination engine (Wave 1)
+    ["tax.rule.read", "Read tax rules"],
+    ["tax.rule.create", "Create tax rules"],
+    ["tax.rule.update", "Update tax rules"],
+    ["tax.rule.delete", "Delete tax rules"],
+
+    ["tax.engine.execute", "Execute tax determination and preview calculations"],
+
+    // Partner tax profiles (Wave 1)
+    ["tax.partner.read", "Read partner tax profiles"],
+    ["tax.partner.create", "Create partner tax profiles"],
+    ["tax.partner.update", "Update partner tax profiles"],
+    ["tax.partner.delete", "Delete partner tax profiles"],
+
+    ["tax.partner.override", "Override partner tax treatment"],
+    ["tax.partner.exemption.apply", "Apply partner tax exemptions"],
+    ["tax.partner.reverse_charge.apply", "Apply partner reverse charge treatment"],
+
+    // Transaction-level tax control (Wave 1)
+    ["tax.apply", "Apply tax to transactions"],
+    ["tax.override", "Override transaction tax results"],
+    ["tax.adjust", "Apply tax adjustments"],
+    ["tax.view.breakdown", "View detailed tax breakdowns"],
+
+    ["tax.invoice.apply", "Apply tax on invoices"],
+    ["tax.invoice.override", "Override invoice tax results"],
+    ["tax.invoice.exemption.apply", "Apply invoice tax exemptions"],
+    ["tax.invoice.reverse_charge.apply", "Apply reverse charge on invoices"],
+
+    ["tax.bill.apply", "Apply tax on bills"],
+    ["tax.bill.override", "Override bill tax results"],
+    ["tax.bill.recoverability.override", "Override bill tax recoverability"],
+
+    // Posting & accounting control (Wave 1)
+    ["tax.posting.execute", "Execute tax-aware posting"],
+    ["tax.posting.override", "Override tax posting controls"],
+
+    ["tax.recoverability.apply", "Apply tax recoverability rules"],
+    ["tax.recoverability.override", "Override tax recoverability rules"],
+
+    // Reporting & reconciliation (Wave 1)
+    ["tax.report.read", "Read tax reports"],
+    ["tax.report.generate", "Generate tax reports"],
+
+    ["tax.reconciliation.read", "Read tax reconciliation data"],
+    ["tax.reconciliation.execute", "Run tax reconciliations"],
+    ["tax.reconciliation.resolve", "Resolve tax reconciliation exceptions"],
+
+    // Withholding tax (Wave 2)
+    ["tax.withholding.read", "Read withholding tax setup and transactions"],
+    ["tax.withholding.create", "Create withholding tax setup"],
+    ["tax.withholding.update", "Update withholding tax setup"],
+    ["tax.withholding.delete", "Delete withholding tax setup"],
+
+    ["tax.withholding.apply", "Apply withholding tax"],
+    ["tax.withholding.override", "Override withholding tax results"],
+    ["tax.withholding.settle", "Settle and mark withholding tax as remitted"],
+
+    // Recoverability / non-deductible tax (Wave 2)
+    ["tax.recoverability.rule.read", "Read tax recoverability rules"],
+    ["tax.recoverability.rule.create", "Create tax recoverability rules"],
+    ["tax.recoverability.rule.update", "Update tax recoverability rules"],
+    ["tax.recoverability.rule.delete", "Delete tax recoverability rules"],
+
+    ["tax.recoverability.partial.apply", "Apply partial tax recoverability"],
+    ["tax.recoverability.block", "Mark tax as non-deductible or blocked"],
+
+    // E-invoicing (Wave 2)
+    ["tax.einvoice.read", "Read e-invoice records and statuses"],
+    ["tax.einvoice.generate", "Generate e-invoice payloads"],
+    ["tax.einvoice.validate", "Validate e-invoice payloads"],
+
+    ["tax.einvoice.submit", "Submit e-invoices to tax platforms"],
+    ["tax.einvoice.cancel", "Cancel submitted e-invoices"],
+    ["tax.einvoice.retry", "Retry failed e-invoice submissions"],
+
+    ["tax.einvoice.override", "Override e-invoice validation or submission controls"],
+    ["tax.einvoice.force_submit", "Force submit e-invoices despite warnings"],
+
+    // Jurisdiction-specific returns (Wave 2)
+    ["tax.return.read", "Read tax returns"],
+    ["tax.return.generate", "Generate tax returns"],
+    ["tax.return.edit", "Edit draft tax returns"],
+    ["tax.return.approve", "Approve tax returns"],
+    ["tax.return.submit", "Submit tax returns"],
+    ["tax.return.amend", "Amend submitted tax returns"],
+
+    ["tax.return.lock_period", "Lock tax filing periods"],
+    ["tax.return.unlock_period", "Unlock tax filing periods"],
+
+    // Automation engine (Wave 3)
+    ["tax.automation.rule.read", "Read tax automation rules"],
+    ["tax.automation.rule.create", "Create tax automation rules"],
+    ["tax.automation.rule.update", "Update tax automation rules"],
+    ["tax.automation.rule.delete", "Delete tax automation rules"],
+
+    ["tax.automation.execute", "Execute tax automation runs"],
+    ["tax.automation.override", "Override tax automation decisions"],
+
+    // Near-real-time filing adapters (Wave 3)
+    ["tax.filing.read", "Read tax filing adapter records"],
+    ["tax.filing.submit", "Submit filings through tax adapters"],
+    ["tax.filing.status.read", "Read filing adapter statuses"],
+
+    ["tax.filing.retry", "Retry failed filing adapter submissions"],
+    ["tax.filing.cancel", "Cancel filing adapter submissions"],
+
+    // Country packs (Wave 3)
+    ["tax.country_pack.read", "Read tax country packs"],
+    ["tax.country_pack.install", "Install tax country packs"],
+    ["tax.country_pack.update", "Update tax country packs"],
+    ["tax.country_pack.activate", "Activate tax country packs"],
+
+    // Audit & compliance controls (Cross-wave)
+    ["tax.audit.read", "Read tax audit trails"],
+    ["tax.audit.export", "Export tax audit trails"],
+
+    ["tax.config.change.approve", "Approve tax configuration changes"],
+    ["tax.config.change.reject", "Reject tax configuration changes"],
+
+    // High-risk / super-admin tax permissions
+    ["tax.override.global", "Globally override tax results and controls"],
+    ["tax.posting.force", "Force tax posting despite blocking conditions"],
+    ["tax.return.force_submit", "Force submit tax returns"],
+    ["tax.engine.bypass", "Bypass the tax determination engine"],
   ];
 
   for (const [code, description] of perms) {
