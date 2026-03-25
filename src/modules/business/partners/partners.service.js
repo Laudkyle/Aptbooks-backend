@@ -171,7 +171,7 @@ async function upsertPartnerTaxProfile({ orgId, partnerId, payload }) {
       updated_at=NOW()
     RETURNING *
   `, [
-    orgId, partnerId, payload.taxRegistrationNo || null, payload.legalName || null, payload.taxClass || null, payload.defaultTaxCodeId || null,
+    orgId, partnerId, payload.taxregistrationNumber || null, payload.legalName || null, payload.taxClass || null, payload.defaultTaxCodeId || null,
     payload.purchaseTaxCodeId || null, payload.salesTaxCodeId || null, payload.jurisdictionId || null, payload.placeOfSupply || null,
     payload.isTaxRegistered === true, payload.isTaxExempt === true, payload.exemptionReasonCode || null, payload.exemptionReason || null,
     payload.reverseChargeApplicable === true, payload.withholdingApplicable === true, payload.withholdingTaxCodeId || null,
@@ -492,17 +492,6 @@ async function updateAddress({ orgId, partnerId, addressId, payload }) {
   }
 }
 
-module.exports = {
-  createPartner,
-  listPartners,
-  getPartnerForOrg,
-  getPartnerDetails,
-  updatePartner,
-  addContact,
-  updateContact,
-  addAddress,
-  updateAddress
-};
 
 /**
  * CREDIT POLICY (AR)
@@ -556,3 +545,16 @@ async function setCreditPolicy({ orgId, partnerId, payload }) {
 
 module.exports.getCreditPolicy = getCreditPolicy;
 module.exports.setCreditPolicy = setCreditPolicy;
+module.exports = {
+  createPartner,
+  listPartners,
+  getPartnerForOrg,
+  getPartnerDetails,
+  updatePartner,
+  addContact,
+  updateContact,
+  addAddress,
+  updateAddress,getPartnerTaxProfile,
+  upsertPartnerTaxProfile,getCreditPolicy,
+  setCreditPolicy,
+};

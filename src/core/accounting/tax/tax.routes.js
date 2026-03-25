@@ -11,8 +11,12 @@ const svc = require("./tax.service");
 const {
   createJurisdictionSchema,
   updateJurisdictionSchema,
+  createTaxRegistrationSchema,
+  updateTaxRegistrationSchema,
   createTaxCodeSchema,
   updateTaxCodeSchema,
+  createTaxRuleSchema,
+  updateTaxRuleSchema,
   setTaxSettingsSchema,
   createTaxAdjustmentSchema,
   voidTaxAdjustmentSchema,
@@ -94,6 +98,176 @@ router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req,
       actorUserId: req.user.id,
       action: "tax.jurisdiction.deleted",
       entityType: "tax_jurisdictions",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: out
+    });
+
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+// Tax Registrations
+router.get("/registrations", requirePermission("tax.registration.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const query = {
+      registrationType: req.query.registrationType,
+      jurisdictionId: req.query.jurisdictionId,
+      isPrimary: req.query.isPrimary,
+      activeOn: req.query.activeOn
+    };
+    res.json({ data: await svc.listTaxRegistrations({ orgId, query }) });
+  } catch (e) { next(e); }
+});
+
+router.post("/registrations", idempotency({ required: true }), requirePermission("tax.registration.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createTaxRegistrationSchema, req.body);
+    const created = await svc.createTaxRegistration({ orgId, payload });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.registration.created",
+      entityType: "tax_registrations",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+
+    res.status(201).json(created);
+  } catch (e) {
+    if (e?.code === "23505") return next(new AppError(409, "Tax registration already exists"));
+    next(e);
+  }
+});
+
+router.patch("/registrations/:id", requirePermission("tax.registration.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateTaxRegistrationSchema, req.body);
+    const out = await svc.updateTaxRegistration({ orgId, registrationId: req.params.id, payload });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.registration.updated",
+      entityType: "tax_registrations",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+
+    res.json(out.after);
+  } catch (e) {
+    if (e?.code === "23505") return next(new AppError(409, "Tax registration already exists"));
+    next(e);
+  }
+});
+
+router.delete("/registrations/:id", requirePermission("tax.registration.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const out = await svc.deleteTaxRegistration({ orgId, registrationId: req.params.id });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.registration.deleted",
+      entityType: "tax_registrations",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: out
+    });
+
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+
+// Tax Rules
+router.get("/rules", requirePermission("tax.rule.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const query = {
+      status: req.query.status,
+      documentType: req.query.documentType,
+      partnerType: req.query.partnerType,
+      transactionScope: req.query.transactionScope,
+      jurisdictionId: req.query.jurisdictionId,
+      taxCodeId: req.query.taxCodeId,
+      activeOn: req.query.activeOn
+    };
+    res.json({ data: await svc.listTaxRules({ orgId, query }) });
+  } catch (e) { next(e); }
+});
+
+router.post("/rules", idempotency({ required: true }), requirePermission("tax.rule.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createTaxRuleSchema, req.body);
+    const created = await svc.createTaxRule({ orgId, payload });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.rule.created",
+      entityType: "tax_rules",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+
+    res.status(201).json(created);
+  } catch (e) {
+    if (e?.code === "23505") return next(new AppError(409, "Tax rule already exists"));
+    next(e);
+  }
+});
+
+router.patch("/rules/:id", requirePermission("tax.rule.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateTaxRuleSchema, req.body);
+    const out = await svc.updateTaxRule({ orgId, ruleId: req.params.id, payload });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.rule.updated",
+      entityType: "tax_rules",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+
+    res.json(out.after);
+  } catch (e) {
+    if (e?.code === "23505") return next(new AppError(409, "Tax rule already exists"));
+    next(e);
+  }
+});
+
+router.delete("/rules/:id", requirePermission("tax.rule.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const out = await svc.deleteTaxRule({ orgId, ruleId: req.params.id });
+
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.rule.deleted",
+      entityType: "tax_rules",
       entityId: req.params.id,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
@@ -266,6 +440,7 @@ router.put("/settings", requirePermission("tax.manage"), async (req, res, next) 
     res.json(updated);
   } catch (e) { next(e); }
 });
+
 
 
 // Tax adjustments

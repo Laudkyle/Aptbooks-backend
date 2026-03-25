@@ -37,7 +37,7 @@ function buildInvoicePayload({ inv, org, customer, lines, taxTotals }) {
     currencyCode: inv.currency_code || org.base_currency_code || 'GHS',
     supplier: {
       legalName: org.legal_name || org.name || 'Supplier',
-      taxRegistrationNo: org.tax_registration_no || null,
+      taxregistrationNumber: org.tax_registration_no || null,
       countryCode: org.country_code || 'GH'
     },
     customer: {

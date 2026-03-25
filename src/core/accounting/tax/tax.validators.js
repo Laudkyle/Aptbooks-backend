@@ -10,6 +10,29 @@ const createJurisdictionSchema = z.object({
 
 const updateJurisdictionSchema = createJurisdictionSchema.partial();
 
+
+const taxRuleConditionsSchema = z.record(z.any()).optional();
+
+const createTaxRuleSchema = z.object({
+  name: z.string().min(1).max(200),
+  documentType: z.string().max(80).optional().nullable(),
+  partnerType: z.string().max(80).optional().nullable(),
+  transactionScope: z.enum(["sales", "purchases", "both"]).optional(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
+  taxCodeId: z.string().uuid(),
+  priority: z.coerce.number().int().min(0).optional(),
+  effectiveFrom: isoDate.optional(),
+  effectiveTo: isoDate.optional().nullable(),
+  conditions: taxRuleConditionsSchema,
+  status: z.enum(["active", "inactive"]).optional()
+}).superRefine((val, ctx) => {
+  if (val.effectiveFrom && val.effectiveTo && val.effectiveTo < val.effectiveFrom) {
+    ctx.addIssue({ code: "custom", path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+  }
+});
+
+const updateTaxRuleSchema = createTaxRuleSchema.partial();
+
 const createTaxCodeSchema = z.object({
   jurisdictionId: z.string().uuid().nullable().optional(),
   code: z.string().min(1).max(50),
@@ -43,6 +66,26 @@ const createTaxCodeSchema = z.object({
 
 const updateTaxCodeSchema = createTaxCodeSchema.partial();
 
+
+
+const createTaxRegistrationSchema = z.object({
+  jurisdictionId: z.string().uuid().nullable().optional(),
+  registrationNumber: z.string().min(1).max(120),
+  registrationType: z.enum(["VAT", "GST", "SALES_TAX", "WITHHOLDING", "PAYE", "OTHER"]).optional(),
+  legalEntityName: z.string().max(255).optional().nullable(),
+  filingFrequency: z.enum(["monthly", "bi_monthly", "quarterly", "semi_annual", "annual", "ad_hoc"]).optional(),
+  filingBasis: z.enum(["invoice", "cash", "hybrid"]).optional(),
+  effectiveFrom: isoDate.optional(),
+  effectiveTo: isoDate.optional().nullable(),
+  isPrimary: z.coerce.boolean().optional(),
+  metadata: z.record(z.any()).optional()
+}).superRefine((val, ctx) => {
+  if (val.effectiveFrom && val.effectiveTo && val.effectiveTo < val.effectiveFrom) {
+    ctx.addIssue({ code: "custom", path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+  }
+});
+
+const updateTaxRegistrationSchema = createTaxRegistrationSchema.partial();
 
 const createTaxAdjustmentSchema = z.object({
   adjustmentDate: isoDate,
@@ -101,10 +144,14 @@ const upsertTaxAutomationRuleSchema = z.object({
   isEnabled: z.coerce.boolean().optional()
 });
 module.exports = {
+  createTaxRegistrationSchema,
+  updateTaxRegistrationSchema,
   createJurisdictionSchema,
   updateJurisdictionSchema,
   createTaxCodeSchema,
   updateTaxCodeSchema,
+  createTaxRuleSchema,
+  updateTaxRuleSchema,
   setTaxSettingsSchema,
   createTaxAdjustmentSchema,
   voidTaxAdjustmentSchema,

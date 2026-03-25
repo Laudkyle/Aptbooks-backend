@@ -92,6 +92,277 @@ async function deleteJurisdiction({ orgId, jurisdictionId }) {
   return { deleted: true };
 }
 
+
+async function getTaxRegistrationById({ orgId, registrationId }) {
+  const { rows } = await pool.query(
+    `SELECT tr.*, tj.code AS jurisdiction_code, tj.name AS jurisdiction_name
+       FROM tax_registrations tr
+       LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
+      WHERE tr.organization_id=$1 AND tr.id=$2`,
+    [orgId, registrationId]
+  );
+  if (!rows.length) throw new AppError(404, "Tax registration not found");
+  return rows[0];
+}
+
+async function listTaxRegistrations({ orgId, query }) {
+  const params = [orgId];
+  const where = ["tr.organization_id=$1"];
+  let i = 2;
+  if (query?.registrationType) { where.push(`tr.registration_type=$${i++}`); params.push(query.registrationType); }
+  if (query?.jurisdictionId) { where.push(`tr.jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
+  if (query?.isPrimary !== undefined) { where.push(`tr.is_primary=$${i++}`); params.push(query.isPrimary === true || query.isPrimary === 'true'); }
+  if (query?.activeOn) {
+    where.push(`tr.effective_from <= $${i}`);
+    params.push(query.activeOn);
+    i += 1;
+    where.push(`(tr.effective_to IS NULL OR tr.effective_to >= $${i})`);
+    params.push(query.activeOn);
+    i += 1;
+  }
+  const { rows } = await pool.query(
+    `SELECT tr.*, tj.code AS jurisdiction_code, tj.name AS jurisdiction_name
+       FROM tax_registrations tr
+       LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY tr.is_primary DESC, tr.registration_type, tr.registration_no`,
+    params
+  );
+  return rows;
+}
+
+async function createTaxRegistration({ orgId, payload }) {
+  await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+
+  return withTransaction(async (client) => {
+    if (payload.isPrimary === true) {
+      await client.query(
+        `UPDATE tax_registrations SET is_primary=FALSE, updated_at=NOW()
+          WHERE organization_id=$1 AND registration_type=COALESCE($2, 'VAT')`,
+        [orgId, payload.registrationType || 'VAT']
+      );
+    }
+
+    const { rows } = await client.query(
+      `INSERT INTO tax_registrations(
+         organization_id, jurisdiction_id, registration_no, registration_type, legal_entity_name,
+         filing_frequency, filing_basis, effective_from, effective_to, is_primary, metadata
+       ) VALUES (
+         $1,$2,$3,COALESCE($4,'VAT'),$5,
+         COALESCE($6,'monthly'),COALESCE($7,'invoice'),COALESCE($8,CURRENT_DATE),$9,COALESCE($10,FALSE),COALESCE($11,'{}'::jsonb)
+       ) RETURNING *`,
+      [
+        orgId,
+        payload.jurisdictionId || null,
+        payload.registrationNumber,
+        payload.registrationType || null,
+        payload.legalEntityName ?? null,
+        payload.filingFrequency ?? null,
+        payload.filingBasis ?? null,
+        payload.effectiveFrom || null,
+        payload.effectiveTo ?? null,
+        payload.isPrimary === true,
+        JSON.stringify(payload.metadata || {})
+      ]
+    );
+    return rows[0];
+  });
+}
+
+async function updateTaxRegistration({ orgId, registrationId, payload }) {
+  const before = await getTaxRegistrationById({ orgId, registrationId });
+  if (payload.jurisdictionId !== undefined) {
+    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+  }
+
+  return withTransaction(async (client) => {
+    const nextType = payload.registrationType ?? before.registration_type;
+    if (payload.isPrimary === true) {
+      await client.query(
+        `UPDATE tax_registrations SET is_primary=FALSE, updated_at=NOW()
+          WHERE organization_id=$1 AND registration_type=$2 AND id<>$3`,
+        [orgId, nextType, registrationId]
+      );
+    }
+
+    const columns = [];
+    const params = [orgId, registrationId];
+    let i = 3;
+    const map = {
+      jurisdictionId: 'jurisdiction_id',
+      registrationNumber: 'registration_no',
+      registrationType: 'registration_type',
+      legalEntityName: 'legal_entity_name',
+      filingFrequency: 'filing_frequency',
+      filingBasis: 'filing_basis',
+      effectiveFrom: 'effective_from',
+      effectiveTo: 'effective_to',
+      isPrimary: 'is_primary'
+    };
+    for (const [k, col] of Object.entries(map)) {
+      if (payload[k] !== undefined) {
+        columns.push(`${col}=$${i++}`);
+        params.push(payload[k] === '' ? null : payload[k]);
+      }
+    }
+    if (payload.metadata !== undefined) {
+      columns.push(`metadata=$${i++}`);
+      params.push(JSON.stringify(payload.metadata || {}));
+    }
+    if (!columns.length) return { before, after: before };
+
+    const { rows } = await client.query(
+      `UPDATE tax_registrations
+          SET ${columns.join(', ')}, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      params
+    );
+    return { before, after: rows[0] };
+  });
+}
+
+async function deleteTaxRegistration({ orgId, registrationId }) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM tax_registrations WHERE organization_id=$1 AND id=$2`,
+    [orgId, registrationId]
+  );
+  if (!rowCount) throw new AppError(404, "Tax registration not found");
+  return { deleted: true };
+}
+
+
+async function getTaxRuleById({ orgId, ruleId, client = pool }) {
+  const { rows } = await client.query(
+    `SELECT tr.*, tj.code AS jurisdiction_code, tj.name AS jurisdiction_name, tc.code AS tax_code_code, tc.name AS tax_code_name
+       FROM tax_rules tr
+       LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
+       JOIN tax_codes tc ON tc.id = tr.tax_code_id
+      WHERE tr.organization_id=$1 AND tr.id=$2`,
+    [orgId, ruleId]
+  );
+  if (!rows.length) throw new AppError(404, "Tax rule not found");
+  return rows[0];
+}
+
+async function listTaxRules({ orgId, query }) {
+  const params = [orgId];
+  const where = ["tr.organization_id=$1"];
+  let i = 2;
+  if (query?.status) { where.push(`tr.status=$${i++}`); params.push(query.status); }
+  if (query?.documentType) { where.push(`tr.document_type=$${i++}`); params.push(query.documentType); }
+  if (query?.partnerType) { where.push(`tr.partner_type=$${i++}`); params.push(query.partnerType); }
+  if (query?.transactionScope) { where.push(`tr.transaction_scope=$${i++}`); params.push(query.transactionScope); }
+  if (query?.jurisdictionId) { where.push(`tr.jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
+  if (query?.taxCodeId) { where.push(`tr.tax_code_id=$${i++}`); params.push(query.taxCodeId); }
+  if (query?.activeOn) {
+    where.push(`tr.effective_from <= $${i}`);
+    params.push(query.activeOn);
+    i += 1;
+    where.push(`(tr.effective_to IS NULL OR tr.effective_to >= $${i})`);
+    params.push(query.activeOn);
+    i += 1;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT tr.*, tj.code AS jurisdiction_code, tj.name AS jurisdiction_name, tc.code AS tax_code_code, tc.name AS tax_code_name
+       FROM tax_rules tr
+       LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
+       JOIN tax_codes tc ON tc.id = tr.tax_code_id
+      WHERE ${where.join(" AND ")}
+      ORDER BY tr.priority ASC, tr.name ASC, tr.created_at DESC`,
+    params
+  );
+  return rows;
+}
+
+async function createTaxRule({ orgId, payload }) {
+  await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId });
+
+  const { rows } = await pool.query(
+    `INSERT INTO tax_rules(
+        organization_id, name, document_type, partner_type, transaction_scope,
+        jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
+     ) VALUES (
+        $1,$2,$3,$4,COALESCE($5,'both'),
+        $6,$7,COALESCE($8,100),COALESCE($9,CURRENT_DATE),$10,COALESCE($11,'{}'::jsonb),COALESCE($12,'active')
+     )
+     RETURNING *`,
+    [
+      orgId,
+      payload.name,
+      payload.documentType || null,
+      payload.partnerType || null,
+      payload.transactionScope || null,
+      payload.jurisdictionId || null,
+      payload.taxCodeId,
+      payload.priority ?? null,
+      payload.effectiveFrom || null,
+      payload.effectiveTo ?? null,
+      JSON.stringify(payload.conditions || {}),
+      payload.status || null
+    ]
+  );
+  return rows[0];
+}
+
+async function updateTaxRule({ orgId, ruleId, payload }) {
+  const before = await getTaxRuleById({ orgId, ruleId });
+  if (payload.jurisdictionId !== undefined) {
+    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+  }
+  if (payload.taxCodeId !== undefined) {
+    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId });
+  }
+
+  const columns = [];
+  const params = [orgId, ruleId];
+  let i = 3;
+  const map = {
+    name: 'name',
+    documentType: 'document_type',
+    partnerType: 'partner_type',
+    transactionScope: 'transaction_scope',
+    jurisdictionId: 'jurisdiction_id',
+    taxCodeId: 'tax_code_id',
+    priority: 'priority',
+    effectiveFrom: 'effective_from',
+    effectiveTo: 'effective_to',
+    status: 'status'
+  };
+  for (const [k, col] of Object.entries(map)) {
+    if (payload[k] !== undefined) {
+      columns.push(`${col}=$${i++}`);
+      params.push(payload[k] === '' ? null : payload[k]);
+    }
+  }
+  if (payload.conditions !== undefined) {
+    columns.push(`conditions=$${i++}`);
+    params.push(JSON.stringify(payload.conditions || {}));
+  }
+  if (!columns.length) return { before, after: before };
+
+  const { rows } = await pool.query(
+    `UPDATE tax_rules
+        SET ${columns.join(', ')}, updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *`,
+    params
+  );
+  if (!rows.length) throw new AppError(404, "Tax rule not found");
+  return { before, after: rows[0] };
+}
+
+async function deleteTaxRule({ orgId, ruleId }) {
+  const { rowCount } = await pool.query(
+    `DELETE FROM tax_rules WHERE organization_id=$1 AND id=$2`,
+    [orgId, ruleId]
+  );
+  if (!rowCount) throw new AppError(404, "Tax rule not found");
+  return { deleted: true };
+}
+
 async function listTaxCodes({ orgId, query }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
@@ -473,10 +744,18 @@ async function setTaxCodeComponents({ orgId, taxCodeId, payload }) {
   });
 }
 module.exports = {
+  listTaxRegistrations,
+  createTaxRegistration,
+  updateTaxRegistration,
+  deleteTaxRegistration,
   listJurisdictions,
   createJurisdiction,
   updateJurisdiction,
   deleteJurisdiction,
+  listTaxRules,
+  createTaxRule,
+  updateTaxRule,
+  deleteTaxRule,
   listTaxCodes,
   createTaxCode,
   updateTaxCode,

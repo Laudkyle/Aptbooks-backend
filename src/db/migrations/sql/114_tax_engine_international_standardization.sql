@@ -197,6 +197,29 @@ CREATE INDEX IF NOT EXISTS idx_tax_partner_profiles_org_partner ON tax_partner_p
 CREATE INDEX IF NOT EXISTS idx_tax_rules_org_scope ON tax_rules(organization_id, document_type, transaction_scope, priority);
 CREATE INDEX IF NOT EXISTS idx_tax_snapshots_org_source ON tax_document_snapshots(organization_id, source_type, source_id);
 
+ALTER TABLE tax_partner_profiles
+  ADD COLUMN IF NOT EXISTS withholding_rate_override DECIMAL(5,2),
+  ADD COLUMN IF NOT EXISTS withholding_certificate_no VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS filing_contact_email VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS customer_tax_identifier_type VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS vendor_tax_identifier_type VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
+-- Add indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_tax_partner_profiles_withholding_cert 
+  ON tax_partner_profiles(withholding_certificate_no) 
+  WHERE withholding_certificate_no IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tax_partner_profiles_filing_email 
+  ON tax_partner_profiles(filing_contact_email) 
+  WHERE filing_contact_email IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tax_partner_profiles_identifier_types 
+  ON tax_partner_profiles(customer_tax_identifier_type, vendor_tax_identifier_type) 
+  WHERE customer_tax_identifier_type IS NOT NULL OR vendor_tax_identifier_type IS NOT NULL;
+
+
 INSERT INTO permissions(code, description) VALUES
   ('tax.registration.read', 'Read tax registrations'),
   ('tax.registration.manage', 'Manage tax registrations'),

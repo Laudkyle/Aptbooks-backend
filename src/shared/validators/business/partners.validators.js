@@ -42,7 +42,7 @@ const updateAddressSchema = createAddressSchema.partial();
 
 
 const partnerTaxProfileSchema = z.object({
-  taxRegistrationNo: z.string().max(120).optional().nullable(),
+  taxregistrationNumber: z.string().max(120).optional().nullable(),
   legalName: z.string().max(200).optional().nullable(),
   taxClass: z.string().max(60).optional(),
   defaultTaxCodeId: z.string().uuid().optional().nullable(),
