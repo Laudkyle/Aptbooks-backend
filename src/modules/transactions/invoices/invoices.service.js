@@ -14,6 +14,7 @@ const {
 } = require("../../../shared/utils/money");
 const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2, upsertDocumentTaxSnapshot } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
+const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -210,7 +211,34 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
   );
   const taxMap = await loadLineTaxDetails({ client: pool, tableName: 'invoice_line_tax_details', lineIds: lines.map((l) => l.id) });
 
-  return { invoice, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) };
+  const enrichedLines = await enrichLines({ client: pool, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
+
+  const { rows: appliedRows } = await pool.query(
+    `
+    WITH receipt_alloc AS (
+      SELECT COALESCE(SUM(cra.amount_applied + COALESCE(cra.discount_taken,0)),0) AS receipt_amount
+      FROM customer_receipt_allocations cra
+      JOIN customer_receipts cr ON cr.id = cra.customer_receipt_id
+      WHERE cra.invoice_id=$1 AND cr.organization_id=$2 AND cr.status='posted'
+    ), credit_alloc AS (
+      SELECT COALESCE(SUM(cna.amount_applied),0) AS credit_amount
+      FROM credit_note_applications cna
+      JOIN credit_notes cn ON cn.id = cna.credit_note_id
+      WHERE cna.invoice_id=$1 AND cna.organization_id=$2 AND cn.status='issued'
+    )
+    SELECT receipt_amount, credit_amount FROM receipt_alloc CROSS JOIN credit_alloc
+    `,
+    [invoiceId, orgId]
+  );
+  const paid = round2(Number(appliedRows[0]?.receipt_amount || 0) + Number(appliedRows[0]?.credit_amount || 0));
+  const outstanding = round2(Math.max(0, Number(invoice.total || 0) - paid));
+
+  return {
+    invoice,
+    lines: enrichedLines,
+    detail_meta: buildDetailMeta({ header: invoice, lines: enrichedLines, extra: { paid, outstanding } }),
+    allocations_summary: { paid, outstanding, credits_applied: round2(appliedRows[0]?.credit_amount || 0), receipts_applied: round2(appliedRows[0]?.receipt_amount || 0) }
+  };
 }
 
 async function listInvoices({ orgId, query }) {

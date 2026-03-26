@@ -1,25 +1,3 @@
-/**
- * AptBooks Document Templates — Full Redesign
- *
- * Four completely distinct aesthetic themes:
- *
- *  renderClassic   → Luxury Editorial   (dark navy · gold · Cormorant Garamond serif)
- *  renderModern    → Brutalist Mono     (black · neon green · Bebas Neue + DM Mono)
- *  renderCompact   → Japanese Minimal   (white · vermillion · Noto Serif JP)
- *  renderCorporate → Art Deco Opulence  (deep burgundy · champagne · Cinzel serif)
- *
- * Each renderer accepts the same ctx shape:
- *   ctx.title        — document title string
- *   ctx.payload      — { organization, counterparty, meta, lines, summary }
- *   ctx.branding     — { accentColor?, goldColor?, showSignatureBlock? }
- *   ctx.layout       — { density?: 'comfortable' | 'tight' }
- */
-
-'use strict';
-
-/* ─────────────────────────────────────────────────────────
-   Shared utilities
-───────────────────────────────────────────────────────── */
 
 function esc(value) {
   return String(value == null ? '' : value)
@@ -30,566 +8,159 @@ function esc(value) {
     .replace(/'/g, '&#39;');
 }
 
-function fmtMoney(value, code) {
-  const n = Number(value || 0);
-  return `${code || ''} ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
+function fmtMoney(value, currencyCode) {
+  const amount = Number(value || 0);
+  return `${currencyCode || ''} ${amount.toFixed(2)}`.trim();
 }
 
-function joinAddress(addr) {
-  if (!addr) return '';
-  return [addr.line1, addr.line2, addr.city, addr.region, addr.postalCode, addr.country]
-    .filter(Boolean).map(esc).join('<br/>');
+function joinAddress(address) {
+  if (!address) return '';
+  return [address.line1, address.line2, address.city, address.region, address.postalCode, address.country]
+    .filter(Boolean)
+    .map(esc)
+    .join('<br/>');
 }
 
-function zeroPad(n, i) {
-  return String(n ?? (i + 1)).padStart(2, '0');
+function renderTableRows(lines, currencyCode) {
+  return (lines || []).map((line) => `
+    <tr>
+      <td>${esc(line.lineNo)}</td>
+      <td>${esc(line.description || '')}</td>
+      <td style="text-align:right;">${line.quantity == null ? '' : esc(line.quantity)}</td>
+      <td style="text-align:right;">${line.unitPrice == null ? '' : esc(Number(line.unitPrice).toFixed(2))}</td>
+      <td style="text-align:right;">${esc(fmtMoney(line.amount, currencyCode))}</td>
+    </tr>
+  `).join('');
 }
 
-function currency(payload) {
-  return payload?.meta?.currencyCode || payload?.organization?.base_currency_code || 'GHS';
-}
-
-/* ─────────────────────────────────────────────────────────
-   THEME 1 — CLASSIC
-   Luxury Editorial · Dark Navy · Gold · Cormorant Garamond
-───────────────────────────────────────────────────────── */
-
-function classicStyles(accent, gold, density) {
-  const p  = density === 'tight' ? '10px 14px' : '14px 18px';
-  const tp = density === 'tight' ? '10px 12px' : '14px 14px';
-  const tf = density === 'tight' ? '12.5px' : '13.5px';
+function commonStyles(accentColor, density = 'comfortable') {
+  const pad = density === 'tight' ? '8px' : '12px';
+  const font = density === 'tight' ? '12px' : '13px';
   return `
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Jost:wght@300;400;500;600&display=swap');
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--acc:${accent};--gold:${gold};--bg:#fdfbf7;--bdr:#e8e0d0;--mut:#8a8070;--txt:#1a1a1a}
-body{font-family:'Jost',Arial,sans-serif;background:#f5f0e8;color:var(--txt);padding:40px 24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{max-width:860px;margin:0 auto;background:#fff;box-shadow:0 8px 60px rgba(0,0,0,.14),0 2px 8px rgba(0,0,0,.07)}
-.hdr{background:var(--acc);padding:44px 52px 40px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
-.htitle{font-family:'Cormorant Garamond',Georgia,serif;font-size:52px;font-weight:700;color:#fff;letter-spacing:-1px;line-height:1}
-.horg{color:rgba(255,255,255,.45);font-size:13px;margin-top:10px;letter-spacing:.5px}
-.hdocno{font-family:'Cormorant Garamond',Georgia,serif;font-size:16px;color:var(--gold);letter-spacing:3px;text-transform:uppercase}
-.hbadge{display:inline-block;margin-top:8px;padding:4px 16px;border:1px solid var(--gold);color:var(--gold);font-size:10px;font-weight:600;letter-spacing:3px;text-transform:uppercase;border-radius:999px}
-.rule{height:3px;background:linear-gradient(90deg,var(--gold) 0%,#f0d882 40%,#e2c165 70%,var(--gold) 100%)}
-.body{padding:44px 52px}
-.parties{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px}
-.party{padding:${p};border:1px solid var(--bdr);background:var(--bg);position:relative;overflow:hidden}
-.party::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--gold)}
-.plbl{font-size:9px;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:var(--gold);margin-bottom:10px}
-.pnm{font-family:'Cormorant Garamond',Georgia,serif;font-size:18px;font-weight:600;color:var(--acc);margin-bottom:4px}
-.pdt{font-size:12.5px;color:var(--mut);line-height:1.75}
-.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:16px;margin-bottom:36px}
-.mc{padding:${p};border:1px solid var(--bdr);background:var(--bg)}
-.mlbl{font-size:9px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:#aaa098;margin-bottom:5px}
-.mval{font-size:14px;font-weight:500;color:var(--acc)}
-.sttl{font-size:9px;font-weight:600;letter-spacing:3px;text-transform:uppercase;color:#aaa098;margin-bottom:12px}
-table.items{width:100%;border-collapse:collapse;font-size:${tf};margin-bottom:4px}
-.items thead tr{border-bottom:1.5px solid var(--acc)}
-.items th{font-size:9px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#aaa098;padding:0 14px 10px}
-.items th:first-child{padding-left:0}.items th:last-child{padding-right:0;text-align:right}.items th.r{text-align:right}
-.items tbody tr{border-bottom:1px solid var(--bdr)}.items tbody tr:last-child{border-bottom:none}
-.items td{padding:${tp};vertical-align:middle}
-.items td:first-child{padding-left:0;color:#aaa098;font-size:12px}.items td:last-child{padding-right:0;text-align:right;font-weight:500}
-.items td.r{text-align:right}.idesc{font-weight:500;color:var(--acc)}
-.totals{display:flex;justify-content:flex-end;margin-top:20px}
-.totals table{width:300px;border-collapse:collapse}
-.totals td{padding:7px 0;font-size:14px}.totals td:last-child{text-align:right}
-.tl{color:var(--mut)}.trow td{border-top:1.5px solid var(--acc);padding-top:14px!important;font-weight:700;font-size:15px;color:var(--acc)}
-.tamt{font-family:'Cormorant Garamond',Georgia,serif;font-size:24px}
-.notes{margin-top:28px;padding:18px 22px;border-left:3px solid var(--gold);background:var(--bg)}
-.notes p{font-size:13px;color:var(--mut);line-height:1.75;margin-top:6px}
-.sig{margin-top:44px;display:grid;grid-template-columns:1fr 1fr;gap:36px}
-.sigline{padding-top:48px;border-top:1px solid #c8c0b0;font-size:11px;color:var(--mut);letter-spacing:.5px}
-.ftr{margin-top:36px;padding-top:18px;border-top:1px solid var(--bdr);display:flex;justify-content:space-between;font-size:11px;color:#aaa098}
-.fgold{color:var(--gold);font-weight:600}
-@media print{body{background:#fff;padding:0}.page{box-shadow:none}}`;
+    body { font-family: Arial, sans-serif; color: #0f172a; margin: 0; background: #fff; }
+    .page { width: 100%; max-width: 960px; margin: 0 auto; padding: 28px; box-sizing: border-box; }
+    .accent { color: ${accentColor}; }
+    .top-rule { height: 6px; background: ${accentColor}; border-radius: 6px; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 28px; }
+    .muted { color: #475569; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .panel { border: 1px solid #e2e8f0; border-radius: 10px; padding: ${pad}; background: #fff; }
+    .meta-table td { padding: 4px 0; vertical-align: top; }
+    table.doc-table { width: 100%; border-collapse: collapse; margin-top: 18px; font-size: ${font}; }
+    .doc-table th { text-align: left; background: #f8fafc; border-bottom: 1px solid #cbd5e1; padding: ${pad}; }
+    .doc-table td { border-bottom: 1px solid #e2e8f0; padding: ${pad}; }
+    .totals { margin-top: 18px; width: 320px; margin-left: auto; }
+    .totals td { padding: 6px 0; }
+    .totals .strong { font-weight: 700; border-top: 2px solid #0f172a; }
+    .footer { margin-top: 28px; font-size: 12px; color: #64748b; }
+    .signature { margin-top: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+    .signature .line { border-top: 1px solid #94a3b8; margin-top: 28px; padding-top: 6px; font-size: 12px; color: #475569; }
+    .badge { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #eff6ff; color: ${accentColor}; font-size: 12px; font-weight: 700; }
+  `;
 }
 
-function classicLines(lines, code) {
-  return (lines || []).map((l, i) => `
-<tr>
-  <td>${zeroPad(l.lineNo, i)}</td>
-  <td><span class="idesc">${esc(l.description || '—')}</span></td>
-  <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
-  <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
-</tr>`).join('');
+function renderBase({ title, payload, accentColor = '#0f172a', density = 'comfortable', headerVariant = 'classic', showSignatureBlock = true }) {
+  const currencyCode = payload?.meta?.currencyCode || payload?.organization?.base_currency_code || 'GHS';
+  const org = payload.organization || {};
+  const cp = payload.counterparty || {};
+  const meta = payload.meta || {};
+  const summary = payload.summary || {};
+  const address = joinAddress(cp.address);
+
+  const header = headerVariant === 'split'
+    ? `
+      <div style="display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:20px;">
+        <div>
+          <h1 class="accent">${esc(title)}</h1>
+          <div class="muted" style="margin-top:8px;">${esc(org.name || '')}</div>
+          <div class="muted">${esc(org.email || '')} ${org.phone ? '· ' + esc(org.phone) : ''}</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="badge">${esc(meta.status || 'draft')}</div>
+          <div style="margin-top:10px; font-size:12px;" class="muted">Workflow: ${esc(meta.workflowStatus || 'n/a')}</div>
+        </div>
+      </div>`
+    : `
+      <div class="top-rule"></div>
+      <h1 class="accent">${esc(title)}</h1>
+      <div class="muted" style="margin-top:6px;">${esc(org.name || '')}</div>
+      <div class="muted">${esc(org.email || '')} ${org.phone ? '· ' + esc(org.phone) : ''}</div>
+    `;
+
+  return `<!doctype html>
+  <html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${esc(title)}</title>
+    <style>${commonStyles(accentColor, density)}</style>
+  </head>
+  <body>
+    <div class="page">
+      ${header}
+      <div class="grid" style="margin-top:18px;">
+        <div class="panel">
+          <div style="font-weight:700; margin-bottom:8px;">Counterparty</div>
+          <div>${esc(cp.name || '—')}</div>
+          ${cp.email ? `<div class="muted">${esc(cp.email)}</div>` : ''}
+          ${cp.phone ? `<div class="muted">${esc(cp.phone)}</div>` : ''}
+          ${address ? `<div class="muted" style="margin-top:8px;">${address}</div>` : ''}
+        </div>
+        <div class="panel">
+          <table class="meta-table">
+            <tr><td><strong>Document No</strong></td><td>${esc(meta.documentNo || '—')}</td></tr>
+            <tr><td><strong>Date</strong></td><td>${esc(meta.documentDate || '—')}</td></tr>
+            ${meta.dueDate ? `<tr><td><strong>Due Date</strong></td><td>${esc(meta.dueDate)}</td></tr>` : ''}
+            ${meta.reference ? `<tr><td><strong>Reference</strong></td><td>${esc(meta.reference)}</td></tr>` : ''}
+            ${meta.workflowStatus ? `<tr><td><strong>Workflow</strong></td><td>${esc(meta.workflowStatus)}</td></tr>` : ''}
+          </table>
+        </div>
+      </div>
+
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th style="width:60px;">#</th>
+            <th>Description</th>
+            <th style="width:100px; text-align:right;">Qty</th>
+            <th style="width:120px; text-align:right;">Unit Price</th>
+            <th style="width:140px; text-align:right;">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${renderTableRows(payload.lines || [], currencyCode)}
+        </tbody>
+      </table>
+
+      <table class="totals">
+        <tr><td>Subtotal</td><td style="text-align:right;">${esc(fmtMoney(summary.subtotal, currencyCode))}</td></tr>
+        <tr class="strong"><td>Total</td><td style="text-align:right; font-weight:700;">${esc(fmtMoney(summary.total, currencyCode))}</td></tr>
+      </table>
+
+      ${summary.memo ? `<div class="panel" style="margin-top:18px;"><div style="font-weight:700; margin-bottom:8px;">Notes</div><div class="muted">${esc(summary.memo)}</div></div>` : ''}
+
+      ${showSignatureBlock ? `
+      <div class="signature">
+        <div><div class="line">Prepared by</div></div>
+        <div><div class="line">Authorized by</div></div>
+      </div>` : ''}
+
+      <div class="footer">Generated by AptBooks document templates.</div>
+    </div>
+  </body>
+  </html>`;
 }
 
 function renderClassic(ctx) {
-  const accent  = ctx.branding?.accentColor || '#14213d';
-  const gold    = ctx.branding?.goldColor   || '#c9a84c';
-  const density = ctx.layout?.density       || 'comfortable';
-  const showSig = ctx.branding?.showSignatureBlock !== false;
-  const payload = ctx.payload || {};
-  const code    = currency(payload);
-  const org     = payload.organization || {};
-  const cp      = payload.counterparty || {};
-  const meta    = payload.meta || {};
-  const sum     = payload.summary || {};
-  const orgLine = [org.email, org.phone].filter(Boolean).map(esc).join(' · ');
-
-  const metaCells = [
-    { l: 'Document No', v: meta.documentNo },
-    { l: 'Issue Date',  v: meta.documentDate },
-    meta.dueDate        && { l: 'Due Date',  v: meta.dueDate },
-    meta.reference      && { l: 'Reference', v: meta.reference },
-    meta.workflowStatus && { l: 'Workflow',  v: meta.workflowStatus },
-  ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
-
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<title>${esc(ctx.title)} — ${esc(meta.documentNo || '')}</title>
-<style>${classicStyles(accent, gold, density)}</style></head><body>
-<div class="page">
-  <div class="hdr">
-    <div>
-      <div class="htitle">${esc(ctx.title)}</div>
-      <div class="horg">${esc(org.name || '')}${orgLine ? ' · ' + orgLine : ''}</div>
-    </div>
-    <div style="text-align:right">
-      ${meta.documentNo ? `<div class="hdocno"># ${esc(meta.documentNo)}</div>` : ''}
-      ${meta.status     ? `<div class="hbadge">${esc(meta.status)}</div>`       : ''}
-    </div>
-  </div>
-  <div class="rule"></div>
-  <div class="body">
-    <div class="parties">
-      <div class="party">
-        <div class="plbl">${esc(ctx.title === 'Purchase Order' ? 'Vendor' : 'Bill To')}</div>
-        <div class="pnm">${esc(cp.name || '—')}</div>
-        <div class="pdt">${[cp.email, cp.phone].filter(Boolean).map(esc).join('<br/>')}${joinAddress(cp.address) ? '<br/>' + joinAddress(cp.address) : ''}</div>
-      </div>
-      <div class="party">
-        <div class="plbl">Issued By</div>
-        <div class="pnm">${esc(org.name || '—')}</div>
-        <div class="pdt">${[org.email, org.phone].filter(Boolean).map(esc).join('<br/>')}${joinAddress(org.address) ? '<br/>' + joinAddress(org.address) : ''}</div>
-      </div>
-    </div>
-    <div class="meta">${metaCells}</div>
-    <div class="sttl">Line Items</div>
-    <table class="items">
-      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th><th class="r" style="width:140px">Amount</th></tr></thead>
-      <tbody>${classicLines(payload.lines, code)}</tbody>
-    </table>
-    <div class="totals"><table>
-      <tr><td class="tl">Subtotal</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
-      ${sum.tax      != null ? `<tr><td class="tl">Tax</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
-      ${sum.discount != null ? `<tr><td class="tl">Discount</td><td>&#8722;${esc(fmtMoney(sum.discount, code))}</td></tr>` : ''}
-      <tr class="trow"><td>Total Due</td><td><span class="tamt">${esc(fmtMoney(sum.total, code))}</span></td></tr>
-    </table></div>
-    ${sum.memo ? `<div class="notes"><div class="plbl">Notes</div><p>${esc(sum.memo)}</p></div>` : ''}
-    ${showSig ? `<div class="sig"><div><div class="sigline">Prepared by</div></div><div><div class="sigline">Authorized by</div></div></div>` : ''}
-    <div class="ftr"><span>Generated by <span class="fgold">AptBooks</span> document templates.</span><span>Page 1 of 1</span></div>
-  </div>
-</div></body></html>`;
+  return renderBase({ title: ctx.title, payload: ctx.payload, accentColor: ctx.branding.accentColor || '#0f172a', density: ctx.layout.density || 'comfortable', headerVariant: 'classic', showSignatureBlock: ctx.branding.showSignatureBlock !== false });
 }
-
-
-/* ─────────────────────────────────────────────────────────
-   THEME 2 — MODERN
-   Brutalist Monochrome · Black · Neon Green · Bebas Neue · DM Mono
-───────────────────────────────────────────────────────── */
-
-function modernStyles(accent, neon) {
-  return `
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&family=Jost:wght@300;400;500;600&display=swap');
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--acc:${accent};--neon:${neon};--sur:#111;--bdr:#1e1e1e;--bdr2:#2a2a2a;--mut:#444;--dim:#333}
-body{font-family:'Jost',Arial,sans-serif;background:#0a0a0a;color:#ccc;padding:40px 24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{max-width:860px;margin:0 auto;background:var(--sur);border:1px solid var(--bdr2)}
-.hdr{display:grid;grid-template-columns:1fr auto;border-bottom:1px solid var(--bdr)}
-.htb{padding:40px 48px;border-right:1px solid var(--bdr)}
-.htitle{font-family:'Bebas Neue',sans-serif;font-size:72px;color:var(--neon);line-height:1;letter-spacing:2px}
-.horg{font-family:'DM Mono',monospace;font-size:12px;color:var(--mut);margin-top:8px;letter-spacing:.5px}
-.hmb{padding:40px 36px;display:flex;flex-direction:column;justify-content:space-between;min-width:200px}
-.hdocno{font-family:'DM Mono',monospace;font-size:13px;color:var(--neon);letter-spacing:2px}
-.hstatus{display:inline-block;padding:6px 14px;background:var(--neon);color:#000;font-family:'DM Mono',monospace;font-size:11px;font-weight:500;letter-spacing:2px;text-transform:uppercase}
-.slbl{font-family:'DM Mono',monospace;font-size:10px;color:var(--mut);letter-spacing:3px;text-transform:uppercase;margin-bottom:20px;display:flex;align-items:center;gap:12px}
-.slbl::after{content:'';flex:1;height:1px;background:var(--bdr)}
-.sec{border-bottom:1px solid var(--bdr);padding:32px 48px}.sec:last-child{border-bottom:none}
-.parties{display:grid;grid-template-columns:1fr 1fr}
-.party{padding:28px 32px;border-right:1px solid var(--bdr)}.party:last-child{border-right:none}
-.plbl{font-family:'DM Mono',monospace;font-size:9px;color:var(--neon);letter-spacing:3px;text-transform:uppercase;margin-bottom:10px}
-.pnm{font-family:'Bebas Neue',sans-serif;font-size:22px;color:#fff;letter-spacing:1px;margin-bottom:6px}
-.pdt{font-family:'DM Mono',monospace;font-size:11.5px;color:#555;line-height:1.9}
-.mrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}
-.mc{padding:20px 24px;border-right:1px solid var(--bdr)}.mc:last-child{border-right:none}
-.mlbl{font-family:'DM Mono',monospace;font-size:9px;color:var(--mut);letter-spacing:2px;text-transform:uppercase;margin-bottom:6px}
-.mval{font-family:'DM Mono',monospace;font-size:13px;color:#ccc}
-table.items{width:100%;border-collapse:collapse}
-.items thead tr{border-bottom:1px solid var(--bdr2)}
-.items th{font-family:'DM Mono',monospace;font-size:9px;color:var(--mut);letter-spacing:2px;text-transform:uppercase;padding:0 16px 12px;text-align:left}
-.items th:first-child{padding-left:0}.items th:last-child{text-align:right;padding-right:0}.items th.r{text-align:right}
-.items tbody tr{border-bottom:1px solid #1a1a1a;transition:background .15s}.items tbody tr:hover{background:#161616}.items tbody tr:last-child{border-bottom:none}
-.items td{padding:14px 16px;font-size:13px;color:#bbb}
-.items td:first-child{padding-left:0;font-family:'DM Mono',monospace;font-size:11px;color:var(--dim)}
-.items td:last-child{padding-right:0;text-align:right;color:#fff;font-weight:500}
-.items td.r{text-align:right}.idesc{color:#fff;font-weight:500}
-.totrow{display:flex;justify-content:flex-end;padding:28px 48px;border-top:1px solid var(--bdr)}
-.tot{width:320px}.tot table{width:100%;border-collapse:collapse}
-.tot td{padding:6px 0;font-family:'DM Mono',monospace;font-size:12px}
-.tot td:last-child{text-align:right;color:#aaa}.tl{color:var(--mut)}
-.tot tr.tr td{border-top:1px solid var(--bdr2);padding-top:14px;color:var(--neon)}
-.tamt{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:1px}
-.notes{margin:0 48px 28px;padding:20px 24px;border:1px solid var(--bdr);background:#0e0e0e}
-.notes p{font-family:'DM Mono',monospace;font-size:12px;color:#555;line-height:1.9;margin-top:8px}
-.ftr{padding:18px 48px;display:flex;justify-content:space-between;border-top:1px solid var(--bdr)}
-.ftr span{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:1px}
-.fgold{color:var(--neon)}
-@media print{body{background:#000;padding:0}.page{border:none}}`;
-}
-
-function modernLines(lines, code) {
-  return (lines || []).map((l, i) => `
-<tr>
-  <td>${zeroPad(l.lineNo, i)}</td>
-  <td><span class="idesc">${esc(l.description || '—')}</span></td>
-  <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
-  <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
-</tr>`).join('');
-}
-
 function renderModern(ctx) {
-  const accent  = ctx.branding?.accentColor || '#111111';
-  const neon    = ctx.branding?.goldColor   || '#e8ff47';
-  const payload = ctx.payload || {};
-  const code    = currency(payload);
-  const org     = payload.organization || {};
-  const cp      = payload.counterparty || {};
-  const meta    = payload.meta || {};
-  const sum     = payload.summary || {};
-
-  const metaCells = [
-    { l: 'Doc No',   v: meta.documentNo },
-    { l: 'Issued',   v: meta.documentDate },
-    meta.dueDate        && { l: 'Due / Valid', v: meta.dueDate },
-    meta.reference      && { l: 'Ref',         v: meta.reference },
-    meta.workflowStatus && { l: 'Workflow',     v: meta.workflowStatus },
-  ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
-
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<title>${esc(ctx.title)} — ${esc(meta.documentNo || '')}</title>
-<style>${modernStyles(accent, neon)}</style></head><body>
-<div class="page">
-  <div class="hdr">
-    <div class="htb">
-      <div class="htitle">${esc(ctx.title)}</div>
-      <div class="horg">${[org.name, org.email, org.phone].filter(Boolean).map(esc).join(' — ')}</div>
-    </div>
-    <div class="hmb">
-      ${meta.documentNo ? `<div class="hdocno">${esc(meta.documentNo)}</div>` : ''}
-      ${meta.status     ? `<div class="hstatus">${esc(meta.status).toUpperCase()}</div>` : ''}
-    </div>
-  </div>
-  <div class="sec" style="padding:0">
-    <div class="parties">
-      <div class="party">
-        <div class="plbl">${esc(ctx.title === 'Purchase Order' ? 'Vendor' : 'Client')}</div>
-        <div class="pnm">${esc((cp.name || '—').toUpperCase())}</div>
-        <div class="pdt">${[cp.email, cp.phone, joinAddress(cp.address)].filter(Boolean).join('<br/>')}</div>
-      </div>
-      <div class="party">
-        <div class="plbl">Prepared By</div>
-        <div class="pnm">${esc((org.name || '—').toUpperCase())}</div>
-        <div class="pdt">${[org.email, org.phone, joinAddress(org.address)].filter(Boolean).join('<br/>')}</div>
-      </div>
-    </div>
-  </div>
-  <div class="sec" style="padding:0"><div class="mrow">${metaCells}</div></div>
-  <div class="sec">
-    <div class="slbl">Line Items</div>
-    <table class="items">
-      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th><th class="r" style="width:140px">Amount</th></tr></thead>
-      <tbody>${modernLines(payload.lines, code)}</tbody>
-    </table>
-  </div>
-  <div class="totrow"><div class="tot"><table>
-    <tr><td class="tl">SUBTOTAL</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
-    ${sum.tax      != null ? `<tr><td class="tl">TAX</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
-    ${sum.discount != null ? `<tr><td class="tl">DISCOUNT</td><td>&#8722;${esc(fmtMoney(sum.discount, code))}</td></tr>` : ''}
-    <tr class="tr"><td>TOTAL</td><td><span class="tamt">${esc(fmtMoney(sum.total, code))}</span></td></tr>
-  </table></div></div>
-  ${sum.memo ? `<div class="notes"><div class="plbl">Notes</div><p>${esc(sum.memo)}</p></div>` : ''}
-  <div class="ftr"><span>GENERATED BY <span class="fgold">APTBOOKS</span></span><span>PAGE 01 / 01</span></div>
-</div></body></html>`;
+  return renderBase({ title: ctx.title, payload: ctx.payload, accentColor: ctx.branding.accentColor || '#2563eb', density: ctx.layout.density || 'comfortable', headerVariant: 'split', showSignatureBlock: ctx.branding.showSignatureBlock === true });
 }
-
-
-/* ─────────────────────────────────────────────────────────
-   THEME 3 — COMPACT
-   Japanese Minimalist · White · Vermillion · Noto Serif JP
-───────────────────────────────────────────────────────── */
-
-function compactStyles(red) {
-  return `
-@import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@300;400;600&family=Jost:wght@300;400;500;600&display=swap');
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--red:${red};--bdr:#f0ece6;--mut:#999;--txt:#1a1a1a}
-body{font-family:'Jost',Arial,sans-serif;background:#f7f5f2;color:var(--txt);padding:40px 24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{max-width:800px;margin:0 auto;background:#fff}
-.top{padding:52px 56px 0;display:flex;justify-content:space-between;align-items:flex-start}
-.tmk{width:6px;height:52px;background:var(--red);flex-shrink:0;margin-right:24px}
-.ttb{display:flex;align-items:flex-start}
-.htitle{font-family:'Noto Serif JP',serif;font-size:38px;font-weight:600;color:var(--txt);letter-spacing:-1px;line-height:1}
-.horg{font-size:12.5px;color:var(--mut);margin-top:10px;letter-spacing:.3px}
-.hdocno{font-size:12px;color:var(--red);letter-spacing:2px;font-weight:500;margin-bottom:8px;text-align:right}
-.hbadge{display:inline-block;padding:4px 12px;border:1px solid var(--red);color:var(--red);font-size:10px;font-weight:500;letter-spacing:2px;text-transform:uppercase}
-.div1{height:1px;background:var(--bdr);margin:36px 56px 0}
-.redline{height:2px;background:var(--red);width:48px;margin:0 56px}
-.body{padding:36px 56px 52px}
-.parties{display:grid;grid-template-columns:1fr 1fr;margin-bottom:40px}
-.party{padding:24px 0;border-bottom:1px solid var(--bdr)}
-.party:last-child{padding-left:32px;border-left:1px solid var(--bdr)}
-.plbl{font-size:9px;font-weight:500;letter-spacing:2.5px;text-transform:uppercase;color:var(--red);margin-bottom:10px}
-.pnm{font-family:'Noto Serif JP',serif;font-size:16px;font-weight:600;color:var(--txt);margin-bottom:5px}
-.pdt{font-size:12px;color:var(--mut);line-height:1.9}
-.meta{display:flex;gap:0;margin-bottom:40px;border-bottom:1px solid var(--bdr)}
-.mc{padding:16px 24px 16px 0;margin-right:24px;border-right:1px solid var(--bdr)}.mc:last-child{border-right:none}
-.mlbl{font-size:9px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:#bbb;margin-bottom:5px}
-.mval{font-size:13.5px;font-weight:500;color:var(--txt)}
-table.items{width:100%;border-collapse:collapse;margin-bottom:4px}
-.items thead tr{border-bottom:1px solid var(--txt)}
-.items th{font-size:9px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:#bbb;padding:0 12px 10px;text-align:left}
-.items th:first-child{padding-left:0}.items th:last-child{text-align:right;padding-right:0}.items th.r{text-align:right}
-.items tbody tr{border-bottom:1px solid var(--bdr)}.items tbody tr:last-child{border-bottom:none}
-.items td{padding:14px 12px;font-size:13px}
-.items td:first-child{padding-left:0;font-size:11px;color:#ccc}
-.items td:last-child{padding-right:0;text-align:right;font-weight:500}
-.items td.r{text-align:right}.idesc{color:var(--txt);font-weight:500}
-.totals{display:flex;justify-content:flex-end;margin-top:24px;padding-top:24px;border-top:1px solid var(--bdr)}
-.tot{width:260px}.tot table{width:100%;border-collapse:collapse}
-.tot td{padding:6px 0;font-size:13px}.tot td:last-child{text-align:right}
-.tl{color:#aaa}.tot tr.tr td{border-top:1px solid var(--txt);padding-top:12px;font-weight:600;color:var(--red)}
-.tamt{font-family:'Noto Serif JP',serif;font-size:22px;font-weight:600}
-.notes{margin-top:32px;padding:18px 0 18px 20px;border-left:2px solid var(--red)}
-.notes p{font-size:12.5px;color:var(--mut);line-height:1.8;margin-top:6px}
-.ftr{margin-top:48px;padding-top:20px;border-top:1px solid var(--bdr);display:flex;justify-content:space-between;font-size:11px;color:#ccc}
-.fred{color:var(--red);font-weight:500}
-@media print{body{background:#fff;padding:0}}`;
-}
-
-function compactLines(lines, code) {
-  return (lines || []).map((l, i) => `
-<tr>
-  <td>${zeroPad(l.lineNo, i)}</td>
-  <td><span class="idesc">${esc(l.description || '—')}</span></td>
-  <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
-  <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
-</tr>`).join('');
-}
-
 function renderCompact(ctx) {
-  const red     = ctx.branding?.accentColor || '#c0392b';
-  const payload = ctx.payload || {};
-  const code    = currency(payload);
-  const org     = payload.organization || {};
-  const cp      = payload.counterparty || {};
-  const meta    = payload.meta || {};
-  const sum     = payload.summary || {};
-
-  const metaCells = [
-    { l: 'Date',      v: meta.documentDate },
-    meta.dueDate        && { l: 'Due / Deliver', v: meta.dueDate },
-    meta.reference      && { l: 'Reference',     v: meta.reference },
-    meta.workflowStatus && { l: 'Workflow',       v: meta.workflowStatus },
-  ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
-
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<title>${esc(ctx.title)} — ${esc(meta.documentNo || '')}</title>
-<style>${compactStyles(red)}</style></head><body>
-<div class="page">
-  <div class="top">
-    <div class="ttb">
-      <div class="tmk"></div>
-      <div>
-        <div class="htitle">${esc(ctx.title)}</div>
-        <div class="horg">${[org.name, org.email, org.phone].filter(Boolean).map(esc).join(' · ')}</div>
-      </div>
-    </div>
-    <div>
-      ${meta.documentNo ? `<div class="hdocno">${esc(meta.documentNo)}</div>` : ''}
-      ${meta.status     ? `<div style="text-align:right"><div class="hbadge">${esc(meta.status)}</div></div>` : ''}
-    </div>
-  </div>
-  <div class="div1"></div>
-  <div class="redline"></div>
-  <div class="body">
-    <div class="parties">
-      <div class="party">
-        <div class="plbl">${esc(ctx.title === 'Purchase Order' ? 'Vendor' : 'Bill To')}</div>
-        <div class="pnm">${esc(cp.name || '—')}</div>
-        <div class="pdt">${[cp.email, cp.phone, joinAddress(cp.address)].filter(Boolean).join('<br/>')}</div>
-      </div>
-      <div class="party">
-        <div class="plbl">${esc(ctx.title === 'Purchase Order' ? 'Ship To' : 'Issued By')}</div>
-        <div class="pnm">${esc(org.name || '—')}</div>
-        <div class="pdt">${[org.email, org.phone, joinAddress(org.address)].filter(Boolean).join('<br/>')}</div>
-      </div>
-    </div>
-    <div class="meta">${metaCells}</div>
-    <table class="items">
-      <thead><tr><th style="width:38px">#</th><th>Item</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th><th class="r" style="width:130px">Amount</th></tr></thead>
-      <tbody>${compactLines(payload.lines, code)}</tbody>
-    </table>
-    <div class="totals"><div class="tot"><table>
-      <tr><td class="tl">Subtotal</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
-      ${sum.tax      != null ? `<tr><td class="tl">Tax / Shipping</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
-      ${sum.discount != null ? `<tr><td class="tl">Discount</td><td>&#8722;${esc(fmtMoney(sum.discount, code))}</td></tr>` : ''}
-      <tr class="tr"><td>Total</td><td><span class="tamt">${esc(fmtMoney(sum.total, code))}</span></td></tr>
-    </table></div></div>
-    ${sum.memo ? `<div class="notes"><div class="plbl">Notes</div><p>${esc(sum.memo)}</p></div>` : ''}
-    <div class="ftr"><span>Generated by <span class="fred">AptBooks</span></span><span>Page 1 of 1</span></div>
-  </div>
-</div></body></html>`;
+  return renderBase({ title: ctx.title, payload: ctx.payload, accentColor: ctx.branding.accentColor || '#334155', density: 'tight', headerVariant: 'split', showSignatureBlock: false });
 }
-
-
-/* ─────────────────────────────────────────────────────────
-   THEME 4 — CORPORATE
-   Art Deco Opulence · Deep Burgundy · Champagne · Cinzel
-───────────────────────────────────────────────────────── */
-
-function corpStyles(burg, champ) {
-  return `
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Jost:wght@300;400;500;600&display=swap');
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--burg:${burg};--champ:${champ};--bdr:#e0d5c0;--bg:#fff8ec;--mut:#8a7060;--txt:#3d0d0d}
-body{font-family:'Jost',Arial,sans-serif;background:#1a0a0a;color:var(--txt);padding:40px 24px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{max-width:860px;margin:0 auto;background:#fdf8f0;box-shadow:0 16px 80px rgba(0,0,0,.5),0 4px 16px rgba(0,0,0,.3);overflow:hidden}
-.deco-top{height:8px;background:repeating-linear-gradient(90deg,var(--burg) 0px,var(--burg) 20px,var(--champ) 20px,var(--champ) 22px,var(--burg) 22px,var(--burg) 42px)}
-.hdr{background:var(--burg);padding:44px 52px 40px}
-.hinner{display:flex;justify-content:space-between;align-items:center}
-.htitle{font-family:'Cinzel',serif;font-size:40px;color:var(--champ);letter-spacing:6px;text-transform:uppercase}
-.hsubtitle{font-family:'Cinzel',serif;font-size:11px;color:rgba(212,175,112,.5);letter-spacing:5px;text-transform:uppercase;margin-top:6px}
-.hdocno{font-family:'Cinzel',serif;font-size:13px;color:var(--champ);letter-spacing:3px;margin-bottom:10px;text-align:right}
-.hstatus{display:inline-block;padding:5px 18px;background:var(--champ);color:var(--burg);font-family:'Cinzel',serif;font-size:10px;font-weight:600;letter-spacing:3px;text-transform:uppercase}
-.decohr{height:1px;background:linear-gradient(90deg,transparent,var(--champ),transparent);margin:20px 0 0}
-.decostrip{height:4px;background:linear-gradient(90deg,var(--champ) 0%,#f0d882 30%,var(--champ) 60%,#f0d882 85%,var(--champ) 100%)}
-.body{padding:44px 52px;background:#fdf8f0}
-.parties{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:36px}
-.party{padding:24px 26px;border:1px solid var(--bdr);background:var(--bg);position:relative}
-.party::before,.party::after{content:'\\25C6';position:absolute;font-size:7px;color:var(--champ)}
-.party::before{top:8px;left:8px}.party::after{bottom:8px;right:8px}
-.plbl{font-family:'Cinzel',serif;font-size:8px;letter-spacing:3px;color:var(--champ);text-transform:uppercase;margin-bottom:10px}
-.pnm{font-family:'Cinzel',serif;font-size:16px;color:var(--txt);margin-bottom:5px}
-.pdt{font-size:12.5px;color:var(--mut);line-height:1.75}
-.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:18px;margin-bottom:36px}
-.mc{padding:16px 18px;border:1px solid var(--bdr);background:var(--bg)}
-.mlbl{font-family:'Cinzel',serif;font-size:8px;letter-spacing:2.5px;color:#c4a870;text-transform:uppercase;margin-bottom:6px}
-.mval{font-size:14px;font-weight:500;color:var(--txt)}
-.sttl{font-family:'Cinzel',serif;font-size:9px;letter-spacing:3px;text-transform:uppercase;color:#c4a870;margin-bottom:12px;display:flex;align-items:center;gap:14px}
-.sttl span{flex:1;height:1px;background:var(--bdr)}
-table.items{width:100%;border-collapse:collapse}
-.items thead tr{border-bottom:2px solid var(--txt)}
-.items th{font-family:'Cinzel',serif;font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--mut);padding:0 14px 10px;text-align:left}
-.items th:first-child{padding-left:0}.items th:last-child{text-align:right;padding-right:0}.items th.r{text-align:right}
-.items tbody tr{border-bottom:1px solid #ece4d0}.items tbody tr:last-child{border-bottom:none}
-.items td{padding:14px 14px;font-size:13.5px}
-.items td:first-child{padding-left:0;font-size:11px;color:#c4a870}
-.items td:last-child{padding-right:0;text-align:right;font-weight:500}
-.items td.r{text-align:right}.idesc{font-weight:500;color:var(--txt)}
-.totals{display:flex;justify-content:flex-end;margin-top:20px}
-.tot{width:300px}.tot table{width:100%;border-collapse:collapse}
-.tot td{padding:7px 0;font-size:13.5px}.tot td:last-child{text-align:right}
-.tl{color:var(--mut)}.tot tr.tr td{border-top:2px solid var(--txt);padding-top:14px;font-weight:700;color:var(--txt)}
-.tamt{font-family:'Cinzel',serif;font-size:22px;color:var(--txt)}
-.notes{margin-top:28px;padding:18px 22px;border:1px solid var(--bdr);background:var(--bg);position:relative}
-.notes::before,.notes::after{content:'\\25C6';position:absolute;font-size:7px;color:var(--champ)}
-.notes::before{top:8px;left:8px}.notes::after{bottom:8px;right:8px}
-.notes p{font-size:13px;color:var(--mut);line-height:1.75;margin-top:6px}
-.sig{margin-top:44px;display:grid;grid-template-columns:1fr 1fr;gap:40px}
-.sigline{padding-top:48px;border-top:1px solid #c4a870}
-.siglbl{font-family:'Cinzel',serif;font-size:9px;letter-spacing:2px;color:#c4a870;text-transform:uppercase}
-.ftr{padding:18px 52px;background:var(--burg);border-top:1px solid #5a1a1a;display:flex;justify-content:space-between;align-items:center}
-.ftr span{font-family:'Cinzel',serif;font-size:9px;letter-spacing:2px;color:rgba(212,175,112,.5);text-transform:uppercase}
-.fchamp{color:var(--champ)}
-@media print{body{background:#fff;padding:0}.page{box-shadow:none}}`;
-}
-
-function corpLines(lines, code) {
-  const ROMAN = ['I','II','III','IV','V','VI','VII','VIII','IX','X'];
-  return (lines || []).map((l, i) => `
-<tr>
-  <td>${ROMAN[i] || zeroPad(l.lineNo, i)}</td>
-  <td><span class="idesc">${esc(l.description || '—')}</span></td>
-  <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
-  <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
-</tr>`).join('');
-}
-
 function renderCorporate(ctx) {
-  const burg    = ctx.branding?.accentColor || '#3d0d0d';
-  const champ   = ctx.branding?.goldColor   || '#d4af70';
-  const showSig = ctx.branding?.showSignatureBlock !== false;
-  const payload = ctx.payload || {};
-  const code    = currency(payload);
-  const org     = payload.organization || {};
-  const cp      = payload.counterparty || {};
-  const meta    = payload.meta || {};
-  const sum     = payload.summary || {};
-
-  const metaCells = [
-    { l: 'Invoice Date', v: meta.documentDate },
-    meta.dueDate        && { l: 'Payment Due', v: meta.dueDate },
-    meta.reference      && { l: 'Reference',   v: meta.reference },
-    meta.workflowStatus && { l: 'Workflow',     v: meta.workflowStatus },
-  ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
-
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<title>${esc(ctx.title)} — ${esc(meta.documentNo || '')}</title>
-<style>${corpStyles(burg, champ)}</style></head><body>
-<div class="page">
-  <div class="deco-top"></div>
-  <div class="hdr">
-    <div class="hinner">
-      <div>
-        <div class="htitle">${esc(ctx.title)}</div>
-        <div class="hsubtitle">${esc(org.name || '')}</div>
-        <div class="decohr"></div>
-      </div>
-      <div>
-        ${meta.documentNo ? `<div class="hdocno">&#8470; ${esc(meta.documentNo)}</div>` : ''}
-        ${meta.status     ? `<div style="text-align:right"><div class="hstatus">${esc(meta.status)}</div></div>` : ''}
-      </div>
-    </div>
-  </div>
-  <div class="decostrip"></div>
-  <div class="body">
-    <div class="parties">
-      <div class="party">
-        <div class="plbl">Billed To</div>
-        <div class="pnm">${esc(cp.name || '—')}</div>
-        <div class="pdt">${[cp.email, cp.phone, joinAddress(cp.address)].filter(Boolean).join('<br/>')}</div>
-      </div>
-      <div class="party">
-        <div class="plbl">Remit To</div>
-        <div class="pnm">${esc(org.name || '—')}</div>
-        <div class="pdt">${[org.email, org.phone, joinAddress(org.address)].filter(Boolean).join('<br/>')}</div>
-      </div>
-    </div>
-    <div class="meta">${metaCells}</div>
-    <div class="sttl">Services Rendered <span></span></div>
-    <table class="items">
-      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:130px">Unit Price</th><th class="r" style="width:140px">Amount</th></tr></thead>
-      <tbody>${corpLines(payload.lines, code)}</tbody>
-    </table>
-    <div class="totals"><div class="tot"><table>
-      <tr><td class="tl">Subtotal</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
-      ${sum.tax      != null ? `<tr><td class="tl">VAT / Tax</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
-      ${sum.discount != null ? `<tr><td class="tl">Discount</td><td>&#8722;${esc(fmtMoney(sum.discount, code))}</td></tr>` : ''}
-      <tr class="tr"><td>Total Due</td><td><span class="tamt">${esc(fmtMoney(sum.total, code))}</span></td></tr>
-    </table></div></div>
-    ${sum.memo ? `<div class="notes"><div class="plbl">Notes &amp; Terms</div><p>${esc(sum.memo)}</p></div>` : ''}
-    ${showSig ? `<div class="sig"><div><div class="sigline"><div class="siglbl">Prepared by</div></div></div><div><div class="sigline"><div class="siglbl">Authorized by</div></div></div></div>` : ''}
-  </div>
-  <div class="ftr">
-    <span>Generated by <span class="fchamp">AptBooks</span> Document Templates</span>
-    <span>Page 1 of 1</span>
-  </div>
-</div></body></html>`;
+  return renderBase({ title: ctx.title, payload: ctx.payload, accentColor: ctx.branding.accentColor || '#111827', density: ctx.layout.density || 'comfortable', headerVariant: 'classic', showSignatureBlock: true });
 }
-
 
 module.exports = { renderClassic, renderModern, renderCompact, renderCorporate };

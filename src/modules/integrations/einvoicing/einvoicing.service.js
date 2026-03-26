@@ -225,4 +225,66 @@ async function getEInvoice({ orgId, id }) {
   return rows[0] || null;
 }
 
-module.exports = { generateInvoiceEInvoice, getEInvoice, queueTransmission, listTransmissions };
+async function getEInvoiceBySource({ orgId, sourceType, sourceId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM e_invoices WHERE organization_id=$1 AND source_type=$2 AND source_id=$3`,
+    [orgId, sourceType, sourceId]
+  );
+  return rows[0] || null;
+}
+
+async function getInvoiceEInvoicePreview({ orgId, invoiceId }) {
+  const ctx = await loadInvoiceContext({ orgId, invoiceId });
+  const payload = buildInvoicePayload(ctx);
+  const xml = buildUblInvoiceXml(ctx);
+  const existing = await getEInvoiceBySource({ orgId, sourceType: 'invoice', sourceId: invoiceId });
+  return {
+    source_type: 'invoice',
+    source_id: invoiceId,
+    has_generated_record: !!existing,
+    existing_einvoice_id: existing?.id || null,
+    status: existing?.status || 'preview',
+    profile_code: existing?.profile_code || 'PEPPOL-BIS-3.0',
+    network: existing?.network || 'none',
+    payload,
+    ubl_xml: xml,
+    generated_at: new Date().toISOString()
+  };
+}
+
+async function getInvoiceFilingStatus({ orgId, invoiceId }) {
+  const invoiceCtx = await loadInvoiceContext({ orgId, invoiceId });
+  const existing = await getEInvoiceBySource({ orgId, sourceType: 'invoice', sourceId: invoiceId });
+
+  if (!existing) {
+    return {
+      source_type: 'invoice',
+      source_id: invoiceId,
+      invoice_status: invoiceCtx.inv.status,
+      filing_status: 'not_generated',
+      can_generate: invoiceCtx.inv.status === 'issued' || invoiceCtx.inv.status === 'paid',
+      e_invoice: null,
+      latest_transmission: null,
+      transmission_count: 0
+    };
+  }
+
+  const { rows } = await pool.query(
+    `SELECT * FROM e_invoice_transmissions WHERE organization_id=$1 AND e_invoice_id=$2 ORDER BY created_at DESC`,
+    [orgId, existing.id]
+  );
+  const latest = rows[0] || null;
+
+  return {
+    source_type: 'invoice',
+    source_id: invoiceId,
+    invoice_status: invoiceCtx.inv.status,
+    filing_status: existing.status || 'generated',
+    can_generate: false,
+    e_invoice: existing,
+    latest_transmission: latest,
+    transmission_count: rows.length
+  };
+}
+
+module.exports = { generateInvoiceEInvoice, getEInvoice, queueTransmission, listTransmissions, getEInvoiceBySource, getInvoiceEInvoicePreview, getInvoiceFilingStatus };

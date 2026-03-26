@@ -6,6 +6,7 @@ const { buildOperationalDocumentJournal } = require("./operationalDocPosting.ser
 const { runApprovalPostingHook } = require("./approvalPostingHooks");
 const repo = require("./opsDocs.repository");
 const { resolveLineTaxes, round2: roundTax2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
+const { enrichLines, buildDetailMeta } = require("./detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -169,7 +170,8 @@ function createOpsDocService(config) {
     if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
     const lines = await repo.getDocumentLines(documentId);
     const taxMap = await loadLineTaxDetails({ client: pool, tableName: "operational_doc_line_tax_details", lineIds: lines.map((l) => l.id) });
-    return { header, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) };
+    const enrichedLines = await enrichLines({ client: pool, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
+    return { header, lines: enrichedLines, detail_meta: buildDetailMeta({ header, lines: enrichedLines }) };
   }
 
   async function submitForApproval({ orgId, actorUserId, documentId }) {

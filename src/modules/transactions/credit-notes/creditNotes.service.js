@@ -142,11 +142,14 @@ async function getCreditNoteDetails({ orgId, id, currentUserId }) {
       client
     });
 
+    const enrichedLines = await enrichLines({ client, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
+
     return {
       ...cn,
-      lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })),
+      lines: enrichedLines,
       applications,
-      balance: bal
+      balance: bal,
+      detail_meta: buildDetailMeta({ header: cn, lines: enrichedLines, extra: { paid: Number((bal?.applied_amount || 0)), outstanding: Number((bal?.remaining_amount || 0)) } })
     };
 
   } finally {

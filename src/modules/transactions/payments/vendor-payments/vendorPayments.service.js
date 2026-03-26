@@ -11,6 +11,7 @@ const {
   parseDecimalToBigInt,
   bigIntToDecimalString
 } = require("../../../../shared/utils/money");
+const { buildDetailMeta, round2 } = require("../../_shared/detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -328,7 +329,38 @@ async function getVendorPaymentDetails({ orgId, id, currentUserId }) {
   const vp = await repo.getVendorPaymentById(orgId, id, currentUserId);
   if (!vp) throw new AppError(404, "Vendor payment not found");
   const allocations = await repo.getAllocations(id);
-  return { vendorPayment: vp, allocations };
+  const billIds = allocations.map((a) => a.bill_id).filter(Boolean);
+  let billMap = new Map();
+  if (billIds.length) {
+    const { rows } = await pool.query(
+      `SELECT id, bill_no, bill_date, due_date, total, status, currency_code FROM bills WHERE organization_id=$1 AND id = ANY($2::uuid[])`,
+      [orgId, billIds]
+    );
+    billMap = new Map(rows.map((row) => [row.id, row]));
+  }
+  const enrichedAllocations = allocations.map((allocation) => {
+    const bill = billMap.get(allocation.bill_id) || null;
+    return {
+      ...allocation,
+      bill,
+      display_amounts: {
+        amount_applied: round2(allocation.amount_applied || 0),
+        discount_taken: round2(allocation.discount_taken || 0),
+        settled_total: round2(Number(allocation.amount_applied || 0) + Number(allocation.discount_taken || 0)),
+      }
+    };
+  });
+  return {
+    vendorPayment: vp,
+    allocations: enrichedAllocations,
+    detail_meta: buildDetailMeta({ header: vp, lines: [], extra: { outstanding: vp.unapplied_amount ?? 0 } }),
+    allocation_summary: {
+      allocation_count: enrichedAllocations.length,
+      applied_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.amount_applied || 0), 0)),
+      discount_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.discount_taken || 0), 0)),
+      unapplied_amount: round2(vp.unapplied_amount || 0),
+    }
+  };
 }
 
 async function listVendorPayments({ orgId, query }) {

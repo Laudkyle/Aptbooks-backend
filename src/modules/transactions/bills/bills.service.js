@@ -16,6 +16,7 @@ const {
 const repo = require("./bills.repository");
 const { resolveLineTaxes, round2, loadLineTaxDetails, upsertDocumentTaxSnapshot } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
+const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -162,7 +163,15 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
   const total = Number(bill.total);
   const outstanding = Number((total - paid).toFixed(2));
 
-  return { bill, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })), paid, outstanding };
+  const enrichedLines = await enrichLines({ client: pool, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
+
+  return {
+    bill,
+    lines: enrichedLines,
+    paid,
+    outstanding,
+    detail_meta: buildDetailMeta({ header: bill, lines: enrichedLines, extra: { paid, outstanding } })
+  };
 }
 
 async function listBills({ orgId, query }) {

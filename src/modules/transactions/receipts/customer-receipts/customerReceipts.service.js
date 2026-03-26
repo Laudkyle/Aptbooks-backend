@@ -13,6 +13,7 @@ const {
 } = require("../../../../shared/utils/money");
 
 const repo = require("./customerReceipts.repository");
+const { buildDetailMeta, round2 } = require("../../_shared/detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -159,7 +160,38 @@ async function getCustomerReceiptDetails({ orgId, id, currentUserId }) {
   const cr = await repo.getCustomerReceiptById(orgId, id, currentUserId);
   if (!cr) throw new AppError(404, "Customer receipt not found");
   const allocations = await repo.getAllocations(id);
-  return { customerReceipt: cr, allocations };
+  const invoiceIds = allocations.map((a) => a.invoice_id).filter(Boolean);
+  let invoiceMap = new Map();
+  if (invoiceIds.length) {
+    const { rows } = await pool.query(
+      `SELECT id, invoice_no, invoice_date, due_date, total, status, currency_code FROM invoices WHERE organization_id=$1 AND id = ANY($2::uuid[])`,
+      [orgId, invoiceIds]
+    );
+    invoiceMap = new Map(rows.map((row) => [row.id, row]));
+  }
+  const enrichedAllocations = allocations.map((allocation) => {
+    const invoice = invoiceMap.get(allocation.invoice_id) || null;
+    return {
+      ...allocation,
+      invoice,
+      display_amounts: {
+        amount_applied: round2(allocation.amount_applied || 0),
+        discount_taken: round2(allocation.discount_taken || 0),
+        settled_total: round2(Number(allocation.amount_applied || 0) + Number(allocation.discount_taken || 0)),
+      }
+    };
+  });
+  return {
+    customerReceipt: cr,
+    allocations: enrichedAllocations,
+    detail_meta: buildDetailMeta({ header: cr, lines: [], extra: { outstanding: cr.unapplied_amount ?? 0 } }),
+    allocation_summary: {
+      allocation_count: enrichedAllocations.length,
+      applied_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.amount_applied || 0), 0)),
+      discount_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.discount_taken || 0), 0)),
+      unapplied_amount: round2(cr.unapplied_amount || 0),
+    }
+  };
 }
 
 async function listCustomerReceipts({ orgId, query }) {

@@ -1,3 +1,4 @@
+
 const { withTransaction } = require("../../../db/tx");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
@@ -10,65 +11,36 @@ async function ensurePresetLibrary({ orgId, actorUserId = null }) {
 
   await withTransaction(async (client) => {
     let defaultTemplateId = null;
-    
     for (const preset of PRESET_TEMPLATE_LIBRARY) {
       let tpl = await repo.getTemplateByCode({ orgId, code: preset.code, client });
-      
       if (!tpl) {
-        try {
-          tpl = await repo.createTemplate(client, {
-            orgId,
-            actorUserId,
-            code: preset.code,
-            name: preset.name,
-            description: preset.description,
-            baseTemplateKey: preset.baseTemplateKey,
-            paperSize: preset.paperSize,
-            orientation: preset.orientation,
-            isActive: true,
-            isSystem: true,
-            isDefault: preset.isDefault === true
-          });
-        } catch (error) {
-          // If duplicate key error, try to fetch the existing template
-          if (error.code === '23505' || (error.message && error.message.includes('duplicate key'))) {
-            tpl = await repo.getTemplateByCode({ orgId, code: preset.code, client });
-            if (!tpl) {
-              throw error; // Re-throw if we still can't find it
-            }
-          } else {
-            throw error;
-          }
-        }
-        
-        // Verify creation was successful
-        if (!tpl || !tpl.id) {
-          throw new AppError(500, `Failed to create preset template: ${preset.code}`);
-        }
-        
-        // Only create version if this is a newly created template
-        if (tpl && tpl.id) {
-          await repo.createVersion(client, {
-            templateId: tpl.id,
-            actorUserId,
-            layoutConfig: preset.layoutConfig,
-            brandingConfig: preset.brandingConfig,
-            fieldConfig: preset.fieldConfig,
-            status: 'published',
-            isPublished: true
-          });
-        }
+        tpl = await repo.createTemplate(client, {
+          orgId,
+          actorUserId,
+          code: preset.code,
+          name: preset.name,
+          description: preset.description,
+          baseTemplateKey: preset.baseTemplateKey,
+          paperSize: preset.paperSize,
+          orientation: preset.orientation,
+          isActive: true,
+          isSystem: true,
+          isDefault: preset.isDefault === true
+        });
+        await repo.createVersion(client, {
+          templateId: tpl.id,
+          actorUserId,
+          layoutConfig: preset.layoutConfig,
+          brandingConfig: preset.brandingConfig,
+          fieldConfig: preset.fieldConfig,
+          status: 'published',
+          isPublished: true
+        });
       }
-      
-      // Check if tpl exists and has an id before accessing
-      if (preset.isDefault === true && tpl && tpl.id) {
-        defaultTemplateId = tpl.id;
-      }
+      if (preset.isDefault === true) defaultTemplateId = tpl.id;
     }
-    
     if (defaultTemplateId) {
       await repo.unsetOtherDefaults(client, { orgId, exceptTemplateId: defaultTemplateId });
-      
       for (const entityType of SUPPORTED_TRANSACTION_ENTITY_TYPES) {
         const existing = await repo.getAssignmentByEntityType({ orgId, entityType, client });
         if (!existing) {
@@ -84,7 +56,6 @@ async function ensurePresetLibrary({ orgId, actorUserId = null }) {
       }
     }
   });
-  
   return repo.listTemplates({ orgId });
 }
 
@@ -101,87 +72,49 @@ async function getTemplate({ orgId, templateId }) {
 }
 
 async function createTemplate({ orgId, actorUserId, payload, audit = {} }) {
-  let out = null;
-  
-  try {
-    out = await withTransaction(async (client) => {
-      // Check if template already exists
-      const existing = await repo.getTemplateByCode({ orgId, code: payload.code, client });
-      if (existing) {
-        return existing;
-      }
-      
-      const created = await repo.createTemplate(client, {
-        orgId,
-        actorUserId,
-        ...payload,
-        isSystem: false
-      });
-      
-      if (!created || !created.id) {
-        throw new AppError(500, 'Failed to create template');
-      }
-      
-      if (payload.isDefault) {
-        await repo.unsetOtherDefaults(client, { orgId, exceptTemplateId: created.id });
-      }
-      
-      await repo.createVersion(client, {
-        templateId: created.id,
-        actorUserId,
-        layoutConfig: payload.layoutConfig || {},
-        brandingConfig: payload.brandingConfig || {},
-        fieldConfig: payload.fieldConfig || {},
-        status: 'published',
-        isPublished: true
-      });
-      
-      return repo.getTemplateById({ orgId, templateId: created.id });
+  const out = await withTransaction(async (client) => {
+    const created = await repo.createTemplate(client, {
+      orgId,
+      actorUserId,
+      ...payload,
+      isSystem: false
     });
-    
-    // Only write audit if template was successfully created and is new
-    if (out && out.id) {
-      // Check if this is a newly created template (not an existing one)
-      const isNew = out.created_at && (new Date() - new Date(out.created_at)) < 5000; // Created in last 5 seconds
-      if (isNew) {
-        await writeAudit({
-          organizationId: orgId,
-          actorUserId,
-          action: 'document_template.created',
-          entityType: 'document_template',
-          entityId: out.id,
-          ip: audit.ip,
-          userAgent: audit.userAgent,
-          after: out
-        });
-      }
+    if (payload.isDefault) {
+      await repo.unsetOtherDefaults(client, { orgId, exceptTemplateId: created.id });
     }
-    
-    return out;
-  } catch (error) {
-    // Handle duplicate key error gracefully
-    if (error.code === '23505' || (error.message && error.message.includes('duplicate key'))) {
-      // Template already exists, try to fetch it
-      const existingTemplate = await repo.getTemplateByCode({ orgId, code: payload.code });
-      if (existingTemplate) {
-        return existingTemplate;
-      }
-    }
-    throw error;
-  }
+    await repo.createVersion(client, {
+      templateId: created.id,
+      actorUserId,
+      layoutConfig: payload.layoutConfig || {},
+      brandingConfig: payload.brandingConfig || {},
+      fieldConfig: payload.fieldConfig || {},
+      status: 'published',
+      isPublished: true
+    });
+    return repo.getTemplateById({ orgId, templateId: created.id });
+  });
+
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: 'document_template.created',
+    entityType: 'document_template',
+    entityId: out.id,
+    ip: audit.ip,
+    userAgent: audit.userAgent,
+    after: out
+  });
+  return out;
 }
 
 async function updateTemplate({ orgId, actorUserId, templateId, payload, audit = {} }) {
   const before = await getTemplate({ orgId, templateId });
-  
   const out = await withTransaction(async (client) => {
     const updated = await repo.updateTemplate(client, { orgId, templateId, actorUserId, patch: payload });
     if (!updated) throw new AppError(404, 'Template not found');
-    
     if (payload.isDefault === true) {
       await repo.unsetOtherDefaults(client, { orgId, exceptTemplateId: updated.id });
     }
-    
     if (payload.layoutConfig || payload.brandingConfig || payload.fieldConfig) {
       await repo.createVersion(client, {
         templateId,
@@ -193,30 +126,24 @@ async function updateTemplate({ orgId, actorUserId, templateId, payload, audit =
         isPublished: true
       });
     }
-    
     return repo.getTemplateById({ orgId, templateId });
   });
-  
-  if (out && out.id) {
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: 'document_template.updated',
-      entityType: 'document_template',
-      entityId: out.id,
-      ip: audit.ip,
-      userAgent: audit.userAgent,
-      before,
-      after: out
-    });
-  }
-  
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: 'document_template.updated',
+    entityType: 'document_template',
+    entityId: out.id,
+    ip: audit.ip,
+    userAgent: audit.userAgent,
+    before,
+    after: out
+  });
   return out;
 }
 
 async function createTemplateVersion({ orgId, actorUserId, templateId, payload, audit = {} }) {
   const template = await getTemplate({ orgId, templateId });
-  
   const version = await withTransaction(async (client) => {
     await repo.createVersion(client, {
       templateId,
@@ -227,23 +154,18 @@ async function createTemplateVersion({ orgId, actorUserId, templateId, payload, 
       status: payload.status || 'published',
       isPublished: payload.isPublished !== false
     });
-    
     return repo.getTemplateById({ orgId, templateId });
   });
-  
-  if (version && version.id) {
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: 'document_template.version_created',
-      entityType: 'document_template',
-      entityId: templateId,
-      ip: audit.ip,
-      userAgent: audit.userAgent,
-      after: version
-    });
-  }
-  
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: 'document_template.version_created',
+    entityType: 'document_template',
+    entityId: templateId,
+    ip: audit.ip,
+    userAgent: audit.userAgent,
+    after: version
+  });
   return version;
 }
 
@@ -254,39 +176,32 @@ async function listAssignments({ orgId }) {
 
 async function upsertAssignment({ orgId, actorUserId, payload, audit = {} }) {
   await ensurePresetLibrary({ orgId, actorUserId });
-  
   if (!SUPPORTED_TRANSACTION_ENTITY_TYPES.includes(payload.entityType)) {
     throw new AppError(400, 'Unsupported entity type for document template assignment');
   }
-  
   const template = await repo.getTemplateById({ orgId, templateId: payload.templateId });
   if (!template) throw new AppError(400, 'Invalid templateId');
 
   const beforeList = await repo.listAssignments({ orgId });
   const before = beforeList.find((r) => r.entity_type === payload.entityType) || null;
 
-  const out = await withTransaction(async (client) => {
-    return repo.upsertAssignment(client, {
-      orgId,
-      actorUserId,
-      ...payload
-    });
-  });
+  const out = await withTransaction(async (client) => repo.upsertAssignment(client, {
+    orgId,
+    actorUserId,
+    ...payload
+  }));
 
-  if (out && out.id) {
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: 'document_template.assignment_upserted',
-      entityType: 'document_template_assignment',
-      entityId: out.id,
-      ip: audit.ip,
-      userAgent: audit.userAgent,
-      before,
-      after: out
-    });
-  }
-  
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: 'document_template.assignment_upserted',
+    entityType: 'document_template_assignment',
+    entityId: out.id,
+    ip: audit.ip,
+    userAgent: audit.userAgent,
+    before,
+    after: out
+  });
   return out;
 }
 

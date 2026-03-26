@@ -6,6 +6,7 @@ const { validate } = require("../../../shared/validators/validate");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 
 const svc = require("./invoices.service");
+const einvoicingSvc = require("../../integrations/einvoicing/einvoicing.service");
 const {
   createInvoiceSchema,
   listInvoicesQuerySchema,
@@ -48,6 +49,20 @@ router.get("/:id", requirePermission("transactions.invoice.read"), async (req, r
   try {
     const orgId = req.user.organization_id;
     res.json(await svc.getInvoiceDetails({ orgId, invoiceId: req.params.id, currentUserId: req.user.id }));
+  } catch (e) { next(e); }
+});
+
+router.get("/:id/einvoice-preview", requirePermission("transactions.invoice.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json(await einvoicingSvc.getInvoiceEInvoicePreview({ orgId, invoiceId: req.params.id }));
+  } catch (e) { next(e); }
+});
+
+router.get("/:id/filing-status", requirePermission("transactions.invoice.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json(await einvoicingSvc.getInvoiceFilingStatus({ orgId, invoiceId: req.params.id }));
   } catch (e) { next(e); }
 });
 

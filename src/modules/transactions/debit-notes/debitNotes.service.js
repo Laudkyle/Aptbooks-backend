@@ -129,7 +129,8 @@ async function getDebitNoteDetails({ orgId, id, currentUserId }) {
     const taxMap = await loadLineTaxDetails({ client, tableName: 'debit_note_line_tax_details', lineIds: lines.map((l) => l.id) });
     const applications = await repo.getApplications({ orgId, id, client });
     const bal = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
-    return { ...dn, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })), applications, balance: bal };
+    const enrichedLines = await enrichLines({ client, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
+    return { ...dn, lines: enrichedLines, applications, balance: bal, detail_meta: buildDetailMeta({ header: dn, lines: enrichedLines, extra: { paid: Number((bal?.applied_amount || 0)), outstanding: Number((bal?.remaining_amount || 0)) } }) };
   } finally {
     client.release();
   }
