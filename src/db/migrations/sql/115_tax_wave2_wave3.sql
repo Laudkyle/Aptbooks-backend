@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS tax_filing_adapters (
   channel_type TEXT NOT NULL DEFAULT 'api',
   supported_tax_types TEXT[] NOT NULL DEFAULT ARRAY['VAT'],
   supported_countries TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    country_code CHAR(2) NOT NULL,
+
   config_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   is_realtime BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -140,4 +142,36 @@ VALUES
   (NULL, 'GRA_SIM', 'GRA Simulation Adapter', 'api', ARRAY['VAT','WITHHOLDING'], ARRAY['GH'], '{"authority":"GRA"}'::jsonb, TRUE, TRUE)
 ON CONFLICT DO NOTHING;
 
+
+CREATE TABLE IF NOT EXISTS einvoicing_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  provider VARCHAR(100),
+  api_endpoint TEXT,
+  api_key TEXT,
+  api_secret TEXT,
+  sandbox_mode BOOLEAN NOT NULL DEFAULT TRUE,
+  document_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE(organization_id)
+);
+
+-- ==================== TAX RETURN CONFIGURATION ====================
+CREATE TABLE IF NOT EXISTS tax_return_config (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  default_template_id UUID REFERENCES tax_return_templates(id) ON DELETE SET NULL,
+  auto_submit_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  notification_email VARCHAR(255),
+  filing_method VARCHAR(50) DEFAULT 'manual',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE(organization_id)
+);
 COMMIT;

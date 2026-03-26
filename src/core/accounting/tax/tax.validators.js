@@ -1,5 +1,5 @@
 const { z } = require("zod");
-
+const Joi = require("joi");
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const createJurisdictionSchema = z.object({
@@ -143,6 +143,104 @@ const upsertTaxAutomationRuleSchema = z.object({
   action: z.record(z.any()).optional(),
   isEnabled: z.coerce.boolean().optional()
 });
+// Add these to your existing validators file
+
+const createPartnerTaxProfileSchema = Joi.object({
+  partnerId: Joi.string().uuid().required(),
+  taxRegistrationNo: Joi.string().max(100).allow(null),
+  legalName: Joi.string().max(255).allow(null),
+  taxClass: Joi.string().valid('standard', 'small_business', 'non_profit', 'government').default('standard'),
+  defaultTaxCodeId: Joi.string().uuid().allow(null),
+  purchaseTaxCodeId: Joi.string().uuid().allow(null),
+  salesTaxCodeId: Joi.string().uuid().allow(null),
+  jurisdictionId: Joi.string().uuid().allow(null),
+  placeOfSupply: Joi.string().max(50).allow(null),
+  isTaxRegistered: Joi.boolean().default(false),
+  isTaxExempt: Joi.boolean().default(false),
+  exemptionReasonCode: Joi.string().max(50).allow(null),
+  exemptionReason: Joi.string().max(255).allow(null),
+  reverseChargeApplicable: Joi.boolean().default(false),
+  withholdingApplicable: Joi.boolean().default(false),
+  withholdingTaxCodeId: Joi.string().uuid().allow(null),
+  recoverablePercentOverride: Joi.number().min(0).max(1).precision(4).allow(null),
+  certificateReference: Joi.string().max(100).allow(null),
+  certificateExpiry: Joi.date().allow(null),
+  withholdingRateOverride: Joi.number().min(0).max(100).precision(2).allow(null),
+  withholdingCertificateNo: Joi.string().max(100).allow(null),
+  filingContactEmail: Joi.string().email().allow(null),
+  customerTaxIdentifierType: Joi.string().max(50).allow(null),
+  vendorTaxIdentifierType: Joi.string().max(50).allow(null),
+  metadata: Joi.object().default({})
+});
+
+const updatePartnerTaxProfileSchema = createPartnerTaxProfileSchema.fork(
+  Object.keys(createPartnerTaxProfileSchema.describe().keys),
+  (schema) => schema.optional()
+);
+
+const createTaxReturnTemplateSchema = Joi.object({
+  taxType: Joi.string().valid('VAT', 'GST', 'SALES').default('VAT'),
+  code: Joi.string().max(50).required(),
+  name: Joi.string().max(255).required(),
+  description: Joi.string().allow(null),
+  isActive: Joi.boolean().default(true),
+  boxes: Joi.array().items(Joi.object({
+    boxCode: Joi.string().max(50).required(),
+    label: Joi.string().max(255).required(),
+    sortOrder: Joi.number().integer().min(0).default(0),
+    direction: Joi.string().valid('input', 'output', 'credit', 'debit').allow(null),
+    calculationFormula: Joi.string().allow(null),
+    isRequired: Joi.boolean().default(false)
+  }))
+});
+
+const updateTaxReturnTemplateSchema = createTaxReturnTemplateSchema.fork(
+  ['code'],
+  (schema) => schema.optional()
+);
+
+const createTaxReturnSchema = Joi.object({
+  taxType: Joi.string().valid('VAT', 'GST', 'SALES').default('VAT'),
+  filingPeriodStart: Joi.date().required(),
+  filingPeriodEnd: Joi.date().required(),
+  dueDate: Joi.date().allow(null),
+  templateId: Joi.string().uuid().allow(null)
+});
+
+const submitTaxReturnSchema = Joi.object({
+  filingData: Joi.object().required()
+});
+
+const updateTaxReturnConfigSchema = Joi.object({
+  defaultTemplateId: Joi.string().uuid().allow(null),
+  autoSubmitEnabled: Joi.boolean(),
+  notificationEmail: Joi.string().email().allow(null),
+  filingMethod: Joi.string().valid('api', 'manual', 'email')
+});
+
+const updateEinvoicingSettingsSchema = Joi.object({
+  enabled: Joi.boolean(),
+  provider: Joi.string().max(100).allow(null),
+  apiEndpoint: Joi.string().uri().allow(null),
+  apiKey: Joi.string().allow(null),
+  apiSecret: Joi.string().allow(null),
+  sandboxMode: Joi.boolean(),
+  documentTypes: Joi.array().items(Joi.string())
+});
+
+const createFilingAdapterSchema = Joi.object({
+  countryCode: Joi.string().length(2).required(),
+  taxType: Joi.string().valid('VAT', 'GST', 'SALES').default('VAT'),
+  adapterName: Joi.string().max(100).required(),
+  adapterClass: Joi.string().max(255).required(),
+  configuration: Joi.object().default({}),
+  isActive: Joi.boolean().default(true)
+});
+
+const updateFilingAdapterSchema = createFilingAdapterSchema.fork(
+  ['countryCode', 'taxType', 'adapterName', 'adapterClass'],
+  (schema) => schema.optional()
+);
 module.exports = {
   createTaxRegistrationSchema,
   updateTaxRegistrationSchema,
@@ -157,5 +255,9 @@ module.exports = {
   voidTaxAdjustmentSchema,
   setTaxCodeComponentsSchema,
   installCountryPackSchema,
-  upsertTaxAutomationRuleSchema
+  upsertTaxAutomationRuleSchema, updateFilingAdapterSchema, createFilingAdapterSchema,
+  createPartnerTaxProfileSchema, updatePartnerTaxProfileSchema,
+  createTaxReturnTemplateSchema, updateTaxReturnTemplateSchema,
+  createTaxReturnSchema, submitTaxReturnSchema, updateTaxReturnConfigSchema,
+
 };

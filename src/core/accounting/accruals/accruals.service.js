@@ -32,6 +32,20 @@ function assertDeferralRuleShape({ rule, lines }) {
       throw new AppError(400, "amount_value must be > 0");
   }
 }
+async function findOpenPeriodForDate({ orgId, date }) {
+  const { rows } = await pool.query(
+    `
+    SELECT * FROM accounting_periods 
+    WHERE organization_id=$1 
+      AND start_date <= $2::date 
+      AND end_date >= $2::date 
+      AND status = 'open'
+    LIMIT 1
+    `,
+    [orgId, date]
+  );
+  return rows[0] || null;
+}
 
 // Build journal lines from rule lines. If amountOverride is provided, it replaces amount_value.
 function buildJournalLinesFromRuleLines({
@@ -635,7 +649,7 @@ async function runOne({
         asOfDate: asOfYMD,
       };
   }
-
+console.log("Running accrual rule", { orgId, ruleId, asOfDate: asOfYMD, periodIdOverride });
   // Determine period
   let period = null;
   if (periodIdOverride) {
@@ -655,7 +669,7 @@ async function runOne({
   } else {
     // Graceful skip if no open period covers date
     try {
-      period = await periodIF.findOpenPeriodForDate({ orgId, date: asOfYMD });
+      period = await findOpenPeriodForDate({ orgId, date: asOfYMD });
       if (!period)
         return {
           skipped: true,
@@ -672,7 +686,8 @@ async function runOne({
       };
     }
   }
-
+  console.log("Finding open period for date", { orgId, asOfDate: asOfYMD, foundPeriodId: period.id });
+  
   // v1: fixed-only rule line totals
   const totals = sumFixedLines(
     lines.map((l) => ({

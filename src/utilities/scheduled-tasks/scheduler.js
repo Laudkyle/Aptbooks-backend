@@ -38,6 +38,7 @@ function computeNextRunAt(task) {
   if (scheduleType === "daily_at_utc") {
     const hh = Number(dailyHourUtc);
     const mm = Number(dailyMinuteUtc);
+    console.log({ hh, mm });
     
     if (!Number.isInteger(hh) || hh < 0 || hh > 23) {
       throw new Error(`Invalid daily_hour_utc for daily schedule: ${dailyHourUtc}`);

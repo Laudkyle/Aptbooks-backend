@@ -26,7 +26,7 @@ function listTasks() {
     {
       code: "accruals.run_due.daily",
       name: "Run due accruals daily",
-      schedule: { type: "daily_at_utc", dailyHourUtc: 23, dailyMinuteUtc: 0 },
+      schedule: { type: "daily_at_utc", dailyHourUtc: 23, dailyMinuteUtc: 1 },
       handler: async () => runDueAccrualsDaily()
     },
     {
@@ -86,7 +86,7 @@ function listTasks() {
     {
       code: "maintenance.scheduler_retention.daily",
       name: "Purge scheduler operational logs (daily)",
-      schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 0 },
+      schedule: { type: "daily_at_utc", dailyHourUtc: 2, dailyMinuteUtc: 1 },
       handler: async () => maintenanceRetentionDaily(),
     },
     {

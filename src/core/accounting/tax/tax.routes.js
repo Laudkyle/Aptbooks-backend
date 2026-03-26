@@ -31,7 +31,7 @@ router.use(authRequired);
 // Admin CRUD for VAT/GST tax setup
 router.use(requirePermission("tax.read"));
 
-// Jurisdictions
+// ==================== JURISDICTIONS ====================
 router.get("/jurisdictions", async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -108,7 +108,7 @@ router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req,
   } catch (e) { next(e); }
 });
 
-// Tax Registrations
+// ==================== TAX REGISTRATIONS ====================
 router.get("/registrations", requirePermission("tax.registration.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -191,8 +191,7 @@ router.delete("/registrations/:id", requirePermission("tax.registration.manage")
   } catch (e) { next(e); }
 });
 
-
-// Tax Rules
+// ==================== TAX RULES ====================
 router.get("/rules", requirePermission("tax.rule.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -278,7 +277,7 @@ router.delete("/rules/:id", requirePermission("tax.rule.manage"), async (req, re
   } catch (e) { next(e); }
 });
 
-// Tax Codes
+// ==================== TAX CODES ====================
 router.get("/codes", async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -360,7 +359,7 @@ router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, ne
   } catch (e) { next(e); }
 });
 
-
+// ==================== TAX CODE COMPONENTS ====================
 router.get("/codes/:id/components", requirePermission("tax.component.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -378,8 +377,7 @@ router.put("/codes/:id/components", requirePermission("tax.component.manage"), a
   } catch (e) { next(e); }
 });
 
-
-
+// ==================== COUNTRY PACKS ====================
 router.get("/country-packs", requirePermission("tax.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -396,6 +394,7 @@ router.post("/country-packs/install", requirePermission("tax.manage"), async (re
   } catch (e) { next(e); }
 });
 
+// ==================== AUTOMATION RULES ====================
 router.get("/automation-rules", requirePermission("tax.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -412,7 +411,7 @@ router.put("/automation-rules", requirePermission("tax.manage"), async (req, res
   } catch (e) { next(e); }
 });
 
-// Settings
+// ==================== TAX SETTINGS ====================
 router.get("/settings", async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -441,9 +440,7 @@ router.put("/settings", requirePermission("tax.manage"), async (req, res, next) 
   } catch (e) { next(e); }
 });
 
-
-
-// Tax adjustments
+// ==================== TAX ADJUSTMENTS ====================
 router.get("/adjustments", requirePermission("tax.adjustment.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
@@ -496,6 +493,371 @@ router.post("/adjustments/:id/void", idempotency({ required: true }), requirePer
       entityType: "tax_adjustment", entityId: data.id, ip: req.audit?.ip, userAgent: req.audit?.userAgent, after: data
     });
     res.json({ data });
+  } catch (e) { next(e); }
+});
+// Add these to your tax.router.js file after the existing routes
+
+// ==================== PARTNER TAX PROFILES ====================
+router.get("/partner-profiles", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listPartnerTaxProfiles({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.get("/partner-profiles/:id", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getPartnerTaxProfile({ orgId, profileId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/partner-profiles", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createPartnerTaxProfileSchema, req.body);
+    const created = await svc.createPartnerTaxProfile({ orgId, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.partner_profile.created",
+      entityType: "partner_tax_profiles",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+    
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.patch("/partner-profiles/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updatePartnerTaxProfileSchema, req.body);
+    const updated = await svc.updatePartnerTaxProfile({ orgId, profileId: req.params.id, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.partner_profile.updated",
+      entityType: "partner_tax_profiles",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.delete("/partner-profiles/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.deletePartnerTaxProfile({ orgId, profileId: req.params.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.partner_profile.deleted",
+      entityType: "partner_tax_profiles",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
+// ==================== TAX RETURN TEMPLATES ====================
+router.get("/returns/templates", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listTaxReturnTemplates({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.get("/returns/templates/:id", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getTaxReturnTemplate({ orgId, templateId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/returns/templates", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createTaxReturnTemplateSchema, req.body);
+    const created = await svc.createTaxReturnTemplate({ orgId, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.return_template.created",
+      entityType: "tax_return_templates",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+    
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.patch("/returns/templates/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateTaxReturnTemplateSchema, req.body);
+    const updated = await svc.updateTaxReturnTemplate({ orgId, templateId: req.params.id, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.return_template.updated",
+      entityType: "tax_return_templates",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.delete("/returns/templates/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.deleteTaxReturnTemplate({ orgId, templateId: req.params.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.return_template.deleted",
+      entityType: "tax_return_templates",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
+// ==================== TAX RETURN CONFIGURATION ====================
+router.get("/returns/config", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getTaxReturnConfig({ orgId });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.put("/returns/config", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateTaxReturnConfigSchema, req.body);
+    const updated = await svc.updateTaxReturnConfig({ orgId, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.return_config.updated",
+      entityType: "tax_return_config",
+      entityId: orgId,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+// ==================== TAX RETURNS ====================
+router.get("/returns", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listTaxReturns({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.get("/returns/:id", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getTaxReturn({ orgId, returnId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/returns", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createTaxReturnSchema, req.body);
+    const created = await svc.createTaxReturn({ orgId, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.return.created",
+      entityType: "tax_returns",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+    
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.post("/returns/:id/submit", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(submitTaxReturnSchema, req.body);
+    const result = await svc.submitTaxReturn({ orgId, returnId: req.params.id, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.return.submitted",
+      entityType: "tax_returns",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+// ==================== E-INVOICING ====================
+router.get("/einvoicing/settings", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getEinvoicingSettings({ orgId });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.put("/einvoicing/settings", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateEinvoicingSettingsSchema, req.body);
+    const updated = await svc.updateEinvoicingSettings({ orgId, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.einvoicing.updated",
+      entityType: "einvoicing_settings",
+      entityId: orgId,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+// ==================== FILING ADAPTERS ====================
+router.get("/filing-adapters", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listFilingAdapters({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.get("/filing-adapters/:id", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getFilingAdapter({ orgId, adapterId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/filing-adapters", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createFilingAdapterSchema, req.body);
+    const created = await svc.createFilingAdapter({ orgId, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.filing_adapter.created",
+      entityType: "filing_adapters",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+    
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.patch("/filing-adapters/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateFilingAdapterSchema, req.body);
+    const updated = await svc.updateFilingAdapter({ orgId, adapterId: req.params.id, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.filing_adapter.updated",
+      entityType: "filing_adapters",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.delete("/filing-adapters/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.deleteFilingAdapter({ orgId, adapterId: req.params.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.filing_adapter.deleted",
+      entityType: "filing_adapters",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
+router.post("/filing-adapters/:id/test", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.testFilingAdapter({ orgId, adapterId: req.params.id, actorUserId: req.user.id });
+    res.json({ data: result });
   } catch (e) { next(e); }
 });
 
