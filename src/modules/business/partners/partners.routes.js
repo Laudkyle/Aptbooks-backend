@@ -14,7 +14,8 @@ const {
   updateContactSchema,
   createAddressSchema,
   updateAddressSchema,
-  setPartnerTaxProfileSchema
+  setPartnerTaxProfileSchema,
+  partnerTaxProfileSchema
 } = require("../../../shared/validators/business/partners.validators");
 
 const { setCreditPolicySchema } = require("../../../shared/validators/business/creditPolicy.validators");
@@ -97,7 +98,9 @@ router.get("/:id/tax-profile", requirePermission("partners.read"), async (req, r
 router.put("/:id/tax-profile", requirePermission("partners.tax.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const payload = validate(setPartnerTaxProfileSchema, req.body);
+    const body = req.body
+    console.log("Received tax profile update request with body:", body);
+    const payload = validate(partnerTaxProfileSchema, body);
     const out = await svc.upsertPartnerTaxProfile({ orgId, partnerId: req.params.id, payload });
     await writeAudit({
       organizationId: orgId,

@@ -40,7 +40,6 @@ const createAddressSchema = z.object({
 
 const updateAddressSchema = createAddressSchema.partial();
 
-
 const partnerTaxProfileSchema = z.object({
   taxregistrationNumber: z.string().max(120).optional().nullable(),
   legalName: z.string().max(200).optional().nullable(),
@@ -88,5 +87,6 @@ module.exports = {
   createAddressSchema,
   updateAddressSchema,
   listPartnersQuerySchema,
-  setPartnerTaxProfileSchema
+  setPartnerTaxProfileSchema,
+  partnerTaxProfileSchema  // Added for completeness
 };
