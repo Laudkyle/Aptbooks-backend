@@ -100,7 +100,7 @@ router.put("/:id/tax-profile", requirePermission("partners.tax.manage"), async (
     const orgId = req.user.organization_id;
     const body = req.body
     console.log("Received tax profile update request with body:", body);
-    const payload = validate(partnerTaxProfileSchema, body);
+    const payload = validate(setPartnerTaxProfileSchema, body);
     const out = await svc.upsertPartnerTaxProfile({ orgId, partnerId: req.params.id, payload });
     await writeAudit({
       organizationId: orgId,

@@ -22,7 +22,17 @@ const {
   voidTaxAdjustmentSchema,
   setTaxCodeComponentsSchema,
   installCountryPackSchema,
-  upsertTaxAutomationRuleSchema
+  upsertTaxAutomationRuleSchema,
+  createPartnerTaxProfileSchema,
+  updatePartnerTaxProfileSchema,
+  createTaxReturnTemplateSchema,
+  updateTaxReturnTemplateSchema,
+  createTaxReturnSchema,
+  submitTaxReturnSchema,
+  updateTaxReturnConfigSchema,
+  updateEinvoicingSettingsSchema,
+  createFilingAdapterSchema,
+  updateFilingAdapterSchema
 } = require("./tax.validators");
 
 const router = express.Router();

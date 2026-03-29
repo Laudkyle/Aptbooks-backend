@@ -56,7 +56,7 @@ const partnerTaxProfileSchema = z.object({
   reverseChargeApplicable: z.boolean().optional(),
   withholdingApplicable: z.boolean().optional(),
   withholdingTaxCodeId: z.string().uuid().optional().nullable(),
-  withholdingRateOverride: z.coerce.number().min(0).max(1).optional().nullable(),
+  withholdingRateOverride: z.coerce.number().min(0).max(100).optional().nullable(),
   recoverablePercentOverride: z.coerce.number().min(0).max(1).optional().nullable(),
   certificateReference: z.string().max(120).optional().nullable(),
   certificateExpiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
@@ -69,8 +69,7 @@ const partnerTaxProfileSchema = z.object({
   registrationStatus: z.enum(["registered", "unregistered", "pending", "suspended"]).optional().nullable(),
   eInvoiceNetwork: z.string().max(60).optional().nullable(),
   eInvoiceEndpoint: z.string().max(200).optional().nullable(),
-  metadata: z.record(z.any()).optional()
-});
+metadata: z.record(z.string(), z.unknown()).optional()});
 
 const setPartnerTaxProfileSchema = partnerTaxProfileSchema;
 

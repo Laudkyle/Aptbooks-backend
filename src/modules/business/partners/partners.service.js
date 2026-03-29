@@ -138,10 +138,13 @@ async function upsertPartnerTaxProfile({ orgId, partnerId, payload }) {
     INSERT INTO tax_partner_profiles (
       organization_id, partner_id, tax_registration_no, legal_name, tax_class, default_tax_code_id, purchase_tax_code_id, sales_tax_code_id,
       jurisdiction_id, place_of_supply, is_tax_registered, is_tax_exempt, exemption_reason_code, exemption_reason, reverse_charge_applicable,
-      withholding_applicable, withholding_tax_code_id, withholding_rate_override, recoverable_percent_override, certificate_reference, certificate_expiry, withholding_certificate_no, filing_contact_email, customer_tax_identifier_type, vendor_tax_identifier_type, metadata
+      withholding_applicable, withholding_tax_code_id, withholding_rate_override, recoverable_percent_override, certificate_reference, certificate_expiry,
+      withholding_certificate_no, filing_contact_email, customer_tax_identifier_type, vendor_tax_identifier_type,
+      input_tax_recovery_mode, destination_country_code, registration_status, e_invoice_network, e_invoice_endpoint,
+      metadata
     ) VALUES (
       $1,$2,$3,$4,COALESCE($5,'standard'),$6,$7,$8,$9,$10,COALESCE($11,false),COALESCE($12,false),$13,$14,COALESCE($15,false),
-      COALESCE($16,false),$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb
+      COALESCE($16,false),$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb
     )
     ON CONFLICT (organization_id, partner_id) DO UPDATE SET
       tax_registration_no=EXCLUDED.tax_registration_no,
@@ -167,6 +170,11 @@ async function upsertPartnerTaxProfile({ orgId, partnerId, payload }) {
       filing_contact_email=EXCLUDED.filing_contact_email,
       customer_tax_identifier_type=EXCLUDED.customer_tax_identifier_type,
       vendor_tax_identifier_type=EXCLUDED.vendor_tax_identifier_type,
+      input_tax_recovery_mode=EXCLUDED.input_tax_recovery_mode,
+      destination_country_code=EXCLUDED.destination_country_code,
+      registration_status=EXCLUDED.registration_status,
+      e_invoice_network=EXCLUDED.e_invoice_network,
+      e_invoice_endpoint=EXCLUDED.e_invoice_endpoint,
       metadata=EXCLUDED.metadata,
       updated_at=NOW()
     RETURNING *
@@ -177,7 +185,9 @@ async function upsertPartnerTaxProfile({ orgId, partnerId, payload }) {
     payload.reverseChargeApplicable === true, payload.withholdingApplicable === true, payload.withholdingTaxCodeId || null,
     payload.withholdingRateOverride == null ? null : payload.withholdingRateOverride,
     payload.recoverablePercentOverride == null ? null : payload.recoverablePercentOverride, payload.certificateReference || null, payload.certificateExpiry || null,
-    payload.withholdingCertificateNo || null, payload.filingContactEmail || null, payload.customerTaxIdentifierType || null, payload.vendorTaxIdentifierType || null, JSON.stringify(payload.metadata || {})
+    payload.withholdingCertificateNo || null, payload.filingContactEmail || null, payload.customerTaxIdentifierType || null, payload.vendorTaxIdentifierType || null,
+    payload.inputTaxRecoveryMode || 'default', payload.destinationCountryCode || null, payload.registrationStatus || 'registered', payload.eInvoiceNetwork || null, payload.eInvoiceEndpoint || null,
+    JSON.stringify(payload.metadata || {})
   ]);
 
   return { before, after: rows[0] };

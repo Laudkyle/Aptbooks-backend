@@ -379,6 +379,7 @@ async function listTaxCodes({ orgId, query }) {
 
 async function createTaxCode({ orgId, payload }) {
   await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+  await assertAccountBelongsToOrg({ orgId, accountId: payload.postingAccountId || null, fieldName: "postingAccountId" });
 
   const { rows } = await pool.query(
     `INSERT INTO tax_codes(
@@ -429,6 +430,9 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
 
   if (payload.jurisdictionId !== undefined) {
     await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+  }
+  if (payload.postingAccountId !== undefined) {
+    await assertAccountBelongsToOrg({ orgId, accountId: payload.postingAccountId, fieldName: "postingAccountId" });
   }
 
   const columns = [];
@@ -815,9 +819,11 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       certificate_reference, certificate_expiry, metadata,
       withholding_rate_override, withholding_certificate_no,
       filing_contact_email, customer_tax_identifier_type, vendor_tax_identifier_type,
+      input_tax_recovery_mode, destination_country_code, registration_status,
+      e_invoice_network, e_invoice_endpoint,
       created_by, updated_by
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$27
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$32
     ) RETURNING *`,
     [
       orgId,
@@ -846,6 +852,11 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       payload.filingContactEmail || null,
       payload.customerTaxIdentifierType || null,
       payload.vendorTaxIdentifierType || null,
+      payload.inputTaxRecoveryMode || 'default',
+      payload.destinationCountryCode || null,
+      payload.registrationStatus || 'registered',
+      payload.eInvoiceNetwork || null,
+      payload.eInvoiceEndpoint || null,
       actorUserId || null
     ]
   );
@@ -853,8 +864,8 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
 }
 
 async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId }) {
-  const before = await getPartnerTaxProfile({ orgId, profileId });
-  
+  await getPartnerTaxProfile({ orgId, profileId });
+
   if (payload.defaultTaxCodeId !== undefined) {
     await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId });
   }
@@ -874,7 +885,7 @@ async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId 
   const columns = [];
   const params = [orgId, profileId];
   let i = 3;
-  
+
   const map = {
     taxRegistrationNo: 'tax_registration_no',
     legalName: 'legal_name',
@@ -898,27 +909,34 @@ async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId 
     withholdingCertificateNo: 'withholding_certificate_no',
     filingContactEmail: 'filing_contact_email',
     customerTaxIdentifierType: 'customer_tax_identifier_type',
-    vendorTaxIdentifierType: 'vendor_tax_identifier_type'
+    vendorTaxIdentifierType: 'vendor_tax_identifier_type',
+    inputTaxRecoveryMode: 'input_tax_recovery_mode',
+    destinationCountryCode: 'destination_country_code',
+    registrationStatus: 'registration_status',
+    eInvoiceNetwork: 'e_invoice_network',
+    eInvoiceEndpoint: 'e_invoice_endpoint'
   };
-  
+
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
       params.push(payload[k] === '' ? null : payload[k]);
     }
   }
-  
+
   if (payload.metadata !== undefined) {
     columns.push(`metadata=$${i++}`);
     params.push(JSON.stringify(payload.metadata || {}));
   }
-  
-  if (!columns.length) return before;
-  
+
+  if (!columns.length) {
+    return getPartnerTaxProfile({ orgId, profileId });
+  }
+
   columns.push(`updated_by=$${i++}`);
   params.push(actorUserId || null);
   columns.push(`updated_at=NOW()`);
-  
+
   const { rows } = await pool.query(
     `UPDATE tax_partner_profiles
      SET ${columns.join(', ')}
@@ -926,7 +944,7 @@ async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId 
      RETURNING *`,
     params
   );
-  
+
   return rows[0];
 }
 
@@ -945,83 +963,68 @@ async function listTaxReturnTemplates({ orgId, query = {} }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
   let i = 2;
-  
-  if (query.taxType) { 
-    where.push(`tax_type=$${i++}`); 
-    params.push(query.taxType); 
-  }
-  if (query.isActive !== undefined) { 
-    where.push(`is_active=$${i++}`); 
-    params.push(query.isActive === true || query.isActive === 'true'); 
+
+  if (query.taxType) {
+    where.push(`tax_type=$${i++}`);
+    params.push(query.taxType);
   }
 
   const { rows } = await pool.query(
-    `SELECT * FROM tax_return_templates 
+    `SELECT * FROM tax_return_templates
      WHERE ${where.join(" AND ")}
      ORDER BY tax_type, code`,
     params
   );
-  return rows;
+  return rows.map((row) => ({ ...row, description: null, is_active: true }));
 }
 
 async function getTaxReturnTemplate({ orgId, templateId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM tax_return_templates 
+    `SELECT * FROM tax_return_templates
      WHERE organization_id=$1 AND id=$2`,
     [orgId, templateId]
   );
   if (!rows.length) throw new AppError(404, "Tax return template not found");
-  
+
   const { rows: boxes } = await pool.query(
-    `SELECT * FROM tax_return_template_boxes 
-     WHERE template_id=$1 
+    `SELECT * FROM tax_return_template_boxes
+     WHERE template_id=$1
      ORDER BY sort_order`,
     [templateId]
   );
-  
-  return { ...rows[0], boxes };
+
+  return {
+    ...rows[0],
+    description: null,
+    is_active: true,
+    boxes: boxes.map((box) => ({ ...box, calculation_formula: null, is_required: false }))
+  };
 }
 
 async function createTaxReturnTemplate({ orgId, actorUserId, payload }) {
   return withTransaction(async (client) => {
     const { rows } = await client.query(
       `INSERT INTO tax_return_templates(
-        organization_id, tax_type, code, name, description, is_active, created_by, updated_by
-      ) VALUES ($1,$2,$3,$4,$5,COALESCE($6,true),$7,$7)
+        organization_id, tax_type, code, name
+      ) VALUES ($1,$2,$3,$4)
       RETURNING *`,
-      [
-        orgId,
-        payload.taxType || 'VAT',
-        payload.code,
-        payload.name,
-        payload.description || null,
-        payload.isActive,
-        actorUserId || null
-      ]
+      [orgId, payload.taxType || 'VAT', payload.code, payload.name]
     );
-    
+
     const template = rows[0];
-    
+
     if (payload.boxes && Array.isArray(payload.boxes)) {
       for (const box of payload.boxes) {
         await client.query(
           `INSERT INTO tax_return_template_boxes(
-            template_id, box_code, label, sort_order, direction, calculation_formula, is_required
-          ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,false))`,
-          [
-            template.id,
-            box.boxCode,
-            box.label,
-            box.sortOrder || 0,
-            box.direction || null,
-            box.calculationFormula || null,
-            box.isRequired || false
-          ]
+            template_id, box_code, label, sort_order, direction
+          ) VALUES ($1,$2,$3,$4,$5)`,
+          [template.id, box.boxCode, box.label, box.sortOrder || 0, box.direction || null]
         );
       }
     }
-    
-    return { ...template, boxes: payload.boxes || [] };
+
+    return getTaxReturnTemplate({ orgId, templateId: template.id });
   });
 }
 
@@ -1030,25 +1033,21 @@ async function updateTaxReturnTemplate({ orgId, templateId, payload, actorUserId
     const columns = [];
     const params = [orgId, templateId];
     let i = 3;
-    
+
     const map = {
-      name: 'name',
-      description: 'description',
-      isActive: 'is_active'
+      taxType: 'tax_type',
+      code: 'code',
+      name: 'name'
     };
-    
+
     for (const [k, col] of Object.entries(map)) {
       if (payload[k] !== undefined) {
         columns.push(`${col}=$${i++}`);
         params.push(payload[k]);
       }
     }
-    
+
     if (columns.length) {
-      columns.push(`updated_by=$${i++}`);
-      params.push(actorUserId || null);
-      columns.push(`updated_at=NOW()`);
-      
       await client.query(
         `UPDATE tax_return_templates
          SET ${columns.join(', ')}
@@ -1056,28 +1055,19 @@ async function updateTaxReturnTemplate({ orgId, templateId, payload, actorUserId
         params
       );
     }
-    
+
     if (payload.boxes !== undefined) {
       await client.query(`DELETE FROM tax_return_template_boxes WHERE template_id=$1`, [templateId]);
-      
       for (const box of payload.boxes || []) {
         await client.query(
           `INSERT INTO tax_return_template_boxes(
-            template_id, box_code, label, sort_order, direction, calculation_formula, is_required
-          ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,false))`,
-          [
-            templateId,
-            box.boxCode,
-            box.label,
-            box.sortOrder || 0,
-            box.direction || null,
-            box.calculationFormula || null,
-            box.isRequired || false
-          ]
+            template_id, box_code, label, sort_order, direction
+          ) VALUES ($1,$2,$3,$4,$5)`,
+          [templateId, box.boxCode, box.label, box.sortOrder || 0, box.direction || null]
         );
       }
     }
-    
+
     return getTaxReturnTemplate({ orgId, templateId });
   });
 }
@@ -1097,28 +1087,32 @@ async function listTaxReturns({ orgId, query = {} }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
   let i = 2;
-  
-  if (query.status) { 
-    where.push(`status=$${i++}`); 
-    params.push(query.status); 
+
+  if (query.status) {
+    where.push(`status=$${i++}`);
+    params.push(query.status);
   }
-  if (query.taxType) { 
-    where.push(`tax_type=$${i++}`); 
-    params.push(query.taxType); 
+  if (query.taxType) {
+    where.push(`tax_type=$${i++}`);
+    params.push(query.taxType);
   }
-  if (query.fromDate) { 
-    where.push(`filing_period_start >= $${i++}`); 
-    params.push(query.fromDate); 
+  if (query.fromDate) {
+    where.push(`from_date >= $${i++}`);
+    params.push(query.fromDate);
   }
-  if (query.toDate) { 
-    where.push(`filing_period_end <= $${i++}`); 
-    params.push(query.toDate); 
+  if (query.toDate) {
+    where.push(`to_date <= $${i++}`);
+    params.push(query.toDate);
+  }
+  if (query.jurisdictionId) {
+    where.push(`jurisdiction_id=$${i++}`);
+    params.push(query.jurisdictionId);
   }
 
   const { rows } = await pool.query(
-    `SELECT * FROM tax_returns 
+    `SELECT * FROM tax_returns
      WHERE ${where.join(" AND ")}
-     ORDER BY filing_period_end DESC, created_at DESC`,
+     ORDER BY to_date DESC, created_at DESC`,
     params
   );
   return rows;
@@ -1137,20 +1131,32 @@ async function getTaxReturn({ orgId, returnId }) {
 }
 
 async function createTaxReturn({ orgId, actorUserId, payload }) {
+  if (payload.templateId) {
+    await getTaxReturnTemplate({ orgId, templateId: payload.templateId });
+  }
+  if (payload.jurisdictionId) {
+    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+  }
+
+  const seedPayload = {};
+  if (payload.dueDate) seedPayload.dueDate = payload.dueDate;
+
   const { rows } = await pool.query(
     `INSERT INTO tax_returns(
-      organization_id, tax_type, filing_period_start, filing_period_end, due_date,
-      template_id, jurisdiction_id, status, created_by, updated_by
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',$8,$8)
+      organization_id, tax_type, from_date, to_date,
+      template_id, jurisdiction_id, filing_adapter_code, status,
+      payload_json, created_by, updated_at
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,'draft',$8::jsonb,$9,NOW())
     RETURNING *`,
     [
       orgId,
       payload.taxType || 'VAT',
       payload.filingPeriodStart,
       payload.filingPeriodEnd,
-      payload.dueDate || null,
       payload.templateId || null,
       payload.jurisdictionId || null,
+      payload.filingAdapterCode || null,
+      JSON.stringify(seedPayload),
       actorUserId || null
     ]
   );
@@ -1159,24 +1165,28 @@ async function createTaxReturn({ orgId, actorUserId, payload }) {
 
 async function submitTaxReturn({ orgId, returnId, payload, actorUserId }) {
   const taxReturn = await getTaxReturn({ orgId, returnId });
-  
+
   if (taxReturn.status !== 'draft') {
     throw new AppError(409, 'Only draft tax returns can be submitted');
   }
-  
+
+  const nextPayload = {
+    ...(taxReturn.payload_json || {}),
+    filingData: payload.filingData || {}
+  };
+
   const { rows } = await pool.query(
     `UPDATE tax_returns
      SET status='submitted',
          submitted_at=NOW(),
-         submitted_by=$3,
-         filing_data=$4::jsonb,
-         updated_by=$3,
+         filing_adapter_code=COALESCE($3, filing_adapter_code),
+         payload_json=$4::jsonb,
          updated_at=NOW()
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
-    [orgId, returnId, actorUserId, JSON.stringify(payload.filingData || {})]
+    [orgId, returnId, payload.filingAdapterCode || null, JSON.stringify(nextPayload)]
   );
-  
+
   return rows[0];
 }
 
@@ -1196,25 +1206,35 @@ async function getTaxReturnConfig({ orgId }) {
 }
 
 async function updateTaxReturnConfig({ orgId, payload, actorUserId }) {
+  await getTaxReturnConfig({ orgId });
+
+  const columns = [];
+  const params = [orgId];
+  let i = 2;
+  const map = {
+    defaultTemplateId: 'default_template_id',
+    autoSubmitEnabled: 'auto_submit_enabled',
+    notificationEmail: 'notification_email',
+    filingMethod: 'filing_method'
+  };
+
+  for (const [k, col] of Object.entries(map)) {
+    if (payload[k] !== undefined) {
+      columns.push(`${col}=$${i++}`);
+      params.push(payload[k] === '' ? null : payload[k]);
+    }
+  }
+
+  columns.push(`updated_by=$${i++}`);
+  params.push(actorUserId || null);
+  columns.push(`updated_at=NOW()`);
+
   const { rows } = await pool.query(
     `UPDATE tax_return_config
-     SET 
-       default_template_id=COALESCE($2, default_template_id),
-       auto_submit_enabled=COALESCE($3, auto_submit_enabled),
-       notification_email=COALESCE($4, notification_email),
-       filing_method=COALESCE($5, filing_method),
-       updated_by=$6,
-       updated_at=NOW()
+     SET ${columns.join(', ')}
      WHERE organization_id=$1
      RETURNING *`,
-    [
-      orgId,
-      payload.defaultTemplateId || null,
-      payload.autoSubmitEnabled,
-      payload.notificationEmail || null,
-      payload.filingMethod || null,
-      actorUserId || null
-    ]
+    params
   );
   return rows[0];
 }
@@ -1237,31 +1257,39 @@ async function getEinvoicingSettings({ orgId }) {
 }
 
 async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
+  await getEinvoicingSettings({ orgId });
+
+  const columns = [];
+  const params = [orgId];
+  let i = 2;
+  const map = {
+    enabled: 'enabled',
+    provider: 'provider',
+    apiEndpoint: 'api_endpoint',
+    apiKey: 'api_key',
+    apiSecret: 'api_secret',
+    sandboxMode: 'sandbox_mode',
+    documentTypes: 'document_types'
+  };
+
+  for (const [k, col] of Object.entries(map)) {
+    if (payload[k] !== undefined) {
+      columns.push(`${col}=$${i++}`);
+      if (k === 'documentTypes') params.push(JSON.stringify(payload[k] || []));
+      else params.push(payload[k] === '' ? null : payload[k]);
+    }
+  }
+
+  columns.push(`updated_by=$${i++}`);
+  params.push(actorUserId || null);
+  columns.push(`updated_at=NOW()`);
+
   const { rows } = await pool.query(
     `UPDATE einvoicing_settings
-     SET 
-       enabled=COALESCE($2, enabled),
-       provider=COALESCE($3, provider),
-       api_endpoint=COALESCE($4, api_endpoint),
-       api_key=COALESCE($5, api_key),
-       api_secret=COALESCE($6, api_secret),
-       sandbox_mode=COALESCE($7, sandbox_mode),
-       document_types=COALESCE($8, document_types),
-       updated_by=$9,
-       updated_at=NOW()
+     SET ${columns.join(', ')}
      WHERE organization_id=$1
      RETURNING *`,
-    [
-      orgId,
-      payload.enabled,
-      payload.provider || null,
-      payload.apiEndpoint || null,
-      payload.apiKey || null,
-      payload.apiSecret || null,
-      payload.sandboxMode,
-      payload.documentTypes ? JSON.stringify(payload.documentTypes) : null,
-      actorUserId || null
-    ]
+    params
   );
   return rows[0];
 }
@@ -1270,26 +1298,26 @@ async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
 
 async function listFilingAdapters({ orgId, query = {} }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["(organization_id=$1 OR organization_id IS NULL)"];
   let i = 2;
-  
-  if (query.countryCode) { 
-    where.push(`country_code=$${i++}`); 
-    params.push(query.countryCode.toUpperCase()); 
+
+  if (query.countryCode) {
+    where.push(`country_code=$${i++}`);
+    params.push(String(query.countryCode).toUpperCase());
   }
-  if (query.taxType) { 
-    where.push(`$2 = ANY(supported_tax_types)`); 
-    params.push(query.taxType); 
+  if (query.taxType) {
+    where.push(`$${i++} = ANY(supported_tax_types)`);
+    params.push(query.taxType);
   }
-  if (query.isActive !== undefined) { 
-    where.push(`is_active=$${i++}`); 
-    params.push(query.isActive === true || query.isActive === 'true'); 
+  if (query.isActive !== undefined) {
+    where.push(`is_active=$${i++}`);
+    params.push(query.isActive === true || query.isActive === 'true');
   }
 
   const { rows } = await pool.query(
-    `SELECT * FROM tax_filing_adapters 
+    `SELECT * FROM tax_filing_adapters
      WHERE ${where.join(" AND ")}
-     ORDER BY country_code, adapter_code`,
+     ORDER BY organization_id NULLS FIRST, country_code, adapter_code`,
     params
   );
   return rows;
@@ -1297,8 +1325,8 @@ async function listFilingAdapters({ orgId, query = {} }) {
 
 async function getFilingAdapter({ orgId, adapterId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM tax_filing_adapters 
-     WHERE organization_id=$1 AND id=$2`,
+    `SELECT * FROM tax_filing_adapters
+     WHERE (organization_id=$1 OR organization_id IS NULL) AND id=$2`,
     [orgId, adapterId]
   );
   if (!rows.length) throw new AppError(404, "Filing adapter not found");
@@ -1308,10 +1336,10 @@ async function getFilingAdapter({ orgId, adapterId }) {
 async function createFilingAdapter({ orgId, actorUserId, payload }) {
   const { rows } = await pool.query(
     `INSERT INTO tax_filing_adapters(
-      organization_id, adapter_code, name, channel_type, 
+      organization_id, adapter_code, name, channel_type,
       supported_tax_types, supported_countries, country_code,
-      config_json, is_realtime, is_active, created_by, updated_by
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,COALESCE($9,false),COALESCE($10,true),$11,$11)
+      config_json, is_realtime, is_active
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,COALESCE($9,false),COALESCE($10,true))
     RETURNING *`,
     [
       orgId,
@@ -1320,11 +1348,10 @@ async function createFilingAdapter({ orgId, actorUserId, payload }) {
       payload.channelType || 'api',
       payload.supportedTaxTypes || ['VAT'],
       payload.supportedCountries || [],
-      payload.countryCode,
+      String(payload.countryCode).toUpperCase(),
       JSON.stringify(payload.configJson || {}),
       payload.isRealtime || false,
-      payload.isActive !== undefined ? payload.isActive : true,
-      actorUserId || null
+      payload.isActive !== undefined ? payload.isActive : true
     ]
   );
   return rows[0];
@@ -1334,8 +1361,9 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
   const columns = [];
   const params = [orgId, adapterId];
   let i = 3;
-  
+
   const map = {
+    adapterCode: 'adapter_code',
     name: 'name',
     channelType: 'channel_type',
     supportedTaxTypes: 'supported_tax_types',
@@ -1345,28 +1373,24 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
     isRealtime: 'is_realtime',
     isActive: 'is_active'
   };
-  
+
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
       if (k === 'configJson') {
         params.push(JSON.stringify(payload[k] || {}));
-      } else if (k === 'supportedTaxTypes' || k === 'supportedCountries') {
-        params.push(payload[k]);
+      } else if (k === 'countryCode') {
+        params.push(String(payload[k]).toUpperCase());
       } else {
         params.push(payload[k]);
       }
     }
   }
-  
+
   if (!columns.length) {
     return getFilingAdapter({ orgId, adapterId });
   }
-  
-  columns.push(`updated_by=$${i++}`);
-  params.push(actorUserId || null);
-  columns.push(`updated_at=NOW()`);
-  
+
   const { rows } = await pool.query(
     `UPDATE tax_filing_adapters
      SET ${columns.join(', ')}
@@ -1374,7 +1398,8 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
      RETURNING *`,
     params
   );
-  
+
+  if (!rows.length) throw new AppError(404, "Filing adapter not found");
   return rows[0];
 }
 
