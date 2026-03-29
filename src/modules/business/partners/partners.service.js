@@ -121,7 +121,7 @@ async function assertJurisdictionBelongsToOrg({ orgId, jurisdictionId }) {
 
 async function getPartnerTaxProfile({ orgId, partnerId }) {
   await getPartnerForOrg({ orgId, partnerId });
-  const { rows } = await pool.query(`SELECT * FROM tax_partner_profiles WHERE organization_id=$1 AND partner_id=$2`, [orgId, partnerId]);
+  const { rows } = await pool.query(`SELECT tpp.*, bp.name AS partner_name, bp.type AS partner_type, bp.code AS partner_code, COALESCE(tpp.legal_name, bp.name) AS partner_legal_entity_name, json_build_object('id', bp.id, 'name', bp.name, 'type', bp.type, 'code', bp.code, 'legal_entity_name', COALESCE(tpp.legal_name, bp.name)) AS partner FROM tax_partner_profiles tpp JOIN business_partners bp ON bp.id = tpp.partner_id AND bp.organization_id = tpp.organization_id WHERE tpp.organization_id=$1 AND tpp.partner_id=$2`, [orgId, partnerId]);
   return rows[0] || null;
 }
 
@@ -179,7 +179,7 @@ async function upsertPartnerTaxProfile({ orgId, partnerId, payload }) {
       updated_at=NOW()
     RETURNING *
   `, [
-    orgId, partnerId, payload.taxregistrationNumber || null, payload.legalName || null, payload.taxClass || null, payload.defaultTaxCodeId || null,
+    orgId, partnerId, payload.taxRegistrationNo || payload.taxregistrationNumber || null, payload.legalName || null, payload.taxClass || null, payload.defaultTaxCodeId || null,
     payload.purchaseTaxCodeId || null, payload.salesTaxCodeId || null, payload.jurisdictionId || null, payload.placeOfSupply || null,
     payload.isTaxRegistered === true, payload.isTaxExempt === true, payload.exemptionReasonCode || null, payload.exemptionReason || null,
     payload.reverseChargeApplicable === true, payload.withholdingApplicable === true, payload.withholdingTaxCodeId || null,

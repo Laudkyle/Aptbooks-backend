@@ -209,6 +209,8 @@ router.get("/rules", requirePermission("tax.rule.read"), async (req, res, next) 
       status: req.query.status,
       documentType: req.query.documentType,
       partnerType: req.query.partnerType,
+      supplyType: req.query.supplyType,
+      placeOfSupplyBasis: req.query.placeOfSupplyBasis,
       transactionScope: req.query.transactionScope,
       jurisdictionId: req.query.jurisdictionId,
       taxCodeId: req.query.taxCodeId,

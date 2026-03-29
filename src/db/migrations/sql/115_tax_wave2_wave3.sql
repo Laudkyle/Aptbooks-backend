@@ -135,11 +135,11 @@ VALUES
    '{"filing":"quarterly","scheme":"OSS"}'::jsonb, TRUE)
 ON CONFLICT DO NOTHING;
 
-INSERT INTO tax_filing_adapters(organization_id, adapter_code, name, channel_type, supported_tax_types, supported_countries, config_json, is_realtime, is_active)
+INSERT INTO tax_filing_adapters(organization_id, adapter_code, name, channel_type, supported_tax_types, supported_countries, country_code, config_json, is_realtime, is_active)
 VALUES
-  (NULL, 'MANUAL_CSV', 'Manual CSV Export', 'file', ARRAY['VAT','GST'], ARRAY['GH','GB','EU'], '{"format":"csv"}'::jsonb, FALSE, TRUE),
-  (NULL, 'PEPPOL_SIM', 'Peppol Simulation Adapter', 'api', ARRAY['VAT'], ARRAY['GB','EU'], '{"network":"peppol"}'::jsonb, TRUE, TRUE),
-  (NULL, 'GRA_SIM', 'GRA Simulation Adapter', 'api', ARRAY['VAT','WITHHOLDING'], ARRAY['GH'], '{"authority":"GRA"}'::jsonb, TRUE, TRUE)
+  (NULL, 'MANUAL_CSV', 'Manual CSV Export', 'file', ARRAY['VAT','GST'], ARRAY['GH','GB','EU'], 'GH', '{"format":"csv"}'::jsonb, FALSE, TRUE),
+  (NULL, 'PEPPOL_SIM', 'Peppol Simulation Adapter', 'api', ARRAY['VAT'], ARRAY['GB','EU'], 'GB', '{"network":"peppol"}'::jsonb, TRUE, TRUE),
+  (NULL, 'GRA_SIM', 'GRA Simulation Adapter', 'api', ARRAY['VAT','WITHHOLDING'], ARRAY['GH'], 'GH', '{"authority":"GRA"}'::jsonb, TRUE, TRUE)
 ON CONFLICT DO NOTHING;
 
 

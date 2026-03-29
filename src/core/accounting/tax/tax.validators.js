@@ -1,5 +1,4 @@
 const { z } = require("zod");
-const Joi = require("joi");
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const createJurisdictionSchema = z.object({
@@ -14,9 +13,12 @@ const updateJurisdictionSchema = createJurisdictionSchema.partial();
 const taxRuleConditionsSchema = z.record(z.any()).optional();
 
 const createTaxRuleSchema = z.object({
+  code: z.string().min(1).max(80).optional().nullable(),
   name: z.string().min(1).max(200),
   documentType: z.string().max(80).optional().nullable(),
   partnerType: z.string().max(80).optional().nullable(),
+  supplyType: z.enum(["goods", "services", "mixed", "import", "export"]).optional().nullable(),
+  placeOfSupplyBasis: z.enum(["customer_location", "supplier_location", "ship_to", "service_performance"]).optional().nullable(),
   transactionScope: z.enum(["sales", "purchases", "both"]).optional(),
   jurisdictionId: z.string().uuid().optional().nullable(),
   taxCodeId: z.string().uuid(),
@@ -37,7 +39,8 @@ const createTaxCodeSchema = z.object({
   jurisdictionId: z.string().uuid().nullable().optional(),
   code: z.string().min(1).max(50),
   name: z.string().min(1).max(200),
-  taxType: z.enum(["VAT", "GST", "SALES", "WITHHOLDING", "IMPORT", "OTHER"]),
+  taxType: z.enum(["VAT", "GST", "SALES", "WHT", "WITHHOLDING", "IMPORT", "OTHER"]),
+  taxCategory: z.enum(["standard", "zero_rated", "exempt", "reverse_charge", "withholding"]).optional(),
   rate: z.coerce.number().min(0),
   isCompound: z.coerce.boolean().optional(),
   // Optional mapping used by VAT/tax return reporting.
@@ -122,7 +125,7 @@ const setTaxSettingsSchema = z.object({
   withholdingTaxPayableAccountId: z.string().uuid().nullable().optional(),
   withholdingTaxReceivableAccountId: z.string().uuid().nullable().optional(),
   reverseChargeTaxAccountId: z.string().uuid().nullable().optional(),
-  taxRoundingStrategy: z.enum(["line", "document"]).optional(),
+  taxRoundingStrategy: z.enum(["line", "document", "total"]).optional(),
   enforcePartnerTaxProfile: z.coerce.boolean().optional(),
   requireTaxJurisdiction: z.coerce.boolean().optional()
 });
@@ -143,110 +146,111 @@ const upsertTaxAutomationRuleSchema = z.object({
   action: z.record(z.any()).optional(),
   isEnabled: z.coerce.boolean().optional()
 });
-// Add these to your existing validators file
-
-const createPartnerTaxProfileSchema = Joi.object({
-  partnerId: Joi.string().uuid().required(),
-  taxRegistrationNo: Joi.string().max(100).allow(null),
-  legalName: Joi.string().max(255).allow(null),
-  taxClass: Joi.string().valid('standard', 'small_business', 'non_profit', 'government').default('standard'),
-  defaultTaxCodeId: Joi.string().uuid().allow(null),
-  purchaseTaxCodeId: Joi.string().uuid().allow(null),
-  salesTaxCodeId: Joi.string().uuid().allow(null),
-  jurisdictionId: Joi.string().uuid().allow(null),
-  placeOfSupply: Joi.string().max(50).allow(null),
-  isTaxRegistered: Joi.boolean().default(false),
-  isTaxExempt: Joi.boolean().default(false),
-  exemptionReasonCode: Joi.string().max(50).allow(null),
-  exemptionReason: Joi.string().max(255).allow(null),
-  reverseChargeApplicable: Joi.boolean().default(false),
-  withholdingApplicable: Joi.boolean().default(false),
-  withholdingTaxCodeId: Joi.string().uuid().allow(null),
-  recoverablePercentOverride: Joi.number().min(0).max(1).precision(4).allow(null),
-  certificateReference: Joi.string().max(100).allow(null),
-  certificateExpiry: Joi.date().allow(null),
-  withholdingRateOverride: Joi.number().min(0).max(100).precision(2).allow(null),
-  withholdingCertificateNo: Joi.string().max(100).allow(null),
-  filingContactEmail: Joi.string().email().allow(null),
-  customerTaxIdentifierType: Joi.string().max(50).allow(null),
-  vendorTaxIdentifierType: Joi.string().max(50).allow(null),
-  metadata: Joi.object().default({})
+const createPartnerTaxProfileSchema = z.object({
+  partnerId: z.string().uuid(),
+  taxRegistrationNo: z.string().max(100).optional().nullable(),
+  legalName: z.string().max(255).optional().nullable(),
+  taxClass: z.enum(["standard", "small_business", "non_profit", "government"]).optional(),
+  defaultTaxCodeId: z.string().uuid().optional().nullable(),
+  purchaseTaxCodeId: z.string().uuid().optional().nullable(),
+  salesTaxCodeId: z.string().uuid().optional().nullable(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
+  placeOfSupply: z.string().max(50).optional().nullable(),
+  isTaxRegistered: z.coerce.boolean().optional(),
+  isTaxExempt: z.coerce.boolean().optional(),
+  exemptionReasonCode: z.string().max(50).optional().nullable(),
+  exemptionReason: z.string().max(255).optional().nullable(),
+  reverseChargeApplicable: z.coerce.boolean().optional(),
+  withholdingApplicable: z.coerce.boolean().optional(),
+  withholdingTaxCodeId: z.string().uuid().optional().nullable(),
+  recoverablePercentOverride: z.coerce.number().min(0).max(1).optional().nullable(),
+  certificateReference: z.string().max(100).optional().nullable(),
+  certificateExpiry: isoDate.optional().nullable(),
+  withholdingRateOverride: z.coerce.number().min(0).max(100).optional().nullable(),
+  withholdingCertificateNo: z.string().max(100).optional().nullable(),
+  filingContactEmail: z.string().email().optional().nullable(),
+  customerTaxIdentifierType: z.string().max(50).optional().nullable(),
+  vendorTaxIdentifierType: z.string().max(50).optional().nullable(),
+  inputTaxRecoveryMode: z.enum(["default", "fully_recoverable", "partially_recoverable", "non_recoverable"]).optional().nullable(),
+  destinationCountryCode: z.string().length(2).optional().nullable(),
+  registrationStatus: z.enum(["registered", "unregistered", "pending", "suspended"]).optional().nullable(),
+  eInvoiceNetwork: z.string().max(100).optional().nullable(),
+  eInvoiceEndpoint: z.string().max(255).optional().nullable(),
+  metadata: z.record(z.any()).optional()
 });
 
-const updatePartnerTaxProfileSchema = createPartnerTaxProfileSchema.fork(
-  Object.keys(createPartnerTaxProfileSchema.describe().keys),
-  (schema) => schema.optional()
-);
+const updatePartnerTaxProfileSchema = createPartnerTaxProfileSchema.partial();
 
-const createTaxReturnTemplateSchema = Joi.object({
-  taxType: Joi.string().valid('VAT', 'GST', 'SALES').default('VAT'),
-  code: Joi.string().max(50).required(),
-  name: Joi.string().max(255).required(),
-  description: Joi.string().allow(null),
-  isActive: Joi.boolean().default(true),
-  boxes: Joi.array().items(Joi.object({
-    boxCode: Joi.string().max(50).required(),
-    label: Joi.string().max(255).required(),
-    sortOrder: Joi.number().integer().min(0).default(0),
-    direction: Joi.string().valid('input', 'output').allow(null),
-    calculationFormula: Joi.string().allow(null),
-    isRequired: Joi.boolean().default(false)
-  }))
+const taxReturnTemplateBoxSchema = z.object({
+  boxCode: z.string().max(50),
+  label: z.string().max(255),
+  sortOrder: z.coerce.number().int().min(0).optional(),
+  direction: z.enum(["input", "output"]).optional().nullable(),
+  calculationFormula: z.string().optional().nullable(),
+  isRequired: z.coerce.boolean().optional()
 });
 
-const updateTaxReturnTemplateSchema = createTaxReturnTemplateSchema.fork(
-  ['code'],
-  (schema) => schema.optional()
-);
-
-const createTaxReturnSchema = Joi.object({
-  taxType: Joi.string().valid('VAT', 'GST', 'SALES', 'WITHHOLDING', 'IMPORT', 'OTHER').default('VAT'),
-  filingPeriodStart: Joi.date().required(),
-  filingPeriodEnd: Joi.date().required(),
-  dueDate: Joi.date().allow(null),
-  templateId: Joi.string().uuid().allow(null),
-  jurisdictionId: Joi.string().uuid().allow(null),
-  filingAdapterCode: Joi.string().max(80).allow(null)
+const createTaxReturnTemplateSchema = z.object({
+  taxType: z.enum(["VAT", "GST", "SALES"]).optional(),
+  code: z.string().max(50),
+  name: z.string().max(255),
+  description: z.string().optional().nullable(),
+  isActive: z.coerce.boolean().optional(),
+  boxes: z.array(taxReturnTemplateBoxSchema).optional()
 });
 
-const submitTaxReturnSchema = Joi.object({
-  filingData: Joi.object().required(),
-  filingAdapterCode: Joi.string().max(80).allow(null)
+const updateTaxReturnTemplateSchema = createTaxReturnTemplateSchema.partial();
+
+const createTaxReturnSchema = z.object({
+  taxType: z.enum(["VAT", "GST", "SALES", "WITHHOLDING", "IMPORT", "OTHER"]).optional(),
+  filingPeriodStart: isoDate,
+  filingPeriodEnd: isoDate,
+  dueDate: isoDate.optional().nullable(),
+  templateId: z.string().uuid().optional().nullable(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
+  filingAdapterCode: z.string().max(80).optional().nullable()
+}).superRefine((val, ctx) => {
+  if (val.filingPeriodStart && val.filingPeriodEnd && val.filingPeriodEnd < val.filingPeriodStart) {
+    ctx.addIssue({ code: "custom", path: ["filingPeriodEnd"], message: "filingPeriodEnd must be on or after filingPeriodStart" });
+  }
 });
 
-const updateTaxReturnConfigSchema = Joi.object({
-  defaultTemplateId: Joi.string().uuid().allow(null),
-  autoSubmitEnabled: Joi.boolean(),
-  notificationEmail: Joi.string().email().allow(null),
-  filingMethod: Joi.string().valid('api', 'manual', 'email')
+const submitTaxReturnSchema = z.object({
+  filingData: z.record(z.any()),
+  filingAdapterCode: z.string().max(80).optional().nullable()
 });
 
-const updateEinvoicingSettingsSchema = Joi.object({
-  enabled: Joi.boolean(),
-  provider: Joi.string().max(100).allow(null),
-  apiEndpoint: Joi.string().uri().allow(null),
-  apiKey: Joi.string().allow(null),
-  apiSecret: Joi.string().allow(null),
-  sandboxMode: Joi.boolean(),
-  documentTypes: Joi.array().items(Joi.string())
+const updateTaxReturnConfigSchema = z.object({
+  defaultTemplateId: z.string().uuid().optional().nullable(),
+  autoSubmitEnabled: z.coerce.boolean().optional(),
+  notificationEmail: z.string().email().optional().nullable(),
+  filingMethod: z.enum(["api", "manual", "email"]).optional().nullable()
 });
 
-const createFilingAdapterSchema = Joi.object({
-  adapterCode: Joi.string().max(80).required(),
-  name: Joi.string().max(150).required(),
-  channelType: Joi.string().valid('api', 'file', 'manual').default('api'),
-  supportedTaxTypes: Joi.array().items(Joi.string().valid('VAT', 'GST', 'SALES', 'WITHHOLDING', 'IMPORT', 'OTHER')).min(1).default(['VAT']),
-  supportedCountries: Joi.array().items(Joi.string().length(2)).default([]),
-  countryCode: Joi.string().length(2).required(),
-  configJson: Joi.object().default({}),
-  isRealtime: Joi.boolean().default(false),
-  isActive: Joi.boolean().default(true)
+const updateEinvoicingSettingsSchema = z.object({
+  enabled: z.coerce.boolean().optional(),
+  provider: z.string().max(100).optional().nullable(),
+  apiEndpoint: z.string().url().optional().nullable(),
+  apiKey: z.string().optional().nullable(),
+  apiSecret: z.string().optional().nullable(),
+  sandboxMode: z.coerce.boolean().optional(),
+  documentTypes: z.array(z.string()).optional()
 });
 
-const updateFilingAdapterSchema = createFilingAdapterSchema.fork(
-  ['adapterCode', 'name', 'countryCode'],
-  (schema) => schema.optional()
-);
+const createFilingAdapterSchema = z.object({
+  adapterCode: z.string().max(80),
+  name: z.string().max(150),
+  channelType: z.enum(["api", "file", "manual"]).optional(),
+  supportedTaxTypes: z.array(z.enum(["VAT", "GST", "SALES", "WITHHOLDING", "IMPORT", "OTHER"])).min(1).optional(),
+  supportedCountries: z.array(z.string().length(2)).optional(),
+  countryCode: z.string().length(2),
+  configJson: z.record(z.any()).optional(),
+  isRealtime: z.coerce.boolean().optional(),
+  isActive: z.coerce.boolean().optional()
+});
+
+const updateFilingAdapterSchema = createFilingAdapterSchema.partial();
+
 module.exports = {
   createTaxRegistrationSchema,
   updateTaxRegistrationSchema,

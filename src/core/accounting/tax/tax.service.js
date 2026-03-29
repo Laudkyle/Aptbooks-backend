@@ -31,6 +31,15 @@ async function assertJurisdictionBelongsToOrg({ orgId, jurisdictionId }) {
   if (!rows.length) throw new AppError(400, `jurisdictionId is invalid for this organization`);
 }
 
+async function assertPartnerBelongsToOrg({ orgId, partnerId }) {
+  if (!partnerId) return;
+  const { rows } = await pool.query(
+    `SELECT id FROM business_partners WHERE organization_id=$1 AND id=$2`,
+    [orgId, partnerId]
+  );
+  if (!rows.length) throw new AppError(400, `partnerId is invalid for this organization`);
+}
+
 async function listJurisdictions({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_jurisdictions WHERE organization_id=$1 ORDER BY code`,
@@ -250,6 +259,8 @@ async function listTaxRules({ orgId, query }) {
   if (query?.status) { where.push(`tr.status=$${i++}`); params.push(query.status); }
   if (query?.documentType) { where.push(`tr.document_type=$${i++}`); params.push(query.documentType); }
   if (query?.partnerType) { where.push(`tr.partner_type=$${i++}`); params.push(query.partnerType); }
+  if (query?.supplyType) { where.push(`tr.supply_type=$${i++}`); params.push(query.supplyType); }
+  if (query?.placeOfSupplyBasis) { where.push(`tr.place_of_supply_basis=$${i++}`); params.push(query.placeOfSupplyBasis); }
   if (query?.transactionScope) { where.push(`tr.transaction_scope=$${i++}`); params.push(query.transactionScope); }
   if (query?.jurisdictionId) { where.push(`tr.jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
   if (query?.taxCodeId) { where.push(`tr.tax_code_id=$${i++}`); params.push(query.taxCodeId); }
@@ -263,7 +274,8 @@ async function listTaxRules({ orgId, query }) {
   }
 
   const { rows } = await pool.query(
-    `SELECT tr.*, tj.code AS jurisdiction_code, tj.name AS jurisdiction_name, tc.code AS tax_code_code, tc.name AS tax_code_name
+    `SELECT tr.*, tj.code AS jurisdiction_code, tj.name AS jurisdiction_name, tc.code AS tax_code_code, tc.name AS tax_code_name,
+              COALESCE(tr.code, tr.name) AS rule_code
        FROM tax_rules tr
        LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
        JOIN tax_codes tc ON tc.id = tr.tax_code_id
@@ -280,18 +292,21 @@ async function createTaxRule({ orgId, payload }) {
 
   const { rows } = await pool.query(
     `INSERT INTO tax_rules(
-        organization_id, name, document_type, partner_type, transaction_scope,
+        organization_id, code, name, document_type, partner_type, supply_type, place_of_supply_basis, transaction_scope,
         jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
      ) VALUES (
-        $1,$2,$3,$4,COALESCE($5,'both'),
-        $6,$7,COALESCE($8,100),COALESCE($9,CURRENT_DATE),$10,COALESCE($11,'{}'::jsonb),COALESCE($12,'active')
+        $1,$2,$3,$4,$5,$6,$7,COALESCE($8,'both'),
+        $9,$10,COALESCE($11,100),COALESCE($12,CURRENT_DATE),$13,COALESCE($14,'{}'::jsonb),COALESCE($15,'active')
      )
      RETURNING *`,
     [
       orgId,
+      payload.code || null,
       payload.name,
       payload.documentType || null,
       payload.partnerType || null,
+      payload.supplyType || null,
+      payload.placeOfSupplyBasis || null,
       payload.transactionScope || null,
       payload.jurisdictionId || null,
       payload.taxCodeId,
@@ -318,9 +333,12 @@ async function updateTaxRule({ orgId, ruleId, payload }) {
   const params = [orgId, ruleId];
   let i = 3;
   const map = {
+    code: 'code',
     name: 'name',
     documentType: 'document_type',
     partnerType: 'partner_type',
+    supplyType: 'supply_type',
+    placeOfSupplyBasis: 'place_of_supply_basis',
     transactionScope: 'transaction_scope',
     jurisdictionId: 'jurisdiction_id',
     taxCodeId: 'tax_code_id',
@@ -397,13 +415,13 @@ async function createTaxCode({ orgId, payload }) {
       payload.jurisdictionId || null,
       payload.code,
       payload.name,
-      payload.taxType,
+      payload.taxType === 'WHT' ? 'WITHHOLDING' : payload.taxType,
       payload.rate,
       payload.isCompound === true,
       payload.boxCode ?? null,
       payload.direction ?? null,
-      payload.categoryCode ?? null,
-      payload.taxScope ?? null,
+      payload.categoryCode ?? payload.taxCategory ?? null,
+      payload.taxScope ?? (payload.taxCategory === 'zero_rated' ? 'zero_rated' : payload.taxCategory === 'exempt' ? 'exempt' : payload.taxCategory === 'reverse_charge' ? 'reverse_charge' : payload.taxCategory === 'withholding' ? 'withholding' : null),
       payload.applicationScope ?? null,
       payload.calculationMethod ?? null,
       payload.exemptionReasonCode ?? null,
@@ -444,6 +462,7 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
     code: "code",
     name: "name",
     taxType: "tax_type",
+    taxCategory: "category_code",
     rate: "rate",
     isCompound: "is_compound",
     boxCode: "box_code",
@@ -536,7 +555,7 @@ async function setTaxSettings({ orgId, payload }) {
     withholding_tax_payable_account_id: payload.withholdingTaxPayableAccountId ?? current.withholding_tax_payable_account_id,
     withholding_tax_receivable_account_id: payload.withholdingTaxReceivableAccountId ?? current.withholding_tax_receivable_account_id,
     reverse_charge_tax_account_id: payload.reverseChargeTaxAccountId ?? current.reverse_charge_tax_account_id,
-    tax_rounding_strategy: payload.taxRoundingStrategy ?? current.tax_rounding_strategy,
+    tax_rounding_strategy: (payload.taxRoundingStrategy === 'total' ? 'document' : payload.taxRoundingStrategy) ?? current.tax_rounding_strategy,
     enforce_partner_tax_profile: payload.enforcePartnerTaxProfile ?? current.enforce_partner_tax_profile,
     require_tax_jurisdiction: payload.requireTaxJurisdiction ?? current.require_tax_jurisdiction
   };
@@ -774,9 +793,16 @@ async function listPartnerTaxProfiles({ orgId, query = {} }) {
   }
 
   const { rows } = await pool.query(
-    `SELECT * FROM tax_partner_profiles 
+    `SELECT tpp.*,
+            bp.name AS partner_name,
+            bp.type AS partner_type,
+            bp.code AS partner_code,
+            COALESCE(tpp.legal_name, bp.name) AS partner_legal_entity_name,
+            json_build_object('id', bp.id, 'name', bp.name, 'type', bp.type, 'code', bp.code, 'legal_entity_name', COALESCE(tpp.legal_name, bp.name)) AS partner
+       FROM tax_partner_profiles tpp
+       JOIN business_partners bp ON bp.id = tpp.partner_id AND bp.organization_id = tpp.organization_id
      WHERE ${where.join(" AND ")}
-     ORDER BY created_at DESC`,
+     ORDER BY tpp.created_at DESC`,
     params
   );
   return rows;
@@ -784,8 +810,15 @@ async function listPartnerTaxProfiles({ orgId, query = {} }) {
 
 async function getPartnerTaxProfile({ orgId, profileId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM tax_partner_profiles 
-     WHERE organization_id=$1 AND id=$2`,
+    `SELECT tpp.*,
+            bp.name AS partner_name,
+            bp.type AS partner_type,
+            bp.code AS partner_code,
+            COALESCE(tpp.legal_name, bp.name) AS partner_legal_entity_name,
+            json_build_object('id', bp.id, 'name', bp.name, 'type', bp.type, 'code', bp.code, 'legal_entity_name', COALESCE(tpp.legal_name, bp.name)) AS partner
+       FROM tax_partner_profiles tpp
+       JOIN business_partners bp ON bp.id = tpp.partner_id AND bp.organization_id = tpp.organization_id
+     WHERE tpp.organization_id=$1 AND tpp.id=$2`,
     [orgId, profileId]
   );
   if (!rows.length) throw new AppError(404, "Partner tax profile not found");
@@ -793,6 +826,7 @@ async function getPartnerTaxProfile({ orgId, profileId }) {
 }
 
 async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
+  await assertPartnerBelongsToOrg({ orgId, partnerId: payload.partnerId });
   if (payload.defaultTaxCodeId) {
     await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId });
   }
@@ -860,7 +894,7 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       actorUserId || null
     ]
   );
-  return rows[0];
+  return getPartnerTaxProfile({ orgId, profileId: rows[0].id });
 }
 
 async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId }) {
