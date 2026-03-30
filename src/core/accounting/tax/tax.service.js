@@ -768,27 +768,27 @@ async function setTaxCodeComponents({ orgId, taxCodeId, payload }) {
 
 async function listPartnerTaxProfiles({ orgId, query = {} }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["tpp.organization_id=$1"];  // ← Add tpp. prefix
   let i = 2;
   
   if (query.partnerId) { 
-    where.push(`partner_id=$${i++}`); 
+    where.push(`tpp.partner_id=$${i++}`);   // ← Add tpp. prefix
     params.push(query.partnerId); 
   }
   if (query.taxClass) { 
-    where.push(`tax_class=$${i++}`); 
+    where.push(`tpp.tax_class=$${i++}`);    // ← Add tpp. prefix
     params.push(query.taxClass); 
   }
   if (query.isTaxRegistered !== undefined) { 
-    where.push(`is_tax_registered=$${i++}`); 
+    where.push(`tpp.is_tax_registered=$${i++}`);  // ← Add tpp. prefix
     params.push(query.isTaxRegistered === true || query.isTaxRegistered === 'true'); 
   }
   if (query.isTaxExempt !== undefined) { 
-    where.push(`is_tax_exempt=$${i++}`); 
+    where.push(`tpp.is_tax_exempt=$${i++}`);      // ← Add tpp. prefix
     params.push(query.isTaxExempt === true || query.isTaxExempt === 'true'); 
   }
   if (query.jurisdictionId) { 
-    where.push(`jurisdiction_id=$${i++}`); 
+    where.push(`tpp.jurisdiction_id=$${i++}`);    // ← Add tpp. prefix
     params.push(query.jurisdictionId); 
   }
 
