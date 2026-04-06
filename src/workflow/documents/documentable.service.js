@@ -41,7 +41,7 @@ async function ensureDocumentTypeForEntity({ orgId, entityType, client }) {
 async function getApprovalContext({ orgId, entityType, client }) {
   const cfg = getConfig(entityType);
   const documentType = await ensureDocumentTypeForEntity({ orgId, entityType, client });
-  const ladder = await repo.listApprovalLadderForDocumentType({ orgId, documentTypeId: documentType.id, client });
+  const ladder = await repo.listApprovalLadderForDocumentType({ orgId, documentTypeId: documentType.id, client, includeGlobalFallback: true });
   const rules = await rulesSvc.getRules({ orgId, documentTypeId: documentType.id, entityType, client });
   return { config: cfg, documentType, ladder, rules, approvalRequired: ladder.length > 0 };
 }

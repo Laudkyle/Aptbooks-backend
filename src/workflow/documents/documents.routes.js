@@ -122,6 +122,48 @@ router.get(
   },
 );
 
+router.put(
+  "/approval-levels/global",
+  requirePermission("documents.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const body = validate(setDocumentTypeApprovalLevelsSchema, req.body);
+      const result = await svc.setGlobalApprovalLevels({
+        orgId,
+        approvalLevelIds: body.approval_level_ids,
+      });
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId: req.user.id,
+        action: "document_workflow.global_approval_levels_set",
+        entityType: "document_workflow",
+        entityId: orgId,
+        ip: req.audit?.ip,
+        userAgent: req.audit?.userAgent,
+        after: body,
+      });
+      res.json(result);
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
+router.get(
+  "/approval-levels/global",
+  requirePermission("documents.read"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const ladder = await svc.getGlobalApprovalLadder({ orgId });
+      res.json(ladder);
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
 router.get(
   "/approval-levels/:levelId/users",
   requirePermission("documents.read"),

@@ -198,7 +198,21 @@ async function replaceApprovalLevelUsers({ orgId, levelId, userIds, client = nul
   }
 }
 
-async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client = null }) {
+async function listGlobalApprovalLadder({ orgId, client = null }) {
+  const r = await q(client).query(
+    `
+    SELECT al.*
+    FROM document_global_approval_levels dgal
+    JOIN approval_levels al ON al.id = dgal.approval_level_id
+    WHERE dgal.organization_id=$1 AND al.organization_id=$1 AND al.is_active=TRUE
+    ORDER BY dgal.position ASC, al.sequence ASC
+    `,
+    [orgId]
+  );
+  return r.rows;
+}
+
+async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client = null, includeGlobalFallback = true }) {
   const r = await q(client).query(
     `
     SELECT al.*
@@ -210,7 +224,8 @@ async function listApprovalLadderForDocumentType({ orgId, documentTypeId, client
     `,
     [orgId, documentTypeId]
   );
-  return r.rows;
+  if (r.rows.length || !includeGlobalFallback) return r.rows;
+  return listGlobalApprovalLadder({ orgId, client });
 }
 
 async function createApprovals({ documentId, ladder, client = null }) {
@@ -353,6 +368,33 @@ async function listApprovalLevels({ orgId, client = null }) {
   return r.rows;
 }
 
+async function replaceGlobalApprovalLevels({ orgId, approvalLevelIds, client = null }) {
+  const ownsClient = !client;
+  const db = client || await pool.connect();
+  try {
+    if (ownsClient) await db.query("BEGIN");
+
+    await db.query(
+      `DELETE FROM document_global_approval_levels WHERE organization_id=$1`,
+      [orgId]
+    );
+    for (let i = 0; i < approvalLevelIds.length; i++) {
+      await db.query(
+        `INSERT INTO document_global_approval_levels (organization_id, approval_level_id, position)
+         SELECT $1, id, $3 FROM approval_levels WHERE id=$2 AND organization_id=$1`,
+        [orgId, approvalLevelIds[i], i]
+      );
+    }
+    if (ownsClient) await db.query("COMMIT");
+    return true;
+  } catch (e) {
+    if (ownsClient) await db.query("ROLLBACK");
+    throw e;
+  } finally {
+    if (ownsClient) db.release();
+  }
+}
+
 async function replaceDocumentTypeApprovalLevels({ orgId, documentTypeId, approvalLevelIds, client = null }) {
   const ownsClient = !client;
   const db = client || await pool.connect();
@@ -395,6 +437,7 @@ module.exports = {
   getDocumentTypeByCode,
   createApprovalLevel,
   listApprovalLevels,
+  replaceGlobalApprovalLevels,
   replaceDocumentTypeApprovalLevels,
   getDocumentById,
   getDocumentDetails,

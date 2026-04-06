@@ -121,8 +121,12 @@ async function submitDocument({ orgId, documentId, client = null }) {
   }, client);
 }
 
+async function getGlobalApprovalLadder({ orgId, client = null }) {
+  return repo.listGlobalApprovalLadder({ orgId, client });
+}
+
 async function getDocumentTypeLadder({ orgId, documentTypeId, client = null }) {
-  return repo.listApprovalLadderForDocumentType({ orgId, documentTypeId, client });
+  return repo.listApprovalLadderForDocumentType({ orgId, documentTypeId, client, includeGlobalFallback: true });
 }
 
 async function approveDocument({ orgId, documentId, userId, comment, client = null, creatorUserId = null, documentTypeId = null, entityType = null }) {
@@ -268,6 +272,15 @@ async function listApprovalLevels({ orgId, client = null }) {
   return repo.listApprovalLevels({ orgId, client });
 }
 
+async function setGlobalApprovalLevels({ orgId, approvalLevelIds, client = null }) {
+  await repo.replaceGlobalApprovalLevels({
+    orgId,
+    approvalLevelIds,
+    client,
+  });
+  return { ok: true };
+}
+
 async function setDocumentTypeApprovalLevels({ orgId, documentTypeId, approvalLevelIds, client = null }) {
   const ok = await repo.replaceDocumentTypeApprovalLevels({
     orgId,
@@ -284,6 +297,8 @@ module.exports = {
   listDocumentTypes,
   createApprovalLevel,
   listApprovalLevels,
+  getGlobalApprovalLadder,
+  setGlobalApprovalLevels,
   setDocumentTypeApprovalLevels,
   createDocument,
   listDocuments,
