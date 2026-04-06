@@ -444,6 +444,7 @@ module.exports = {
   listDocuments,
   getNextVersionNo,
   insertVersion,
+  listGlobalApprovalLadder,
   getVersion,
   setDocumentState,
   listApprovalLadderForDocumentType,
