@@ -9,6 +9,102 @@ const { writeAudit } = require("../audit-logs/audit.service");
 const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
 router.use(authRequired);
 
+function normalizeSignaturePayload(body = {}) {
+  const displayName = body.signature_display_name ?? body.display_name ?? body.displayName ?? null;
+  const title = body.signature_title ?? body.title ?? null;
+  const notes = body.signature_notes ?? body.notes ?? null;
+  const image = body.signature_image ?? body.signatureImage ?? body.image ?? null;
+  const isActiveInput = body.signature_is_active ?? body.is_active ?? body.isActive;
+  const isActive = typeof isActiveInput === 'boolean' ? isActiveInput : undefined;
+
+  if (image != null) {
+    const s = String(image).trim();
+    const looksValid = s === '' || s.startsWith('data:image/') || s.startsWith('http://') || s.startsWith('https://') || s.startsWith('/') || s.startsWith('./') || s.startsWith('../');
+    if (!looksValid) throw new AppError(400, 'signature_image must be a data URL, absolute URL, or app-relative path');
+    if (s.length > 2_000_000) throw new AppError(400, 'signature_image is too large');
+  }
+
+  return {
+    signatureDisplayName: displayName == null ? null : String(displayName).trim() || null,
+    signatureTitle: title == null ? null : String(title).trim() || null,
+    signatureNotes: notes == null ? null : String(notes).trim() || null,
+    signatureImage: image == null ? null : String(image).trim() || null,
+    signatureIsActive: isActive
+  };
+}
+
+async function getUserSignatureRecord({ orgId, userId }) {
+  const { rows } = await pool.query(
+    `SELECT uo.user_id, uo.organization_id,
+            COALESCE(uo.signature_display_name, NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.full_name, u.email) AS signature_display_name,
+            uo.signature_title,
+            uo.signature_notes,
+            uo.signature_image,
+            uo.signature_is_active,
+            uo.signature_updated_at,
+            uo.signature_updated_by_user_id,
+            u.email,
+            u.first_name,
+            u.last_name,
+            u.full_name,
+            u.phone,
+            CASE WHEN COALESCE(uo.signature_image, '') <> '' AND uo.signature_is_active = TRUE THEN TRUE ELSE FALSE END AS has_signature
+       FROM user_organizations uo
+       JOIN users u ON u.id = uo.user_id
+      WHERE uo.organization_id=$1 AND uo.user_id=$2
+      LIMIT 1`,
+    [orgId, userId]
+  );
+  if (!rows.length) throw new AppError(404, 'User membership not found for organization');
+  return rows[0];
+}
+
+async function upsertUserSignature({ orgId, targetUserId, actorUserId, payload }) {
+  const current = await getUserSignatureRecord({ orgId, userId: targetUserId });
+
+  const signatureImage = payload.signatureImage !== null ? payload.signatureImage : current.signature_image;
+  const signatureDisplayName = payload.signatureDisplayName !== null ? payload.signatureDisplayName : current.signature_display_name;
+  const signatureTitle = payload.signatureTitle !== null ? payload.signatureTitle : current.signature_title;
+  const signatureNotes = payload.signatureNotes !== null ? payload.signatureNotes : current.signature_notes;
+  const signatureIsActive = typeof payload.signatureIsActive === 'boolean'
+    ? payload.signatureIsActive
+    : Boolean(signatureImage);
+
+  const { rows } = await pool.query(
+    `UPDATE user_organizations
+        SET signature_image=$3,
+            signature_display_name=$4,
+            signature_title=$5,
+            signature_notes=$6,
+            signature_is_active=$7,
+            signature_updated_at=NOW(),
+            signature_updated_by_user_id=$8
+      WHERE organization_id=$1 AND user_id=$2
+      RETURNING user_id, organization_id, signature_image, signature_display_name, signature_title, signature_notes, signature_is_active, signature_updated_at, signature_updated_by_user_id`,
+    [orgId, targetUserId, signatureImage, signatureDisplayName, signatureTitle, signatureNotes, signatureIsActive, actorUserId || null]
+  );
+  return { before: current, after: await getUserSignatureRecord({ orgId, userId: rows[0].user_id }) };
+}
+
+async function clearUserSignature({ orgId, targetUserId, actorUserId }) {
+  const current = await getUserSignatureRecord({ orgId, userId: targetUserId });
+  const { rowCount } = await pool.query(
+    `UPDATE user_organizations
+        SET signature_image=NULL,
+            signature_display_name=NULL,
+            signature_title=NULL,
+            signature_notes=NULL,
+            signature_is_active=FALSE,
+            signature_updated_at=NOW(),
+            signature_updated_by_user_id=$3
+      WHERE organization_id=$1 AND user_id=$2`,
+    [orgId, targetUserId, actorUserId || null]
+  );
+  if (!rowCount) throw new AppError(404, 'User membership not found for organization');
+  return { before: current, after: await getUserSignatureRecord({ orgId, userId: targetUserId }) };
+}
+
+
 // Current user profile
 // Returns the authenticated user's profile + roles + permissions in current org context.
 router.get("/me", async (req, res, next) => {
@@ -18,7 +114,7 @@ router.get("/me", async (req, res, next) => {
 
     const { rows: uRows } = await pool.query(
       `
-      SELECT id, organization_id, email, status, created_at, updated_at
+      SELECT id, organization_id, email, status, created_at, updated_at, first_name, last_name, full_name, phone
       FROM users
       WHERE organization_id=$1 AND id=$2
       LIMIT 1
@@ -51,14 +147,70 @@ router.get("/me", async (req, res, next) => {
       [userId, orgId]
     );
 
+    const signature = await getUserSignatureRecord({ orgId, userId });
+
     res.json({
       user: uRows[0],
+      signature,
       roles: roleRows,
       permissions: permRows.map((p) => p.code)
     });
   } catch (e) {
     next(e);
   }
+});
+
+
+// Current user signature for the active organization context
+router.get('/me/signature', async (req, res, next) => {
+  try {
+    const out = await getUserSignatureRecord({ orgId: req.user.organization_id, userId: req.user.id });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.put('/me/signature', async (req, res, next) => {
+  try {
+    const patch = normalizeSignaturePayload(req.body || {});
+    const out = await upsertUserSignature({
+      orgId: req.user.organization_id,
+      targetUserId: req.user.id,
+      actorUserId: req.user.id,
+      payload: patch
+    });
+
+    await writeAudit({
+      organizationId: req.user.organization_id,
+      actorUserId: req.user.id,
+      action: 'user.signature.updated',
+      entityType: 'user_organizations',
+      entityId: req.user.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+
+    res.json(out.after);
+  } catch (e) { next(e); }
+});
+
+router.delete('/me/signature', async (req, res, next) => {
+  try {
+    const out = await clearUserSignature({ orgId: req.user.organization_id, targetUserId: req.user.id, actorUserId: req.user.id });
+    await writeAudit({
+      organizationId: req.user.organization_id,
+      actorUserId: req.user.id,
+      action: 'user.signature.cleared',
+      entityType: 'user_organizations',
+      entityId: req.user.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+    res.json(out.after);
+  } catch (e) { next(e); }
 });
 
 // Login history for current user
@@ -159,13 +311,69 @@ router.get("/", requirePermission("users.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const { rows } = await pool.query(
-      `SELECT id, email, status, created_at FROM users WHERE organization_id=$1 ORDER BY created_at DESC`,
+      `SELECT u.id, u.email, u.status, u.created_at,
+              COALESCE(uo.signature_is_active, FALSE) AS signature_is_active,
+              CASE WHEN COALESCE(uo.signature_image, '') <> '' AND COALESCE(uo.signature_is_active, FALSE) = TRUE THEN TRUE ELSE FALSE END AS has_signature
+         FROM users u
+    LEFT JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = u.organization_id
+        WHERE u.organization_id=$1
+        ORDER BY u.created_at DESC`,
       [orgId]
     );
     res.json(rows);
   } catch (e) {
     next(e);
   }
+});
+
+
+router.get('/:id/signature', requirePermission('users.read'), async (req, res, next) => {
+  try {
+    const out = await getUserSignatureRecord({ orgId: req.user.organization_id, userId: req.params.id });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.put('/:id/signature', requirePermission('users.manage'), async (req, res, next) => {
+  try {
+    const patch = normalizeSignaturePayload(req.body || {});
+    const out = await upsertUserSignature({
+      orgId: req.user.organization_id,
+      targetUserId: req.params.id,
+      actorUserId: req.user.id,
+      payload: patch
+    });
+    await writeAudit({
+      organizationId: req.user.organization_id,
+      actorUserId: req.user.id,
+      action: 'user.signature.updated',
+      entityType: 'user_organizations',
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+    res.json(out.after);
+  } catch (e) { next(e); }
+});
+
+router.delete('/:id/signature', requirePermission('users.manage'), async (req, res, next) => {
+  try {
+    const out = await clearUserSignature({ orgId: req.user.organization_id, targetUserId: req.params.id, actorUserId: req.user.id });
+    await writeAudit({
+      organizationId: req.user.organization_id,
+      actorUserId: req.user.id,
+      action: 'user.signature.cleared',
+      entityType: 'user_organizations',
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      before: out.before,
+      after: out.after
+    });
+    res.json(out.after);
+  } catch (e) { next(e); }
 });
 
 // Read single user (with roles)
@@ -175,7 +383,7 @@ router.get("/:id", requirePermission("users.read"), async (req, res, next) => {
     const userId = req.params.id;
 
     const { rows: uRows } = await pool.query(
-      `SELECT id, organization_id, email, status, first_name, last_name, phone, created_at, updated_at
+      `SELECT id, organization_id, email, status, first_name, last_name, phone, full_name, created_at, updated_at
        FROM users
        WHERE organization_id=$1 AND id=$2
        LIMIT 1`,
@@ -192,7 +400,9 @@ router.get("/:id", requirePermission("users.read"), async (req, res, next) => {
       [userId, orgId]
     );
 
-    res.json({ ...uRows[0], roles: roleRows });
+    const signature = await getUserSignatureRecord({ orgId, userId });
+
+    res.json({ ...uRows[0], roles: roleRows, signature });
   } catch (e) { next(e); }
 });
 
@@ -207,7 +417,7 @@ router.patch("/:id", requirePermission("users.manage"), async (req, res, next) =
     }
 
     const { rows: before } = await pool.query(
-      `SELECT id, email, status, first_name, last_name, phone FROM users WHERE organization_id=$1 AND id=$2`,
+      `SELECT id, email, status, first_name, last_name, full_name, phone FROM users WHERE organization_id=$1 AND id=$2`,
       [orgId, userId]
     );
     if (!before.length) throw new AppError(404, "User not found");
@@ -235,7 +445,7 @@ router.patch("/:id", requirePermission("users.manage"), async (req, res, next) =
              password_hash = COALESCE($8, password_hash),
              updated_at = NOW()
        WHERE organization_id=$1 AND id=$2
-       RETURNING id, email, status, first_name, last_name, phone, updated_at
+       RETURNING id, email, status, first_name, last_name, full_name, phone, updated_at
       `,
       [orgId, userId, email, firstName, lastName, phone, status, passwordHash]
     );

@@ -96,6 +96,70 @@ function makeMeta({ entityType, documentNo, documentDate, dueDate, status, refer
   };
 }
 
+
+
+function pickFirst(row, keys) {
+  for (const key of keys) {
+    if (row && row[key]) return row[key];
+  }
+  return null;
+}
+
+async function getSignatureProfiles({ orgId, userIds = [] }) {
+  const cleaned = [...new Set((userIds || []).filter(Boolean))];
+  if (!cleaned.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT u.id AS user_id,
+            u.email,
+            u.first_name,
+            u.last_name,
+            u.full_name,
+            uo.signature_image,
+            uo.signature_display_name,
+            uo.signature_title,
+            uo.signature_notes,
+            uo.signature_is_active
+       FROM users u
+       JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = $1
+      WHERE u.id = ANY($2::uuid[])`,
+    [orgId, cleaned]
+  );
+  return new Map(rows.map((r) => [r.user_id, r]));
+}
+
+function resolveUserDisplayName(profile) {
+  if (!profile) return null;
+  return profile.signature_display_name || [profile.first_name, profile.last_name].filter(Boolean).join(' ') || profile.full_name || profile.email || null;
+}
+
+async function attachSignatureBlocks({ orgId, row, payload }) {
+  if (!row || !payload) return payload;
+
+  const candidates = [
+    { key: 'preparedBy', label: 'Prepared by', userId: pickFirst(row, ['created_by_user_id', 'created_by', 'submitted_by_user_id', 'submitted_by']) },
+    { key: 'approvedBy', label: 'Authorized by', userId: pickFirst(row, ['approved_by_user_id', 'approved_by', 'posted_by_user_id', 'posted_by']) },
+    { key: 'receivedBy', label: 'Received by', userId: pickFirst(row, ['received_by_user_id', 'received_by']) }
+  ].filter((x) => x.userId);
+
+  const profiles = await getSignatureProfiles({ orgId, userIds: candidates.map((c) => c.userId) });
+  const signatures = candidates.map((candidate) => {
+    const profile = profiles.get(candidate.userId) || null;
+    const image = profile?.signature_is_active ? profile.signature_image : null;
+    return {
+      key: candidate.key,
+      label: candidate.label,
+      userId: candidate.userId,
+      name: resolveUserDisplayName(profile),
+      title: profile?.signature_title || null,
+      notes: profile?.signature_notes || null,
+      image,
+      hasSignature: Boolean(image)
+    };
+  });
+
+  return { ...payload, signatures };
+}
+
 function makeLine(line, idx) {
   return {
     lineNo: line.line_no || idx + 1,
@@ -126,13 +190,13 @@ async function buildInvoicePayload({ orgId, documentId }) {
   const doc = rows[0];
   const { rows: lines } = await pool.query(`SELECT * FROM invoice_lines WHERE invoice_id = $1 ORDER BY line_no`, [documentId]);
   const organization = await getOrganization(orgId);
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'invoice', documentNo: doc.invoice_no, documentDate: doc.invoice_date, dueDate: doc.due_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.issued_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
     summary: { subtotal: Number(doc.subtotal || 0), total: Number(doc.total || 0), memo: doc.memo || null },
     lines: lines.map(makeLine)
-  };
+  }});
 }
 
 async function buildBillPayload({ orgId, documentId }) {
@@ -152,13 +216,13 @@ async function buildBillPayload({ orgId, documentId }) {
   const doc = rows[0];
   const { rows: lines } = await pool.query(`SELECT * FROM bill_lines WHERE bill_id = $1 ORDER BY line_no`, [documentId]);
   const organization = await getOrganization(orgId);
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'bill', documentNo: doc.bill_no, documentDate: doc.bill_date, dueDate: doc.due_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.issued_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
     summary: { subtotal: Number(doc.subtotal || 0), total: Number(doc.total || 0), memo: doc.memo || null },
     lines: lines.map(makeLine)
-  };
+  }});
 }
 
 async function buildCustomerReceiptPayload({ orgId, documentId }) {
@@ -182,7 +246,7 @@ async function buildCustomerReceiptPayload({ orgId, documentId }) {
   const doc = rows[0];
   const { rows: lines } = await pool.query(`SELECT * FROM customer_receipt_allocations WHERE customer_receipt_id = $1 ORDER BY created_at ASC`, [documentId]);
   const organization = await getOrganization(orgId);
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'receipt', documentNo: doc.receipt_no, documentDate: doc.receipt_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.posted_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
@@ -204,7 +268,7 @@ async function buildCustomerReceiptPayload({ orgId, documentId }) {
       amount: Number((line.amount_applied || 0)),
       meta: { invoiceId: line.invoice_id, discountTaken: Number(line.discount_taken || 0) }
     }))
-  };
+  }});
 }
 
 async function buildVendorPaymentPayload({ orgId, documentId }) {
@@ -228,7 +292,7 @@ async function buildVendorPaymentPayload({ orgId, documentId }) {
   const doc = rows[0];
   const { rows: lines } = await pool.query(`SELECT * FROM vendor_payment_allocations WHERE vendor_payment_id = $1 ORDER BY created_at ASC`, [documentId]);
   const organization = await getOrganization(orgId);
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'payment_out', documentNo: doc.payment_no, documentDate: doc.payment_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.posted_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
@@ -247,7 +311,7 @@ async function buildVendorPaymentPayload({ orgId, documentId }) {
       amount: Number((line.amount_applied || 0)),
       meta: { billId: line.bill_id, discountTaken: Number(line.discount_taken || 0) }
     }))
-  };
+  }});
 }
 
 async function buildCreditNotePayload({ orgId, documentId }) {
@@ -267,13 +331,13 @@ async function buildCreditNotePayload({ orgId, documentId }) {
   const doc = rows[0];
   const { rows: lines } = await pool.query(`SELECT * FROM credit_note_lines WHERE credit_note_id = $1 ORDER BY line_no`, [documentId]);
   const organization = await getOrganization(orgId);
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'credit_note', documentNo: doc.credit_note_no || doc.note_no || doc.id, documentDate: doc.credit_note_date || doc.note_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.issued_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
     summary: { subtotal: Number(doc.subtotal || 0), total: Number(doc.total || 0), memo: doc.memo || null },
     lines: lines.map(makeLine)
-  };
+  }});
 }
 
 async function buildDebitNotePayload({ orgId, documentId }) {
@@ -293,13 +357,13 @@ async function buildDebitNotePayload({ orgId, documentId }) {
   const doc = rows[0];
   const { rows: lines } = await pool.query(`SELECT * FROM debit_note_lines WHERE debit_note_id = $1 ORDER BY line_no`, [documentId]);
   const organization = await getOrganization(orgId);
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'debit_note', documentNo: doc.debit_note_no || doc.note_no || doc.id, documentDate: doc.debit_note_date || doc.note_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.issued_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
     summary: { subtotal: Number(doc.subtotal || 0), total: Number(doc.total || 0), memo: doc.memo || null },
     lines: lines.map(makeLine)
-  };
+  }});
 }
 
 const OPS_MODULE_MAP = {
@@ -323,13 +387,13 @@ async function buildOpsDocPayload({ orgId, documentId, entityType }) {
   const lines = await opsRepo.getDocumentLines(documentId);
   const organization = await getOrganization(orgId);
   const counterpartyName = doc.partner_name || [doc.employee_first_name, doc.employee_last_name].filter(Boolean).join(' ') || null;
-  return {
+  return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType, documentNo: doc.document_no, documentDate: doc.document_date, dueDate: doc.due_date, status: doc.status, reference: doc.reference, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status }),
     counterparty: { name: counterpartyName, email: null, phone: null, address: null },
     summary: { subtotal: Number(doc.amount_total || 0), total: Number(doc.amount_total || 0), memo: doc.memo || null },
     lines: lines.map(makeLine)
-  };
+  }});
 }
 
 async function buildPayload({ orgId, entityType, documentId }) {
@@ -375,6 +439,10 @@ function samplePayload(entityType = 'invoice') {
     lines: [
       { lineNo: 1, description: 'Sample line 1', quantity: 2, unitPrice: 250, amount: 500 },
       { lineNo: 2, description: 'Sample line 2', quantity: 3, unitPrice: 250, amount: 750 }
+    ],
+    signatures: [
+      { key: 'preparedBy', label: 'Prepared by', name: 'Finance Officer', title: 'Accounts Officer', image: null, hasSignature: false },
+      { key: 'approvedBy', label: 'Authorized by', name: 'Finance Manager', title: 'Finance Manager', image: null, hasSignature: false }
     ]
   };
 }
