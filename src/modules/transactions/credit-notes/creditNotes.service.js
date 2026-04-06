@@ -5,7 +5,7 @@ const periodIF = require("../../../interfaces/periodManagement.interface");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
-
+const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const repo = require("./creditNotes.repository");
 const { resolveLineTaxes, round2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
 

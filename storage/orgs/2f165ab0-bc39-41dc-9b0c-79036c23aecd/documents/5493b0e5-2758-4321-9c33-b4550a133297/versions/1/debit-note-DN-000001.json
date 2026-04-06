@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "entity_type": "debit_note",
+  "entity_id": "08233a78-59c7-4ec6-b970-d4eef39cc127",
+  "snapshot_at": "2026-04-06T16:45:05.891Z",
+  "header": {
+    "id": "08233a78-59c7-4ec6-b970-d4eef39cc127",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "vendor_id": "97120ae5-b32d-4a0a-9ede-9a0156d274ae",
+    "debit_note_no": "DN-000001",
+    "debit_note_date": "2026-04-06T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "ghhgjh",
+    "subtotal": "9000.00",
+    "tax_total": "1080.00",
+    "total": "10080.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-04-06T16:44:57.619Z",
+    "updated_at": "2026-04-06T16:44:57.619Z",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "vendor_name": "Demo Vendor Ltd",
+    "vendor_code": "VEND-DEMO",
+    "vendor_email": "demo.vendor@aptbooks.local",
+    "vendor_phone": "+233200000010",
+    "workflow_status": null,
+    "can_approve": false,
+    "can_post": false
+  },
+  "lines": [
+    {
+      "id": "f7423ccb-7948-4e14-8987-1075bdce1ebc",
+      "debit_note_id": "08233a78-59c7-4ec6-b970-d4eef39cc127",
+      "line_no": 1,
+      "description": "hjjb.b.nbn",
+      "quantity": "10.0000",
+      "unit_price": "900.00",
+      "line_total": "9000.00",
+      "expense_account_id": "46bf5103-79d9-472a-a552-9f974eaf2f42",
+      "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+      "tax_amount": "1080.00",
+      "created_at": "2026-04-06T16:44:57.619Z"
+    }
+  ],
+  "applications": [],
+  "totals": {
+    "subtotal": "9000.00",
+    "tax_total": "1080.00",
+    "total": "10080.00"
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}

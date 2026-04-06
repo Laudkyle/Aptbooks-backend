@@ -8,7 +8,7 @@ const documentableSvc = require("../../../workflow/documents/documentable.servic
 
 const repo = require("./debitNotes.repository");
 const { resolveLineTaxes, round2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
-
+const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 async function calcTotals({ client, orgId, lines }) {
   let subtotal = 0;
   let tax_total = 0;
