@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "entity_type": "credit_note",
+  "entity_id": "8ee80b91-e929-4214-9533-6ecf74ef6608",
+  "snapshot_at": "2026-04-06T16:54:20.648Z",
+  "header": {
+    "id": "8ee80b91-e929-4214-9533-6ecf74ef6608",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "customer_id": "fe53aefc-3f83-4990-9e6e-5b54cf54cec2",
+    "credit_note_no": "CN-000004",
+    "credit_note_date": "2026-04-06T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "fdafdsaf",
+    "subtotal": "411876.00",
+    "tax_total": "49425.12",
+    "total": "461301.12",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-04-06T16:54:16.003Z",
+    "updated_at": "2026-04-06T16:54:16.003Z",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "customer_name": "Essential Anchor Ltd",
+    "customer_code": "ESSLTD",
+    "customer_email": "essentialanchorltd@gmail.com",
+    "customer_phone": "0249292160",
+    "workflow_status": null,
+    "canApprove": false,
+    "canPost": false
+  },
+  "lines": [
+    {
+      "id": "c4b73517-4d25-4ed3-9537-67c815870eea",
+      "credit_note_id": "8ee80b91-e929-4214-9533-6ecf74ef6608",
+      "line_no": 1,
+      "description": "dfgdfsgdfs",
+      "quantity": "12.0000",
+      "unit_price": "34323.00",
+      "line_total": "411876.00",
+      "revenue_account_id": "e1476a12-3ba0-46d7-8b65-d65bea2b8e15",
+      "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+      "tax_amount": "49425.12",
+      "created_at": "2026-04-06T16:54:16.003Z",
+      "taxes": [
+        {
+          "id": "6c61f086-217d-4bba-966f-e131722f6a44",
+          "line_id": "c4b73517-4d25-4ed3-9537-67c815870eea",
+          "sequence_no": 1,
+          "source_tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+          "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+          "taxable_amount": "411876.00",
+          "tax_rate": "12.000000",
+          "tax_amount": "49425.12",
+          "tax_type": "GST",
+          "direction": "both",
+          "box_code": null,
+          "created_at": "2026-04-06T16:54:16.003Z",
+          "tax_scope": "taxable",
+          "category_code": null,
+          "recoverable_percent": "1.0000",
+          "exemption_reason_code": null,
+          "reverse_charge": false,
+          "posting_account_id": null,
+          "source_rule_id": null,
+          "metadata": {
+            "explicit": true,
+            "itemTaxCategory": null
+          }
+        }
+      ]
+    }
+  ],
+  "applications": [],
+  "totals": {
+    "subtotal": "411876.00",
+    "tax_total": "49425.12",
+    "total": "461301.12"
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}

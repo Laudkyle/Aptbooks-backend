@@ -206,7 +206,7 @@ async function submitCreditNoteForApproval({ orgId, actorUserId, id }) {
       }
     });
 
-    const { rows } = await client.query(`UPDATE credit_notes SET status='submitted', submitted_at=NOW(), submitted_by=$3, approved_at=NULL, approved_by=NULL, rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId]);
+    const { rows } = await client.query(`UPDATE credit_notes SET status='draft', submitted_at=NOW(), submitted_by=$3, approved_at=NULL, approved_by=NULL, rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId]);
     return rows[0];
   });
 }
