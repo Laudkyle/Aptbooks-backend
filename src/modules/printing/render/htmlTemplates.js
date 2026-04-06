@@ -35,6 +35,13 @@ function fmtMoney(value, code) {
   return `${code || ''} ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim();
 }
 
+function fmtDate(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 function joinAddress(addr) {
   if (!addr) return '';
   return [addr.line1, addr.line2, addr.city, addr.region, addr.postalCode, addr.country]
@@ -150,8 +157,8 @@ function renderClassic(ctx) {
 
   const metaCells = [
     { l: 'Document No', v: meta.documentNo },
-    { l: 'Issue Date',  v: meta.documentDate },
-    meta.dueDate        && { l: 'Due Date',  v: meta.dueDate },
+    { l: 'Issue Date',  v: fmtDate(meta.documentDate) },
+    meta.dueDate        && { l: 'Due Date',  v: fmtDate(meta.dueDate) },
     meta.reference      && { l: 'Reference', v: meta.reference },
     meta.workflowStatus && { l: 'Workflow',  v: meta.workflowStatus },
   ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
@@ -286,9 +293,9 @@ function renderModern(ctx) {
   const sum     = payload.summary || {};
 
   const metaCells = [
-    { l: 'Doc No',   v: meta.documentNo },
-    { l: 'Issued',   v: meta.documentDate },
-    meta.dueDate        && { l: 'Due / Valid', v: meta.dueDate },
+    { l: 'Doc No',     v: meta.documentNo },
+    { l: 'Issued',     v: fmtDate(meta.documentDate) },
+    meta.dueDate        && { l: 'Due / Valid', v: fmtDate(meta.dueDate) },
     meta.reference      && { l: 'Ref',         v: meta.reference },
     meta.workflowStatus && { l: 'Workflow',     v: meta.workflowStatus },
   ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
@@ -415,8 +422,8 @@ function renderCompact(ctx) {
   const sum     = payload.summary || {};
 
   const metaCells = [
-    { l: 'Date',      v: meta.documentDate },
-    meta.dueDate        && { l: 'Due / Deliver', v: meta.dueDate },
+    { l: 'Date',          v: fmtDate(meta.documentDate) },
+    meta.dueDate        && { l: 'Due / Deliver', v: fmtDate(meta.dueDate) },
     meta.reference      && { l: 'Reference',     v: meta.reference },
     meta.workflowStatus && { l: 'Workflow',       v: meta.workflowStatus },
   ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
@@ -561,8 +568,8 @@ function renderCorporate(ctx) {
   const sum     = payload.summary || {};
 
   const metaCells = [
-    { l: 'Invoice Date', v: meta.documentDate },
-    meta.dueDate        && { l: 'Payment Due', v: meta.dueDate },
+    { l: 'Invoice Date', v: fmtDate(meta.documentDate) },
+    meta.dueDate        && { l: 'Payment Due', v: fmtDate(meta.dueDate) },
     meta.reference      && { l: 'Reference',   v: meta.reference },
     meta.workflowStatus && { l: 'Workflow',     v: meta.workflowStatus },
   ].filter(Boolean).map(c => `<div class="mc"><div class="mlbl">${esc(c.l)}</div><div class="mval">${esc(c.v || '—')}</div></div>`).join('');
