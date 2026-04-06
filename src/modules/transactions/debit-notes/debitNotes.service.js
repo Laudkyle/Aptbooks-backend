@@ -203,12 +203,13 @@ async function approveDebitNoteWorkflow({ orgId, actorUserId, id, comment }) {
       client
     });
 
-    await client.query(
-      `UPDATE debit_notes SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-      [orgId, id, actorUserId]
-    );
+    if (approved?.next) {
+      const { rows } = await client.query(`UPDATE debit_notes SET status='submitted', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id]);
+      return rows[0];
+    }
 
-    return approved;
+    const { rows } = await client.query(`UPDATE debit_notes SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId]);
+    return rows[0];
   });
 }
 
@@ -233,7 +234,8 @@ async function rejectDebitNoteWorkflow({ orgId, actorUserId, id, comment }) {
       [orgId, id, actorUserId, comment || null]
     );
 
-    return rejected;
+    const { rows } = await client.query(`UPDATE debit_notes SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId, comment || null]);
+    return rows[0];
   });
 }
 

@@ -17,6 +17,7 @@ const repo = require("./bills.repository");
 const { resolveLineTaxes, round2, loadLineTaxDetails, upsertDocumentTaxSnapshot } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
+const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -109,7 +110,8 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       subtotal,
       taxTotal,
       total,
-      currencyCode: baseCurrency
+      currencyCode: baseCurrency,
+      createdBy: actorUserId
     });
 
     for (let i = 0; i < computed.length; i++) {
@@ -196,7 +198,7 @@ async function issueBill({ orgId, actorUserId, billId }) {
     );
     if (!billRows.length) throw new AppError(404, "Bill not found");
     const bill = billRows[0];
-    if (bill.status !== "draft") throw new AppError(409, "Only draft bills can be issued");
+    if (!["draft", "approved"].includes(bill.status)) throw new AppError(409, "Only draft or approved bills can be issued");
 
     await assertBillApprovalStateAllowsIssue({ orgId, bill, client });
 
@@ -265,6 +267,20 @@ async function issueBill({ orgId, actorUserId, billId }) {
       }
     });
 
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        createdBy: bill.created_by || actorUserId,
+        submittedAt: bill.submitted_at || null,
+        submittedBy: bill.submitted_by || null,
+        approvedAt: bill.approved_at || null,
+        approvedBy: bill.approved_by || null,
+        updatedBy: actorUserId
+      }
+    });
+
     const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
     await upsertDocumentTaxSnapshot({
@@ -305,26 +321,81 @@ async function submitBillForApproval({ orgId, actorUserId, billId }) {
     const { rows } = await client.query(`SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, billId]);
     if (!rows.length) throw new AppError(404, "Bill not found");
     const bill = rows[0];
-    if (bill.status !== "draft") throw new AppError(409, "Only draft bills can be submitted");
+    if (!['draft','rejected'].includes(bill.status)) throw new AppError(409, "Only draft or rejected bills can be submitted");
 
-    const doc = await documentsSvc.createDraftDocument({
+    const lines = await repo.getBillLines(billId);
+
+    await documentableSvc.submitEntityForApproval({
       orgId,
       actorUserId,
+      entityType: 'bill',
+      entity: bill,
+      workflowDocumentId: bill.workflow_document_id,
+      snapshot: {
+        header: bill,
+        lines,
+        totals: { subtotal: bill.subtotal, tax_total: bill.tax_total, total: bill.total },
+        meta: { status: bill.status, currency_code: bill.currency_code }
+      },
       client,
-      payload: {
-        entityType: "bill",
-        entityId: bill.id,
-        title: `Bill ${bill.bill_no}`,
-        amount: bill.total,
-        documentDate: bill.bill_date,
-        memo: bill.memo || null
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE bills SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, billId, workflowDocumentId]);
       }
     });
 
     const { rows: updated } = await client.query(
-      `UPDATE bills SET workflow_document_id=$3, workflow_status='pending_approval', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
-      [orgId, billId, doc.id]
+      `UPDATE bills SET status='submitted', submitted_at=NOW(), submitted_by=$3, approved_at=NULL, approved_by=NULL, rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, billId, actorUserId]
     );
+    return updated[0];
+  });
+}
+
+async function approveBillWorkflow({ orgId, actorUserId, billId, comment }) {
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT id, workflow_document_id, created_by FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, billId]);
+    if (!rows.length) throw new AppError(404, 'Bill not found');
+    const bill = rows[0];
+    if (!bill.workflow_document_id) throw new AppError(409, 'Bill has no workflow document');
+
+    const result = await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: 'bill',
+      workflowDocumentId: bill.workflow_document_id,
+      creatorUserId: bill.created_by || null,
+      comment: comment || null,
+      client
+    });
+
+    if (result?.next) {
+      const { rows: updated } = await client.query(`UPDATE bills SET status='submitted', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, billId]);
+      return updated[0];
+    }
+
+    const { rows: updated } = await client.query(`UPDATE bills SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, billId, actorUserId]);
+    return updated[0];
+  });
+}
+
+async function rejectBillWorkflow({ orgId, actorUserId, billId, comment }) {
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT id, workflow_document_id, created_by FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, billId]);
+    if (!rows.length) throw new AppError(404, 'Bill not found');
+    const bill = rows[0];
+    if (!bill.workflow_document_id) throw new AppError(409, 'Bill has no workflow document');
+
+    await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: 'bill',
+      workflowDocumentId: bill.workflow_document_id,
+      creatorUserId: bill.created_by || null,
+      comment: comment || null,
+      client
+    });
+
+    const { rows: updated } = await client.query(`UPDATE bills SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, billId, actorUserId, comment || null]);
     return updated[0];
   });
 }
@@ -334,5 +405,7 @@ module.exports = {
   getBillDetails,
   listBills,
   issueBill,
-  submitBillForApproval
+  submitBillForApproval,
+  approveBillWorkflow,
+  rejectBillWorkflow
 };

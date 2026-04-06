@@ -1,5 +1,6 @@
 const { pool } = require("../../../../db/pool");
 const { AppError } = require("../../../../shared/errors/AppError");
+const { propagateDocumentWorkflowToJournal } = require("../../_shared/workflowJournalAudit.service");
 
 const periodIF = require("../../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../../interfaces/journalPosting.interface");
@@ -605,6 +606,20 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
         lines: journalLines
       }
     });
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        createdBy: vp.created_by || actorUserId,
+        submittedAt: vp.submitted_at || null,
+        submittedBy: vp.submitted_by || null,
+        approvedAt: vp.approved_at || null,
+        approvedBy: vp.approved_by || null,
+        updatedBy: actorUserId
+      }
+    });
+
     const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
     // Update vendor payment as posted

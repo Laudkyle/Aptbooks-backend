@@ -1,5 +1,6 @@
 const { pool } = require("../../../../db/pool");
 const { AppError } = require("../../../../shared/errors/AppError");
+const { propagateDocumentWorkflowToJournal } = require("../../_shared/workflowJournalAudit.service");
 
 const periodIF = require("../../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../../interfaces/journalPosting.interface");
@@ -616,7 +617,21 @@ async function postCustomerReceipt({ orgId, actorUserId, id }) {
     }
   });
 
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
+  await propagateDocumentWorkflowToJournal({
+      client: pool,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        createdBy: cr.created_by || actorUserId,
+        submittedAt: cr.submitted_at || null,
+        submittedBy: cr.submitted_by || null,
+        approvedAt: cr.approved_at || null,
+        approvedBy: cr.approved_by || null,
+        updatedBy: actorUserId
+      }
+    });
+
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
 
   const { rows: crRows } = await pool.query(
     `

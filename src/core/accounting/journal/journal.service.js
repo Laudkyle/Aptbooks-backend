@@ -319,8 +319,8 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
     const { rows: jRows } = await client.query(
       `
       INSERT INTO journal_entries
-        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key, created_by)
-      VALUES ($1,$2,$3,$4,$5,'draft',$6,$7)
+        (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key, created_by, updated_by)
+      VALUES ($1,$2,$3,$4,$5,'draft',$6,$7,$7)
       RETURNING id, status
       `,
       [
@@ -512,7 +512,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     await client.query(
       `
       UPDATE journal_entries
-      SET status='posted', posted_at=NOW(), posted_by=$3
+      SET status='posted', posted_at=NOW(), posted_by=$3, updated_at=NOW(), updated_by=$3
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, journalId, actorUserId]
@@ -996,7 +996,8 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
           rejected_at=NULL,
           rejected_by=NULL,
           rejection_reason=NULL,
-          updated_at=NOW()
+          updated_at=NOW(),
+          updated_by=$7
       WHERE organization_id=$1 AND id=$2
       `,
       [
@@ -1005,7 +1006,8 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
         periodId,
         payload.entryDate || null,
         payload.memo === undefined ? null : payload.memo,
-        typeId
+        typeId,
+        actorUserId
       ]
     );
 
@@ -1086,10 +1088,11 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
           rejected_at = NULL,
           rejected_by = NULL,
           rejection_reason = NULL,
-          updated_at = NOW()
+          updated_at = NOW(),
+          updated_by = $3
       WHERE organization_id = $1 AND id = $2
       `,
-      [orgId, journalId]
+      [orgId, journalId, actorUserId]
     );
 
     await client.query("COMMIT");
@@ -1132,7 +1135,7 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
       snapshot,
       client,
       persistWorkflowDocumentId: async (workflowDocumentId) => {
-        await client.query(`UPDATE journal_entries SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, journalId, workflowDocumentId]);
+        await client.query(`UPDATE journal_entries SET workflow_document_id=$3, updated_at=NOW(), updated_by=$4 WHERE organization_id=$1 AND id=$2`, [orgId, journalId, workflowDocumentId, actorUserId]);
       }
     });
 
@@ -1142,7 +1145,13 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
       SET status='submitted',
           submitted_at=NOW(),
           submitted_by=$3,
-          updated_at=NOW()
+          approved_at=NULL,
+          approved_by=NULL,
+          rejected_at=NULL,
+          rejected_by=NULL,
+          rejection_reason=NULL,
+          updated_at=NOW(),
+          updated_by=$3
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, journalId, actorUserId]
@@ -1178,7 +1187,7 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
     }
     if (!j.workflow_document_id) throw new AppError(409, "Journal has no workflow document");
 
-    await documentableSvc.approveEntityDocument({
+    const approvalResult = await documentableSvc.approveEntityDocument({
       orgId,
       actorUserId,
       entityType: "journal_entry",
@@ -1189,19 +1198,33 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
     });
 
     const settings = await getWorkflowSettings(client, { orgId });
-    await client.query(
-      `
-      UPDATE journal_entries
-      SET status='approved',
-          approved_at=NOW(),
-          approved_by=$3,
-          updated_at=NOW()
-      WHERE organization_id=$1 AND id=$2
-      `,
-      [orgId, journalId, actorUserId]
-    );
+    const isFinalApproval = !approvalResult?.next;
+    if (isFinalApproval) {
+      await client.query(
+        `
+        UPDATE journal_entries
+        SET status='approved',
+            approved_at=NOW(),
+            approved_by=$3,
+            updated_at=NOW(),
+            updated_by=$3
+        WHERE organization_id=$1 AND id=$2
+        `,
+        [orgId, journalId, actorUserId]
+      );
+    } else {
+      await client.query(
+        `
+        UPDATE journal_entries
+        SET updated_at=NOW(),
+            updated_by=$3
+        WHERE organization_id=$1 AND id=$2
+        `,
+        [orgId, journalId, actorUserId]
+      );
+    }
 
-    if (settings.notify_creator_on_approval && j.created_by) {
+    if (isFinalApproval && settings.notify_creator_on_approval && j.created_by) {
       await enqueueEvent({
         orgId,
         eventType: "accounting.journal.approved",
@@ -1214,7 +1237,7 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
     }
 
     await client.query("COMMIT");
-    return { journalId, status: "approved" };
+    return { journalId, status: isFinalApproval ? "approved" : "submitted", workflowStepCompleted: true, finalApproval: isFinalApproval };
   } catch (e) {
     try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
@@ -1262,7 +1285,8 @@ async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason })
           rejected_at=NOW(),
           rejected_by=$3,
           rejection_reason=$4,
-          updated_at=NOW()
+          updated_at=NOW(),
+          updated_by=$3
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, journalId, actorUserId, reason || null]
@@ -1319,7 +1343,8 @@ async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
       SET status='canceled',
           canceled_at=NOW(),
           canceled_by=$3,
-          updated_at=NOW()
+          updated_at=NOW(),
+          updated_by=$3
       WHERE organization_id=$1 AND id=$2
       `,
       [orgId, journalId, actorUserId]
@@ -1376,7 +1401,7 @@ async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
            created_by, submitted_at, submitted_by, approved_at, approved_by,
            rejected_at, rejected_by, rejection_reason,
            canceled_at, canceled_by,
-           created_at, updated_at
+           created_at, updated_at, updated_by
     FROM journal_entries
     WHERE ${where.join(" AND ")}
     ORDER BY entry_date DESC, created_at DESC

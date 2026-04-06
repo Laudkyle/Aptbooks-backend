@@ -768,19 +768,19 @@ async function setTaxCodeComponents({ orgId, taxCodeId, payload }) {
 
 async function listPartnerTaxProfiles({ orgId, query = {} }) {
   const params = [orgId];
-  const where = ["tpp.organization_id=$1"];  // ← Add tpp. prefix
+  const where = ["tpp.organization_id=$1"];  
   let i = 2;
   
   if (query.partnerId) { 
-    where.push(`tpp.partner_id=$${i++}`);   // ← Add tpp. prefix
+    where.push(`tpp.partner_id=$${i++}`);   
     params.push(query.partnerId); 
   }
   if (query.taxClass) { 
-    where.push(`tpp.tax_class=$${i++}`);    // ← Add tpp. prefix
+    where.push(`tpp.tax_class=$${i++}`);   
     params.push(query.taxClass); 
   }
   if (query.isTaxRegistered !== undefined) { 
-    where.push(`tpp.is_tax_registered=$${i++}`);  // ← Add tpp. prefix
+    where.push(`tpp.is_tax_registered=$${i++}`);  
     params.push(query.isTaxRegistered === true || query.isTaxRegistered === 'true'); 
   }
   if (query.isTaxExempt !== undefined) { 

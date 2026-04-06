@@ -15,6 +15,7 @@ const {
 const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2, upsertDocumentTaxSnapshot } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
+const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -122,12 +123,12 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
       `
       INSERT INTO invoices(
         organization_id, customer_id, invoice_no, invoice_date, due_date,
-        currency_code, fx_rate, status, memo, subtotal, tax_total, total
+        currency_code, fx_rate, status, memo, subtotal, tax_total, total, created_by
       )
-      VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9,$10)
+      VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9,$10,$11)
       RETURNING *
       `,
-      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, taxTotal, total]
+      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, taxTotal, total, actorUserId]
     );
 
     const invoice = invRows[0];
@@ -329,7 +330,7 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
     );
     if (!invRows.length) throw new AppError(404, "Invoice not found");
     const invoice = invRows[0];
-    if (invoice.status !== "draft") throw new AppError(409, "Only draft invoices can be issued");
+    if (!["draft", "approved"].includes(invoice.status)) throw new AppError(409, "Only draft or approved invoices can be issued");
 
     await assertInvoiceApprovalStateAllowsIssue({ orgId, invoice, client });
 
@@ -399,6 +400,20 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       }
     });
 
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        createdBy: invoice.created_by || actorUserId,
+        submittedAt: invoice.submitted_at || null,
+        submittedBy: invoice.submitted_by || null,
+        approvedAt: invoice.approved_at || null,
+        approvedBy: invoice.approved_by || null,
+        updatedBy: actorUserId
+      }
+    });
+
     const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
     await upsertDocumentTaxSnapshot({
@@ -452,7 +467,7 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
       [invoiceId]
     );
 
-    return documentableSvc.submitEntityForApproval({
+    await documentableSvc.submitEntityForApproval({
       orgId,
       actorUserId,
       entityType: "invoice",
@@ -478,6 +493,26 @@ async function submitInvoiceForApproval({ orgId, actorUserId, invoiceId }) {
         );
       }
     });
+
+    const { rows: updated } = await client.query(
+      `
+      UPDATE invoices
+      SET status='submitted',
+          submitted_at=NOW(),
+          submitted_by=$3,
+          approved_at=NULL,
+          approved_by=NULL,
+          rejected_at=NULL,
+          rejected_by=NULL,
+          rejection_reason=NULL,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *
+      `,
+      [orgId, invoiceId, actorUserId]
+    );
+
+    return updated[0];
   });
 }
 
@@ -500,7 +535,20 @@ async function approveInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment }
       comment: comment || null,
       client
     });
-    return result.document;
+
+    if (result?.next) {
+      const { rows: updated } = await client.query(
+        `UPDATE invoices SET status='submitted', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+        [orgId, invoiceId]
+      );
+      return updated[0];
+    }
+
+    const { rows: updated } = await client.query(
+      `UPDATE invoices SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, invoiceId, actorUserId]
+    );
+    return updated[0];
   });
 }
 
@@ -514,7 +562,7 @@ async function rejectInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment })
     const invoice = rows[0];
     if (!invoice.workflow_document_id) throw new AppError(409, "Invoice has no workflow document");
 
-    const result = await documentableSvc.rejectEntityDocument({
+    await documentableSvc.rejectEntityDocument({
       orgId,
       actorUserId,
       entityType: "invoice",
@@ -523,7 +571,12 @@ async function rejectInvoiceWorkflow({ orgId, actorUserId, invoiceId, comment })
       comment: comment || null,
       client
     });
-    return result.document;
+
+    const { rows: updated } = await client.query(
+      `UPDATE invoices SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, invoiceId, actorUserId, comment || null]
+    );
+    return updated[0];
   });
 }
 

@@ -176,7 +176,7 @@ async function submitCreditNoteForApproval({ orgId, actorUserId, id }) {
     const lines = await repo.getLines({ id, client });
     const taxMap = await loadLineTaxDetails({ client, tableName: 'credit_note_line_tax_details', lineIds: lines.map((l) => l.id) });
     const applications = await repo.getApplications ? await repo.getApplications({ orgId, id, client }) : [];
-    return documentableSvc.submitEntityForApproval({
+    await documentableSvc.submitEntityForApproval({
       orgId,
       actorUserId,
       entityType: "credit_note",
@@ -205,6 +205,9 @@ async function submitCreditNoteForApproval({ orgId, actorUserId, id }) {
         );
       }
     });
+
+    const { rows } = await client.query(`UPDATE credit_notes SET status='submitted', submitted_at=NOW(), submitted_by=$3, approved_at=NULL, approved_by=NULL, rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId]);
+    return rows[0];
   });
 }
 
@@ -224,12 +227,13 @@ async function approveCreditNoteWorkflow({ orgId, actorUserId, id, comment }) {
       client
     });
 
-    await client.query(
-      `UPDATE credit_notes SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-      [orgId, id, actorUserId]
-    );
+    if (approved?.next) {
+      const { rows } = await client.query(`UPDATE credit_notes SET status='submitted', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id]);
+      return rows[0];
+    }
 
-    return approved;
+    const { rows } = await client.query(`UPDATE credit_notes SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId]);
+    return rows[0];
   });
 }
 
@@ -254,7 +258,8 @@ async function rejectCreditNoteWorkflow({ orgId, actorUserId, id, comment }) {
       [orgId, id, actorUserId, comment || null]
     );
 
-    return rejected;
+    const { rows } = await client.query(`UPDATE credit_notes SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, id, actorUserId, comment || null]);
+    return rows[0];
   });
 }
 

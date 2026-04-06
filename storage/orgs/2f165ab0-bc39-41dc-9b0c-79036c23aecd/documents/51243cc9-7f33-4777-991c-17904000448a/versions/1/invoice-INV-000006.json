@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "86066528-388b-48c4-9d78-c97b1d1f51c6",
+  "snapshot_at": "2026-04-06T15:47:09.731Z",
+  "header": {
+    "id": "86066528-388b-48c4-9d78-c97b1d1f51c6",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "customer_id": "fe53aefc-3f83-4990-9e6e-5b54cf54cec2",
+    "invoice_no": "INV-000006",
+    "invoice_date": "2026-04-06T00:00:00.000Z",
+    "due_date": "2026-04-06T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": null,
+    "subtotal": "15096.00",
+    "total": "15096.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "36fdc786-9c9d-48c8-8205-668c2942c2d4",
+    "created_at": "2026-04-06T15:47:04.961Z",
+    "updated_at": "2026-04-06T15:47:04.961Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null
+  },
+  "lines": [
+    {
+      "id": "72231579-1ae2-43ef-b04a-7cb524fc519e",
+      "invoice_id": "86066528-388b-48c4-9d78-c97b1d1f51c6",
+      "line_no": 1,
+      "description": "juuuuu",
+      "quantity": "17.0000",
+      "unit_price": "888.00",
+      "line_total": "15096.00",
+      "revenue_account_id": "e1476a12-3ba0-46d7-8b65-d65bea2b8e15",
+      "created_at": "2026-04-06T15:47:04.961Z",
+      "tax_code_id": "f2ac7c12-21dd-4c6b-ac95-95e5277d05bd",
+      "tax_amount": "0.00",
+      "taxable_amount": "15096.00",
+      "tax_snapshot_json": {
+        "context": {
+          "partnerId": "fe53aefc-3f83-4990-9e6e-5b54cf54cec2",
+          "partnerType": "customer",
+          "documentDate": "2026-04-06",
+          "documentType": "invoice",
+          "jurisdictionId": null,
+          "transactionScope": "sales"
+        },
+        "taxAmount": 0,
+        "components": [
+          {
+            "rate": 0,
+            "boxCode": null,
+            "taxCode": "NON",
+            "taxType": "VAT",
+            "metadata": {
+              "explicit": true,
+              "itemTaxCategory": null
+            },
+            "taxScope": "taxable",
+            "direction": "both",
+            "taxAmount": 0,
+            "taxCodeId": "f2ac7c12-21dd-4c6b-ac95-95e5277d05bd",
+            "taxCodeName": "NO TAX",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": 15096,
+            "exemptionReason": null,
+            "sourceTaxCodeId": "f2ac7c12-21dd-4c6b-ac95-95e5277d05bd",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "f2ac7c12-21dd-4c6b-ac95-95e5277d05bd",
+            "recoverablePercent": 1,
+            "exemptionReasonCode": null
+          }
+        ],
+        "taxableAmount": 15096,
+        "selectedTaxCodeId": "f2ac7c12-21dd-4c6b-ac95-95e5277d05bd",
+        "withholdingTaxAmount": 0,
+        "grossComputedTaxAmount": 0
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "15096.00",
+    "total": "15096.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}
