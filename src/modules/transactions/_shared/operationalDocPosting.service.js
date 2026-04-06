@@ -38,10 +38,12 @@ function buildGroupedBaseSide({ lines, side, descriptionPrefix, requireLineAccou
   }));
 }
 
-function buildTaxLines({ header, lines, side, taxAccountId, descriptionPrefix }) {
-  if (!taxAccountId) return [];
+function buildTaxLines({ header, lines, side, taxAccountId, descriptionPrefix, requiredAccountMessage }) {
   const totalTax = round2((lines || []).reduce((sum, line) => sum + Number(line.tax_amount || line.taxAmount || 0), 0));
   if (!totalTax) return [];
+  if (!taxAccountId) {
+    throw new AppError(409, requiredAccountMessage || "Tax account is not configured");
+  }
   return [{
     accountId: taxAccountId,
     debit: side === "debit" ? totalTax : 0,
@@ -66,7 +68,7 @@ async function buildReturnLines({ orgId, header, lines, client }) {
     const arAccountId = requireAccountId(partner.default_receivable_account_id, "Customer missing defaultReceivableAccountId");
     return [
       ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Sales return ${header.document_no}` }),
-      ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.output_tax_account_id, descriptionPrefix: "Sales return" }),
+      ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.output_tax_account_id, descriptionPrefix: "Sales return", requiredAccountMessage: "Output tax account is not configured (tax_settings.output_tax_account_id)" }),
       { accountId: arAccountId, debit: 0, credit: total, description: `A/R reversal for ${header.document_no}` }
     ];
   }
@@ -76,7 +78,7 @@ async function buildReturnLines({ orgId, header, lines, client }) {
     return [
       { accountId: apAccountId, debit: total, credit: 0, description: `A/P reversal for ${header.document_no}` },
       ...buildGroupedBaseSide({ lines, side: "credit", descriptionPrefix: `Purchase return ${header.document_no}` }),
-      ...buildTaxLines({ header, lines, side: "credit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Purchase return" })
+      ...buildTaxLines({ header, lines, side: "credit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Purchase return", requiredAccountMessage: "Input tax account is not configured (tax_settings.input_tax_account_id)" })
     ];
   }
 
@@ -93,7 +95,7 @@ async function buildPostingLines({ orgId, header, lines, client }) {
       const contraAccountId = requireAccountId(header.cash_account_id || header.primary_account_id, "Expense requires cashAccountId or primaryAccountId for posting");
       return [
         ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Expense ${header.document_no}` }),
-        ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Expense" }),
+        ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Expense", requiredAccountMessage: "Input tax account is not configured (tax_settings.input_tax_account_id)" }),
         { accountId: contraAccountId, debit: 0, credit: total, description: `Expense offset for ${header.document_no}` }
       ];
     }
@@ -101,7 +103,7 @@ async function buildPostingLines({ orgId, header, lines, client }) {
       const cashAccountId = requireAccountId(header.cash_account_id, "Petty cash requires cashAccountId for posting");
       return [
         ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Petty cash ${header.document_no}` }),
-        ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Petty cash" }),
+        ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Petty cash", requiredAccountMessage: "Input tax account is not configured (tax_settings.input_tax_account_id)" }),
         { accountId: cashAccountId, debit: 0, credit: total, description: `Petty cash offset for ${header.document_no}` }
       ];
     }

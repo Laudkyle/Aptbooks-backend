@@ -379,9 +379,10 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
     }
     if (taxSummary.withholdingReceivable > 0) {
       const withholdingReceivableAccountId = taxSettingsRows[0]?.withholding_tax_receivable_account_id || null;
-      if (withholdingReceivableAccountId) {
-        journalLines.push({ accountId: withholdingReceivableAccountId, debit: taxSummary.withholdingReceivable, credit: 0, description: `Withholding tax receivable for ${invoice.invoice_no}` });
+      if (!withholdingReceivableAccountId) {
+        throw new AppError(409, 'Withholding tax receivable account is not configured (tax_settings.withholding_tax_receivable_account_id)');
       }
+      journalLines.push({ accountId: withholdingReceivableAccountId, debit: taxSummary.withholdingReceivable, credit: 0, description: `Withholding tax receivable for ${invoice.invoice_no}` });
     }
 
     const idempotencyKey = `invoice:${invoiceId}:issue`;

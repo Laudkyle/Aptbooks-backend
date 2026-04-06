@@ -104,9 +104,8 @@ async function createDraftDebitNote({ orgId, actorUserId, payload }) {
   if (vendor.status !== 'active') throw new AppError(400, "Vendor is inactive");
   if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
 
-  const totals = calcTotals(payload.lines);
-
   return withTransaction(async (client) => {
+    const totals = await calcTotals({ client, orgId, lines: payload.lines });
     return repo.createDraft({ orgId, actorUserId, payload, totals, client });
   });
 }

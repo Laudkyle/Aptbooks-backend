@@ -245,9 +245,10 @@ async function issueBill({ orgId, actorUserId, billId }) {
     }
     if (taxSummary.withholdingPayable > 0) {
       const withholdingPayableAccountId = settings.withholding_tax_payable_account_id || null;
-      if (withholdingPayableAccountId) {
-        journalLines.push({ accountId: withholdingPayableAccountId, debit: 0, credit: taxSummary.withholdingPayable, description: `Withholding tax payable for ${bill.bill_no}` });
+      if (!withholdingPayableAccountId) {
+        throw new AppError(409, 'Withholding tax payable account is not configured (tax_settings.withholding_tax_payable_account_id)');
       }
+      journalLines.push({ accountId: withholdingPayableAccountId, debit: 0, credit: taxSummary.withholdingPayable, description: `Withholding tax payable for ${bill.bill_no}` });
     }
     journalLines.push({ accountId: apAccountId, debit: 0, credit: netPayable, description: `A/P for ${bill.bill_no}` });
 
