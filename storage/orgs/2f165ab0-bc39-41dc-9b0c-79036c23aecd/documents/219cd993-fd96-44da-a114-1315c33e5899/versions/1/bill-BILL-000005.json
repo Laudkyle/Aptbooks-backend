@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "b50ff632-4ff8-4ee2-b76c-ad87deaa0547",
+  "snapshot_at": "2026-04-07T16:58:32.672Z",
+  "header": {
+    "id": "b50ff632-4ff8-4ee2-b76c-ad87deaa0547",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "vendor_id": "97120ae5-b32d-4a0a-9ede-9a0156d274ae",
+    "bill_no": "BILL-000005",
+    "bill_date": "2026-04-07T00:00:00.000Z",
+    "due_date": "2026-04-07T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "fgdfdsa",
+    "subtotal": "23.00",
+    "total": "23.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "36fdc786-9c9d-48c8-8205-668c2942c2d4",
+    "created_at": "2026-04-07T16:58:19.669Z",
+    "updated_at": "2026-04-07T16:58:19.669Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null
+  },
+  "lines": [
+    {
+      "id": "4cb7c2f5-e5fd-4702-887a-5d5dcc0a3ba1",
+      "bill_id": "b50ff632-4ff8-4ee2-b76c-ad87deaa0547",
+      "line_no": 1,
+      "description": "fdsaba",
+      "quantity": "1.0000",
+      "unit_price": "23.00",
+      "line_total": "23.00",
+      "expense_account_id": "46bf5103-79d9-472a-a552-9f974eaf2f42",
+      "created_at": "2026-04-07T16:58:19.669Z",
+      "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+      "tax_amount": "0.00",
+      "taxable_amount": "23.00",
+      "tax_snapshot_json": {
+        "context": {
+          "partnerId": "97120ae5-b32d-4a0a-9ede-9a0156d274ae",
+          "partnerType": "vendor",
+          "documentDate": "2026-04-07",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": null,
+          "transactionScope": "purchases"
+        },
+        "taxAmount": 0,
+        "components": [
+          {
+            "rate": 12,
+            "boxCode": null,
+            "taxCode": "CAT 1",
+            "taxType": "GST",
+            "metadata": {
+              "explicit": true,
+              "itemTaxCategory": null
+            },
+            "taxScope": "taxable",
+            "direction": "both",
+            "taxAmount": 0,
+            "taxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+            "taxCodeName": "STANDARD CODE ONE",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": 23,
+            "exemptionReason": null,
+            "sourceTaxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+            "recoverablePercent": 1,
+            "exemptionReasonCode": null
+          }
+        ],
+        "taxableAmount": 23,
+        "selectedTaxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+        "withholdingTaxAmount": 0,
+        "grossComputedTaxAmount": 0
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "23.00",
+    "tax_total": "0.00",
+    "total": "23.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

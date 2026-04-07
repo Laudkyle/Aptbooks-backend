@@ -227,12 +227,10 @@ async function issueBill({ orgId, actorUserId, billId }) {
     }
 
     const apAccountId = vendor.default_payable_account_id;
-    const total = Number(bill.total);
     const { rows: taxSettingsRows } = await client.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
     const settings = taxSettingsRows[0] || {};
     const inputTaxAccountId = settings.input_tax_account_id || null;
     const reverseChargeTaxAccountId = settings.reverse_charge_tax_account_id || inputTaxAccountId || null;
-    const netPayable = Number((total - taxSummary.withholdingPayable).toFixed(2));
 
     const journalLines = [];
     for (const [accountId, amt] of expenseMap.entries()) {
@@ -243,7 +241,8 @@ async function issueBill({ orgId, actorUserId, billId }) {
       journalLines.push({ accountId: inputTaxAccountId, debit: taxSummary.recoverableInputTax, credit: 0, description: `Recoverable input tax for ${bill.bill_no}` });
     }
     if (taxSummary.reverseChargeTax > 0 && reverseChargeTaxAccountId) {
-      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: taxSummary.reverseChargeTax, credit: taxSummary.reverseChargeTax, description: `Reverse charge tax memo for ${bill.bill_no}` });
+      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: taxSummary.reverseChargeTax, credit: 0, description: `Reverse charge tax debit for ${bill.bill_no}` });
+      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: 0, credit: taxSummary.reverseChargeTax, description: `Reverse charge tax credit for ${bill.bill_no}` });
     }
     if (taxSummary.withholdingPayable > 0) {
       const withholdingPayableAccountId = settings.withholding_tax_payable_account_id || null;
@@ -252,7 +251,17 @@ async function issueBill({ orgId, actorUserId, billId }) {
       }
       journalLines.push({ accountId: withholdingPayableAccountId, debit: 0, credit: taxSummary.withholdingPayable, description: `Withholding tax payable for ${bill.bill_no}` });
     }
-    journalLines.push({ accountId: apAccountId, debit: 0, credit: netPayable, description: `A/P for ${bill.bill_no}` });
+
+    const computedPayable = Number(
+      (
+        journalLines.reduce((sum, line) => sum + Number(line.debit || 0), 0) -
+        journalLines.reduce((sum, line) => sum + Number(line.credit || 0), 0)
+      ).toFixed(2)
+    );
+    if (computedPayable <= 0) {
+      throw new AppError(400, `Computed payable is invalid for ${bill.bill_no}`);
+    }
+    journalLines.push({ accountId: apAccountId, debit: 0, credit: computedPayable, description: `A/P for ${bill.bill_no}` });
 
     const idempotencyKey = `bill:${billId}:issue`;
 

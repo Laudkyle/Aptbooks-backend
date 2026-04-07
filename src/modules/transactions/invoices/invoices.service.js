@@ -363,15 +363,11 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + revenueAmount);
     }
 
-    const total = Number(invoice.total);
     const arAccountId = customer.default_receivable_account_id;
-    const netReceivable = Number((total - Number(taxSummary.withholdingReceivable || 0)).toFixed(2));
     const { rows: taxSettingsRows } = await client.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
     const outputTaxAccountId = taxSettingsRows[0]?.output_tax_account_id || null;
 
-    const journalLines = [
-      { accountId: arAccountId, debit: netReceivable, credit: 0, description: `A/R for ${invoice.invoice_no}` }
-    ];
+    const journalLines = [];
     for (const [accountId, amt] of revenueMap.entries()) {
       journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Revenue for ${invoice.invoice_no}` });
     }
@@ -386,6 +382,17 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       }
       journalLines.push({ accountId: withholdingReceivableAccountId, debit: taxSummary.withholdingReceivable, credit: 0, description: `Withholding tax receivable for ${invoice.invoice_no}` });
     }
+
+    const computedReceivable = Number(
+      (
+        journalLines.reduce((sum, line) => sum + Number(line.credit || 0), 0) -
+        journalLines.reduce((sum, line) => sum + Number(line.debit || 0), 0)
+      ).toFixed(2)
+    );
+    if (computedReceivable <= 0) {
+      throw new AppError(400, `Computed receivable is invalid for ${invoice.invoice_no}`);
+    }
+    journalLines.unshift({ accountId: arAccountId, debit: computedReceivable, credit: 0, description: `A/R for ${invoice.invoice_no}` });
 
     const idempotencyKey = `invoice:${invoiceId}:issue`;
 
