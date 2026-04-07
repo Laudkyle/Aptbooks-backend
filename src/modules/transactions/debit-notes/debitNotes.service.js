@@ -7,7 +7,7 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 const repo = require("./debitNotes.repository");
-const { resolveLineTaxes, round2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 async function calcTotals({ client, orgId, lines }) {
   let subtotal = 0;
@@ -18,10 +18,12 @@ async function calcTotals({ client, orgId, lines }) {
     const lt = Number((qty * up).toFixed(2));
     l.lineTotal = lt;
     const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: lt });
-    l.taxAmount = round2(tax.taxAmount);
+    const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
+    l.taxableAmount = round2(lt - resolvedTaxSummary.inclusiveNonWithholdingTax);
+    l.taxAmount = round2(resolvedTaxSummary.totalNonWithholdingTax);
     l.taxCodeId = tax.selectedTaxCodeId || null;
     l.taxDetails = tax.components;
-    subtotal += lt;
+    subtotal += Number(l.taxableAmount ?? 0);
     tax_total += Number(l.taxAmount ?? 0);
   }
   subtotal = Number(subtotal.toFixed(2));
@@ -260,6 +262,10 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
 
     const period = await periodIF.findOpenPeriodForDate({ orgId, date: dn.debit_note_date, client });
 
+    const postingLines = lines.map((l) => ({ ...l, taxDetails: taxMap.get(l.id) || [] }));
+    const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
+    const taxSummary = summarizeLineTaxDetails(postingLines);
+
     const jl = [];
 
     // Debit AP (reduce payable)
@@ -271,16 +277,18 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
     });
 
     // Credit expense lines
-    for (const l of lines) {
+    for (const l of postingLines) {
+      const lineTax = taxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
+      const expenseAmount = Number((Number(l.taxable_amount ?? l.line_total ?? 0) + Number(lineTax.nonRecoverable || 0)).toFixed(2));
       jl.push({
         accountId: l.expense_account_id,
         debit: 0,
-        credit: Number(l.line_total),
+        credit: expenseAmount,
         memo: l.description
       });
     }
 
-    const taxTotal = Number(dn.tax_total || 0);
+    const taxTotal = Number(taxSummary.recoverableInputTax || 0);
     if (taxTotal > 0) {
       if (!inputTaxAccountId) throw new AppError(409, "Input tax account is not configured (tax_settings.input_tax_account_id)");
       jl.push({

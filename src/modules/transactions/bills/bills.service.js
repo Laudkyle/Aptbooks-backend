@@ -14,7 +14,7 @@ const {
 } = require("../../../shared/utils/money");
 
 const repo = require("./bills.repository");
-const { resolveLineTaxes, round2, loadLineTaxDetails, upsertDocumentTaxSnapshot } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, round2, loadLineTaxDetails, upsertDocumentTaxSnapshot, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
@@ -47,13 +47,12 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
     const qty = l.quantity ?? 1;
     const unitPrice = l.unitPrice ?? 0;
     const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
-    subtotalCents += lineCents;
-    const taxableAmount = Number(bigIntToDecimalString(lineCents, 2));
+    const enteredLineAmount = Number(bigIntToDecimalString(lineCents, 2));
     const tax = await resolveLineTaxes({
       client,
       orgId,
       line: l,
-      defaultTaxableAmount: taxableAmount,
+      defaultTaxableAmount: enteredLineAmount,
       context: {
         partnerId: payload.vendorId,
         partnerType: "vendor",
@@ -64,14 +63,17 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
         placeOfSupply: payload.placeOfSupply || null
       }
     });
-    taxTotal += Number(tax.taxAmount || 0);
+    const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
+    const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
+    subtotalCents += BigInt(Math.round(taxableAmount * 100));
+    taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
     computed.push({
       ...l,
       quantity: qty,
       unitPrice,
       lineTotal: bigIntToDecimalString(lineCents, 2),
       taxableAmount,
-      taxAmount: round2(tax.taxAmount),
+      taxAmount: round2(resolvedTaxSummary.totalNonWithholdingTax),
       taxCodeId: tax.selectedTaxCodeId || null,
       taxDetails: tax.components,
       taxSnapshot: tax.snapshot

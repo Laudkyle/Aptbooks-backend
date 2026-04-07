@@ -5,7 +5,7 @@ const partnerIF = require("../../../interfaces/partnerManagement.interface");
 const { buildOperationalDocumentJournal } = require("./operationalDocPosting.service");
 const { runApprovalPostingHook } = require("./approvalPostingHooks");
 const repo = require("./opsDocs.repository");
-const { resolveLineTaxes, round2: roundTax2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, round2: roundTax2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { enrichLines, buildDetailMeta } = require("./detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
@@ -57,13 +57,15 @@ async function computeLinesWithTax({ client, orgId, lines = [] }) {
   for (const line of (lines || [])) {
     const quantity = line.quantity == null ? 1 : Number(line.quantity);
     const unitPrice = line.unitPrice == null ? 0 : Number(line.unitPrice);
-    const taxableAmount = line.taxableAmount == null
-      ? (line.lineTotal == null ? round2(quantity * unitPrice) : round2(line.lineTotal))
-      : round2(line.taxableAmount);
+    const enteredLineAmount = line.lineTotal == null ? round2(quantity * unitPrice) : round2(line.lineTotal);
 
-    const tax = await resolveLineTaxes({ client, orgId, line, defaultTaxableAmount: taxableAmount });
-    const taxAmount = roundTax2(tax.taxAmount);
-    const lineTotal = line.lineTotal == null ? round2(taxableAmount + taxAmount) : round2(line.lineTotal);
+    const tax = await resolveLineTaxes({ client, orgId, line, defaultTaxableAmount: enteredLineAmount });
+    const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
+    const taxableAmount = line.taxableAmount == null
+      ? round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax)
+      : round2(line.taxableAmount);
+    const taxAmount = roundTax2(resolvedTaxSummary.totalNonWithholdingTax);
+    const lineTotal = enteredLineAmount;
 
     subtotal += taxableAmount;
     taxTotal += taxAmount;

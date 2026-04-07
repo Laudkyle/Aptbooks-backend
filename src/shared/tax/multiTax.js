@@ -125,6 +125,38 @@ async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = 0,
   };
 }
 
+
+function summarizeResolvedTaxes(components = []) {
+  const summary = {
+    inclusiveNonWithholdingTax: 0,
+    exclusiveNonWithholdingTax: 0,
+    withholdingTax: 0,
+    totalNonWithholdingTax: 0,
+    totalTax: 0
+  };
+
+  for (const component of components || []) {
+    const amount = round2(component.taxAmount || 0);
+    const taxType = component.taxType || component.tax_type || null;
+    const calculationMethod = component.calculationMethod || component.calculation_method || 'standard';
+
+    summary.totalTax = round2(summary.totalTax + amount);
+    if (taxType === 'WITHHOLDING') {
+      summary.withholdingTax = round2(summary.withholdingTax + amount);
+      continue;
+    }
+
+    summary.totalNonWithholdingTax = round2(summary.totalNonWithholdingTax + amount);
+    if (calculationMethod === 'inclusive') {
+      summary.inclusiveNonWithholdingTax = round2(summary.inclusiveNonWithholdingTax + amount);
+    } else {
+      summary.exclusiveNonWithholdingTax = round2(summary.exclusiveNonWithholdingTax + amount);
+    }
+  }
+
+  return summary;
+}
+
 async function insertLineTaxDetails({ client, tableName, lineId, details = [] }) {
   if (!details.length) return [];
   const inserted = [];
@@ -194,5 +226,6 @@ module.exports = {
   insertLineTaxDetails,
   loadLineTaxDetails,
   fetchTaxCodeBundle,
-  upsertDocumentTaxSnapshot
+  upsertDocumentTaxSnapshot,
+  summarizeResolvedTaxes
 };

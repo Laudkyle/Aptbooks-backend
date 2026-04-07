@@ -7,7 +7,7 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const repo = require("./creditNotes.repository");
-const { resolveLineTaxes, round2, loadLineTaxDetails } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 
 async function calcTotals({ client, orgId, lines }) {
   let subtotal = 0;
@@ -18,10 +18,12 @@ async function calcTotals({ client, orgId, lines }) {
     const lt = Number((qty * up).toFixed(2));
     l.lineTotal = lt;
     const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: lt });
-    l.taxAmount = round2(tax.taxAmount);
+    const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
+    l.taxableAmount = round2(lt - resolvedTaxSummary.inclusiveNonWithholdingTax);
+    l.taxAmount = round2(resolvedTaxSummary.totalNonWithholdingTax);
     l.taxCodeId = tax.selectedTaxCodeId || null;
     l.taxDetails = tax.components;
-    subtotal += lt;
+    subtotal += Number(l.taxableAmount ?? 0);
     tax_total += Number(l.taxAmount ?? 0);
   }
   subtotal = Number(subtotal.toFixed(2));
@@ -283,18 +285,22 @@ async function issueCreditNote({ orgId, actorUserId, id }) {
 
     const period = await periodIF.findOpenPeriodForDate({ orgId, date: cn.credit_note_date, client });
 
+    const postingLines = lines.map((l) => ({ ...l, taxDetails: taxMap.get(l.id) || [] }));
+    const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
+    const taxSummary = summarizeLineTaxDetails(postingLines);
+
     // Build journal lines
     const jl = [];
-    for (const l of lines) {
+    for (const l of postingLines) {
       jl.push({
         accountId: l.revenue_account_id,
-        debit: Number(l.line_total),
+        debit: Number(l.taxable_amount ?? l.line_total ?? 0),
         credit: 0,
         memo: l.description
       });
     }
 
-    const taxTotal = Number(cn.tax_total || 0);
+    const taxTotal = Number(taxSummary.outputTax || 0);
     if (taxTotal > 0) {
       if (!outputTaxAccountId) throw new AppError(409, "Output tax account is not configured (tax_settings.output_tax_account_id)");
       jl.push({
