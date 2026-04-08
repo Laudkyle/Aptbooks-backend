@@ -51,7 +51,7 @@ const vendorPaymentAllocationSchema = z.preprocess((val) => {
   return val;
 }, z.object({
   billId: z.string().uuid(),
-  amountApplied: z.number().positive()
+  amountApplied: z.coerce.number().positive()
 }));
 
 const createVendorPaymentSchema = z.object({
@@ -82,7 +82,7 @@ const customerReceiptAllocationSchema = z.preprocess((val) => {
   return val;
 }, z.object({
   invoiceId: z.string().uuid(),
-  amountApplied: z.number().positive()
+  amountApplied: z.coerce.number().positive()
 }));
 
 const createCustomerReceiptSchema = z.object({

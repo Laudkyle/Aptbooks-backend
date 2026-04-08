@@ -69,15 +69,7 @@ async function getLines({ id, client }) {
 
 async function getApplications({ orgId, id, client }) {
   const { rows } = await client.query(
-    `SELECT
-        dna.*,
-        dna.bill_id AS "billId",
-        dna.amount_applied AS "amountApplied",
-        b.bill_no,
-        b.bill_date,
-        b.due_date,
-        b.total,
-        b.currency_code
+    `SELECT dna.*, b.bill_no, b.bill_date, b.due_date
        FROM debit_note_applications dna
        JOIN bills b ON b.id = dna.bill_id
       WHERE dna.organization_id=$1 AND dna.debit_note_id=$2
@@ -214,8 +206,8 @@ async function insertApplication({ orgId, debitNoteId, billId, amountApplied, ac
   const { rows } = await client.query(
     `INSERT INTO debit_note_applications(
         organization_id, debit_note_id, bill_id, amount_applied, applied_by
-     ) VALUES ($1,$2,$3,$4,$5)
-     RETURNING *, bill_id AS "billId", amount_applied AS "amountApplied"`,
+     ) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::numeric(18,2),$5::uuid)
+     RETURNING *, amount_applied AS "amountApplied", bill_id AS "billId"`,
     [orgId, debitNoteId, billId, amountApplied, actorUserId]
   );
   return rows[0];

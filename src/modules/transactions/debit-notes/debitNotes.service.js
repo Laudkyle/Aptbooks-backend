@@ -347,13 +347,22 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
 
 async function applyDebitNote({ orgId, actorUserId, id, payload }) {
   return withTransaction(async (client) => {
+    const normalizedPayload = {
+      billId: String(payload?.billId ?? payload?.bill_id ?? '').trim(),
+      amountApplied: Number(payload?.amountApplied ?? payload?.amount_applied ?? payload?.amount ?? 0)
+    };
+    if (!normalizedPayload.billId) throw new AppError(400, "billId is required");
+    if (!Number.isFinite(normalizedPayload.amountApplied) || normalizedPayload.amountApplied <= 0) {
+      throw new AppError(400, "amountApplied must be > 0", null, "validation_error");
+    }
+
     const dn = await repo.getById({ orgId, id, client });
     if (!dn) throw new AppError(404, "Debit note not found");
     if (dn.status !== 'issued') throw new AppError(409, "Only issued debit notes can be applied");
 
     const { rows: billRows } = await client.query(
       `SELECT * FROM bills WHERE organization_id=$1 AND id=$2`,
-      [orgId, payload.billId]
+      [orgId, normalizedPayload.billId]
     );
     if (!billRows.length) throw new AppError(404, "Bill not found");
     const bill = billRows[0];
@@ -361,21 +370,21 @@ async function applyDebitNote({ orgId, actorUserId, id, payload }) {
     if (bill.status === 'voided') throw new AppError(409, "Cannot apply to voided bill");
 
     const dnBal = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
-    if (payload.amountApplied > dnBal.remaining + 1e-9) throw new AppError(409, "Amount exceeds debit note remaining balance");
+    if (normalizedPayload.amountApplied > dnBal.remaining + 1e-9) throw new AppError(409, "Amount exceeds debit note remaining balance");
 
-    const billOpen = await getBillOpenBalance({ orgId, billId: payload.billId, client });
-    if (payload.amountApplied > billOpen + 1e-9) throw new AppError(409, "Amount exceeds bill open balance");
+    const billOpen = await getBillOpenBalance({ orgId, billId: normalizedPayload.billId, client });
+    if (normalizedPayload.amountApplied > billOpen + 1e-9) throw new AppError(409, "Amount exceeds bill open balance");
 
     const app = await repo.insertApplication({
       orgId,
       debitNoteId: id,
-      billId: payload.billId,
-      amountApplied: payload.amountApplied,
+      billId: normalizedPayload.billId,
+      amountApplied: Number(normalizedPayload.amountApplied.toFixed(2)),
       actorUserId,
       client
     });
 
-    await refreshBillPaidStatus({ orgId, billId: payload.billId, client });
+    await refreshBillPaidStatus({ orgId, billId: normalizedPayload.billId, client });
     const balance = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
     return { ...app, balance, is_available_for_application: balance.remaining > 0 };
   });

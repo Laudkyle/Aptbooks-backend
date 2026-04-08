@@ -367,13 +367,22 @@ async function issueCreditNote({ orgId, actorUserId, id }) {
 
 async function applyCreditNote({ orgId, actorUserId, id, payload }) {
   return withTransaction(async (client) => {
+    const normalizedPayload = {
+      invoiceId: String(payload?.invoiceId ?? payload?.invoice_id ?? '').trim(),
+      amountApplied: Number(payload?.amountApplied ?? payload?.amount_applied ?? payload?.amount ?? 0)
+    };
+    if (!normalizedPayload.invoiceId) throw new AppError(400, "invoiceId is required");
+    if (!Number.isFinite(normalizedPayload.amountApplied) || normalizedPayload.amountApplied <= 0) {
+      throw new AppError(400, "amountApplied must be > 0", null, "validation_error");
+    }
+
     const cn = await repo.getById({ orgId, id, client });
     if (!cn) throw new AppError(404, "Credit note not found");
     if (cn.status !== 'issued') throw new AppError(409, "Only issued credit notes can be applied");
 
     const { rows: invRows } = await client.query(
       `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2`,
-      [orgId, payload.invoiceId]
+      [orgId, normalizedPayload.invoiceId]
     );
     if (!invRows.length) throw new AppError(404, "Invoice not found");
     const inv = invRows[0];
@@ -381,21 +390,21 @@ async function applyCreditNote({ orgId, actorUserId, id, payload }) {
     if (inv.status === 'voided') throw new AppError(409, "Cannot apply to voided invoice");
 
     const cnBal = await getCreditNoteBalances({ orgId, creditNoteId: id, client });
-    if (payload.amountApplied > cnBal.remaining + 1e-9) throw new AppError(409, "Amount exceeds credit note remaining balance");
+    if (normalizedPayload.amountApplied > cnBal.remaining + 1e-9) throw new AppError(409, "Amount exceeds credit note remaining balance");
 
-    const invOpen = await getInvoiceOpenBalance({ orgId, invoiceId: payload.invoiceId, client });
-    if (payload.amountApplied > invOpen + 1e-9) throw new AppError(409, "Amount exceeds invoice open balance");
+    const invOpen = await getInvoiceOpenBalance({ orgId, invoiceId: normalizedPayload.invoiceId, client });
+    if (normalizedPayload.amountApplied > invOpen + 1e-9) throw new AppError(409, "Amount exceeds invoice open balance");
 
     const app = await repo.insertApplication({
       orgId,
       creditNoteId: id,
-      invoiceId: payload.invoiceId,
-      amountApplied: payload.amountApplied,
+      invoiceId: normalizedPayload.invoiceId,
+      amountApplied: Number(normalizedPayload.amountApplied.toFixed(2)),
       actorUserId,
       client
     });
 
-    await refreshInvoicePaidStatus({ orgId, invoiceId: payload.invoiceId, client });
+    await refreshInvoicePaidStatus({ orgId, invoiceId: normalizedPayload.invoiceId, client });
     const balance = await getCreditNoteBalances({ orgId, creditNoteId: id, client });
     return { ...app, balance, is_available_for_application: balance.remaining > 0 };
   });

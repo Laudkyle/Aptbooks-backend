@@ -151,33 +151,31 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
   const lines = await repo.getBillLines(billId);
   const taxMap = await loadLineTaxDetails({ client: pool, tableName: 'bill_line_tax_details', lineIds: lines.map((l) => l.id) });
 
-  const { rows: appliedRows } = await pool.query(
+  const { rows: paidRows } = await pool.query(
     `
-    WITH payment_alloc AS (
-      SELECT COALESCE(SUM(vpa.amount_applied),0) AS payment_amount
-      FROM vendor_payment_allocations vpa
-      JOIN vendor_payments vp ON vp.id = vpa.vendor_payment_id
-      WHERE vpa.bill_id=$1
-        AND vp.organization_id=$2
-        AND vp.status='posted'
-    ), debit_alloc AS (
-      SELECT COALESCE(SUM(dna.amount_applied),0) AS debit_amount
-      FROM debit_note_applications dna
-      JOIN debit_notes dn ON dn.id = dna.debit_note_id
-      WHERE dna.bill_id=$1
-        AND dna.organization_id=$2
-        AND dn.status='issued'
-    )
-    SELECT payment_amount, debit_amount
-    FROM payment_alloc
-    CROSS JOIN debit_alloc
+    SELECT
+      COALESCE((
+        SELECT SUM(vpa.amount_applied)
+        FROM vendor_payment_allocations vpa
+        JOIN vendor_payments vp ON vp.id = vpa.vendor_payment_id
+        WHERE vpa.bill_id=$1
+          AND vp.organization_id=$2
+          AND vp.status='posted'
+      ),0) AS paid,
+      COALESCE((
+        SELECT SUM(dna.amount_applied)
+        FROM debit_note_applications dna
+        WHERE dna.organization_id=$2
+          AND dna.bill_id=$1
+      ),0) AS debit_applied
     `,
     [billId, orgId]
   );
 
-  const paid = Number(appliedRows[0]?.payment_amount || 0) + Number(appliedRows[0]?.debit_amount || 0);
+  const paid = Number(paidRows[0]?.paid || 0);
+  const debitApplied = Number(paidRows[0]?.debit_applied || 0);
   const total = Number(bill.total);
-  const outstanding = Number((total - paid).toFixed(2));
+  const outstanding = Number((total - paid - debitApplied).toFixed(2));
 
   const enrichedLines = await enrichLines({ client: pool, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
 
@@ -185,8 +183,9 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
     bill,
     lines: enrichedLines,
     paid,
+    debitApplied,
     outstanding,
-    detail_meta: buildDetailMeta({ header: bill, lines: enrichedLines, extra: { paid, outstanding } })
+    detail_meta: buildDetailMeta({ header: bill, lines: enrichedLines, extra: { paid, debitApplied, outstanding } })
   };
 }
 
