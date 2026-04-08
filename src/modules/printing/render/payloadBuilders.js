@@ -160,17 +160,106 @@ async function attachSignatureBlocks({ orgId, row, payload }) {
   return { ...payload, signatures };
 }
 
-function makeLine(line, idx) {
+function makeLine(line, idx, extra = {}) {
   return {
+    lineId: line.id || null,
     lineNo: line.line_no || idx + 1,
     description: line.description || null,
     quantity: line.quantity == null ? null : Number(line.quantity),
     unitPrice: line.unit_price == null ? null : Number(line.unit_price),
     amount: line.line_total == null ? null : Number(line.line_total),
+    taxableAmount: line.taxable_amount == null ? null : Number(line.taxable_amount),
+    taxAmount: line.tax_amount == null ? 0 : Number(line.tax_amount),
+    grossAmount: extra.grossAmount == null ? (line.line_total == null ? null : Number(line.line_total) + Number(line.tax_amount || 0)) : Number(extra.grossAmount),
+    taxCode: extra.taxCode || null,
+    taxCodeName: extra.taxCodeName || null,
+    taxRate: extra.taxRate == null ? null : Number(extra.taxRate),
+    taxType: extra.taxType || null,
+    taxDirection: extra.taxDirection || null,
+    boxCode: extra.boxCode || null,
+    taxComponents: Array.isArray(extra.taxComponents) ? extra.taxComponents : [],
     accountId: line.account_id || line.revenue_account_id || null,
     itemId: line.item_id || null,
-    meta: line.meta || {}
+    meta: { ...(line.meta || {}), ...(extra.meta || {}) }
   };
+}
+
+function buildTaxComponent(row) {
+  return {
+    id: row.id || null,
+    sequenceNo: row.sequence_no == null ? null : Number(row.sequence_no),
+    taxCodeId: row.tax_code_id || null,
+    taxCode: row.tax_code_code || null,
+    taxCodeName: row.tax_code_name || null,
+    sourceTaxCodeId: row.source_tax_code_id || null,
+    taxableAmount: Number(row.taxable_amount || 0),
+    taxRate: Number(row.tax_rate || 0),
+    taxAmount: Number(row.tax_amount || 0),
+    taxType: row.tax_type || null,
+    direction: row.direction || null,
+    boxCode: row.box_code || null
+  };
+}
+
+function summarizeTaxComponents(components = []) {
+  const list = Array.isArray(components) ? components : [];
+  const grouped = new Map();
+  for (const component of list) {
+    const key = [component.taxCode || '', component.taxCodeName || '', component.taxType || '', component.taxRate || 0, component.boxCode || ''].join('|');
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        taxCode: component.taxCode || null,
+        taxCodeName: component.taxCodeName || null,
+        taxType: component.taxType || null,
+        taxRate: Number(component.taxRate || 0),
+        boxCode: component.boxCode || null,
+        taxableAmount: 0,
+        taxAmount: 0,
+        componentCount: 0
+      });
+    }
+    const bucket = grouped.get(key);
+    bucket.taxableAmount += Number(component.taxableAmount || 0);
+    bucket.taxAmount += Number(component.taxAmount || 0);
+    bucket.componentCount += 1;
+  }
+  return Array.from(grouped.values()).sort((a, b) => {
+    const typeA = `${a.taxType || ''} ${a.taxCode || ''}`.trim();
+    const typeB = `${b.taxType || ''} ${b.taxCode || ''}`.trim();
+    return typeA.localeCompare(typeB);
+  });
+}
+
+function buildDocumentTaxSummary({ lines = [], docTaxTotal = 0 }) {
+  const taxGroups = summarizeTaxComponents(lines.flatMap((line) => line.taxComponents || []));
+  return {
+    tax: Number(docTaxTotal || 0),
+    taxGroups,
+    taxableBase: lines.reduce((sum, line) => sum + Number(line.taxableAmount != null ? line.taxableAmount : line.amount || 0), 0),
+    lineTaxTotal: lines.reduce((sum, line) => sum + Number(line.taxAmount || 0), 0),
+    grossTotal: lines.reduce((sum, line) => sum + Number(line.grossAmount != null ? line.grossAmount : (line.amount || 0) + (line.taxAmount || 0)), 0)
+  };
+}
+
+async function loadLineTaxDetails({ detailTable, lineIds = [] }) {
+  const cleaned = [...new Set((lineIds || []).filter(Boolean))];
+  if (!cleaned.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT d.*,
+            tc.code AS tax_code_code,
+            tc.name AS tax_code_name
+       FROM ${detailTable} d
+  LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
+      WHERE d.line_id = ANY($1::uuid[])
+      ORDER BY d.line_id, d.sequence_no`,
+    [cleaned]
+  );
+  const map = new Map();
+  for (const row of rows) {
+    if (!map.has(row.line_id)) map.set(row.line_id, []);
+    map.get(row.line_id).push(buildTaxComponent(row));
+  }
+  return map;
 }
 
 async function buildInvoicePayload({ orgId, documentId }) {
@@ -188,14 +277,52 @@ async function buildInvoicePayload({ orgId, documentId }) {
       LIMIT 1`, [orgId, documentId]);
   if (!rows.length) throw new AppError(404, 'Invoice not found');
   const doc = rows[0];
-  const { rows: lines } = await pool.query(`SELECT * FROM invoice_lines WHERE invoice_id = $1 ORDER BY line_no`, [documentId]);
+  const { rows: lines } = await pool.query(
+    `SELECT il.*,
+            tc.code AS tax_code_code,
+            tc.name AS tax_code_name,
+            tc.tax_type AS tax_code_type,
+            tc.direction AS tax_code_direction,
+            tc.rate AS tax_code_rate,
+            tc.box_code AS tax_box_code
+       FROM invoice_lines il
+  LEFT JOIN tax_codes tc ON tc.id = il.tax_code_id
+      WHERE il.invoice_id = $1
+      ORDER BY il.line_no`,
+    [documentId]
+  );
+  const lineTaxMap = await loadLineTaxDetails({ detailTable: 'invoice_line_tax_details', lineIds: lines.map((line) => line.id) });
+  const renderedLines = lines.map((line, idx) => {
+    const taxComponents = lineTaxMap.get(line.id) || [];
+    return makeLine(line, idx, {
+      taxCode: line.tax_code_code || null,
+      taxCodeName: line.tax_code_name || null,
+      taxRate: line.tax_code_rate == null ? (taxComponents[0]?.taxRate ?? null) : Number(line.tax_code_rate),
+      taxType: line.tax_code_type || taxComponents[0]?.taxType || null,
+      taxDirection: line.tax_code_direction || taxComponents[0]?.direction || null,
+      boxCode: line.tax_box_code || taxComponents[0]?.boxCode || null,
+      grossAmount: Number(line.line_total || 0) + Number(line.tax_amount || 0),
+      taxComponents
+    });
+  });
+  const taxSummary = buildDocumentTaxSummary({ lines: renderedLines, docTaxTotal: doc.tax_total });
   const organization = await getOrganization(orgId);
   return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'invoice', documentNo: doc.invoice_no, documentDate: doc.invoice_date, dueDate: doc.due_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.issued_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
-    summary: { subtotal: Number(doc.subtotal || 0), total: Number(doc.total || 0), memo: doc.memo || null },
-    lines: lines.map(makeLine)
+    summary: {
+      subtotal: Number(doc.subtotal || 0),
+      tax: Number(doc.tax_total || 0),
+      total: Number(doc.total || 0),
+      memo: doc.memo || null,
+      taxedLineCount: renderedLines.filter((line) => Number(line.taxAmount || 0) > 0).length,
+      untaxedLineCount: renderedLines.filter((line) => Number(line.taxAmount || 0) <= 0).length,
+      taxGroups: taxSummary.taxGroups,
+      taxableBase: taxSummary.taxableBase,
+      grossTotal: taxSummary.grossTotal
+    },
+    lines: renderedLines
   }});
 }
 
@@ -214,14 +341,52 @@ async function buildBillPayload({ orgId, documentId }) {
       LIMIT 1`, [orgId, documentId]);
   if (!rows.length) throw new AppError(404, 'Bill not found');
   const doc = rows[0];
-  const { rows: lines } = await pool.query(`SELECT * FROM bill_lines WHERE bill_id = $1 ORDER BY line_no`, [documentId]);
+  const { rows: lines } = await pool.query(
+    `SELECT bl.*,
+            tc.code AS tax_code_code,
+            tc.name AS tax_code_name,
+            tc.tax_type AS tax_code_type,
+            tc.direction AS tax_code_direction,
+            tc.rate AS tax_code_rate,
+            tc.box_code AS tax_box_code
+       FROM bill_lines bl
+  LEFT JOIN tax_codes tc ON tc.id = bl.tax_code_id
+      WHERE bl.bill_id = $1
+      ORDER BY bl.line_no`,
+    [documentId]
+  );
+  const lineTaxMap = await loadLineTaxDetails({ detailTable: 'bill_line_tax_details', lineIds: lines.map((line) => line.id) });
+  const renderedLines = lines.map((line, idx) => {
+    const taxComponents = lineTaxMap.get(line.id) || [];
+    return makeLine(line, idx, {
+      taxCode: line.tax_code_code || null,
+      taxCodeName: line.tax_code_name || null,
+      taxRate: line.tax_code_rate == null ? (taxComponents[0]?.taxRate ?? null) : Number(line.tax_code_rate),
+      taxType: line.tax_code_type || taxComponents[0]?.taxType || null,
+      taxDirection: line.tax_code_direction || taxComponents[0]?.direction || null,
+      boxCode: line.tax_box_code || taxComponents[0]?.boxCode || null,
+      grossAmount: Number(line.line_total || 0) + Number(line.tax_amount || 0),
+      taxComponents
+    });
+  });
+  const taxSummary = buildDocumentTaxSummary({ lines: renderedLines, docTaxTotal: doc.tax_total });
   const organization = await getOrganization(orgId);
   return attachSignatureBlocks({ orgId, row: doc, payload: {
     organization,
     meta: makeMeta({ entityType: 'bill', documentNo: doc.bill_no, documentDate: doc.bill_date, dueDate: doc.due_date, status: doc.status, currencyCode: doc.currency_code, workflowStatus: doc.workflow_status, issuedAt: doc.issued_at }),
     counterparty: { name: doc.partner_name || null, email: doc.partner_email || null, phone: doc.partner_phone || null, address: addressFromRow('partner', doc) },
-    summary: { subtotal: Number(doc.subtotal || 0), total: Number(doc.total || 0), memo: doc.memo || null },
-    lines: lines.map(makeLine)
+    summary: {
+      subtotal: Number(doc.subtotal || 0),
+      tax: Number(doc.tax_total || 0),
+      total: Number(doc.total || 0),
+      memo: doc.memo || null,
+      taxedLineCount: renderedLines.filter((line) => Number(line.taxAmount || 0) > 0).length,
+      untaxedLineCount: renderedLines.filter((line) => Number(line.taxAmount || 0) <= 0).length,
+      taxGroups: taxSummary.taxGroups,
+      taxableBase: taxSummary.taxableBase,
+      grossTotal: taxSummary.grossTotal
+    },
+    lines: renderedLines
   }});
 }
 

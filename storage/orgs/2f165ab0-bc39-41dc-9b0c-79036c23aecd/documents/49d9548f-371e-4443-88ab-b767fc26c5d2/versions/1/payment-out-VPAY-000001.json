@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "entity_type": "payment_out",
+  "entity_id": "fcb8df2e-e057-48eb-afe9-0017880fddb2",
+  "snapshot_at": "2026-04-08T09:42:56.686Z",
+  "header": {
+    "id": "fcb8df2e-e057-48eb-afe9-0017880fddb2",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "vendor_id": "97120ae5-b32d-4a0a-9ede-9a0156d274ae",
+    "payment_no": "VPAY-000001",
+    "payment_date": "2026-04-08T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "payment_method_id": "7ed58357-bf46-4bfc-aef9-f3f6f992f1c9",
+    "cash_account_id": "f13b6971-6b3b-4ec2-b7c5-7358850d189e",
+    "amount_total": "8707178.24",
+    "status": "draft",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-04-08T09:42:47.419Z",
+    "updated_at": "2026-04-08T09:42:47.419Z",
+    "unapplied_amount": "0.00",
+    "discount_total": "0.00",
+    "settlement_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null
+  },
+  "allocations": [
+    {
+      "id": "f98b9bc2-9cd5-409a-8f68-0baa33933c23",
+      "vendor_payment_id": "fcb8df2e-e057-48eb-afe9-0017880fddb2",
+      "bill_id": "6612ba18-d5cd-4dff-8db0-fe46b8be3e73",
+      "amount_applied": "8707178.24",
+      "created_at": "2026-04-08T09:42:47.419Z",
+      "discount_taken": "0.00"
+    }
+  ],
+  "totals": {
+    "amount_total": "8707178.24",
+    "unapplied_amount": "0.00",
+    "settlement_amount": null,
+    "discount_amount": null
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}

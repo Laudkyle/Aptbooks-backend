@@ -56,6 +56,58 @@ function currency(payload) {
   return payload?.meta?.currencyCode || payload?.organization?.base_currency_code || 'GHS';
 }
 
+function hasTaxDetails(payload) {
+  const lines = Array.isArray(payload?.lines) ? payload.lines : [];
+  const groups = Array.isArray(payload?.summary?.taxGroups) ? payload.summary.taxGroups : [];
+  return groups.length > 0 || lines.some((line) => Number(line?.taxAmount || 0) > 0 || Array.isArray(line?.taxComponents) && line.taxComponents.length);
+}
+
+function taxColumnHeader() {
+  return `<th class="r" style="width:92px">Taxable</th><th class="r" style="width:92px">Tax</th><th class="r" style="width:88px">Rate</th><th style="width:124px">Tax Code</th><th class="r" style="width:132px">Gross</th>`;
+}
+
+function taxColumnCells(line, code) {
+  const taxCodeLabel = [line?.taxCode, line?.taxCodeName].filter(Boolean).join(' · ');
+  const rate = line?.taxRate == null ? '—' : `${Number(line.taxRate).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 })}%`;
+  return `
+  <td class="r">${esc(fmtMoney(line?.taxableAmount != null ? line.taxableAmount : line?.amount, code))}</td>
+  <td class="r">${Number(line?.taxAmount || 0) ? esc(fmtMoney(line.taxAmount, code)) : '—'}</td>
+  <td class="r">${esc(rate)}</td>
+  <td>${esc(taxCodeLabel || '—')}</td>
+  <td class="r">${esc(fmtMoney(line?.grossAmount != null ? line.grossAmount : Number(line?.amount || 0) + Number(line?.taxAmount || 0), code))}</td>`;
+}
+
+function renderTaxSummary(summary, code, variant = 'default') {
+  const groups = Array.isArray(summary?.taxGroups) ? summary.taxGroups : [];
+  if (!groups.length && !Number(summary?.tax || 0)) return '';
+  const tag = variant === 'modern' ? 'TAX BREAKDOWN' : variant === 'corporate' ? 'Tax Schedule' : 'Tax Breakdown';
+  const rows = groups.map((group) => `
+    <tr>
+      <td><strong>${esc(group.taxCode || group.taxType || 'Tax')}</strong>${group.taxCodeName ? `<div style="font-size:11px;opacity:.75">${esc(group.taxCodeName)}</div>` : ''}</td>
+      <td class="r">${esc(fmtMoney(group.taxableAmount, code))}</td>
+      <td class="r">${esc(`${Number(group.taxRate || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 3 })}%`)}</td>
+      <td class="r">${esc(fmtMoney(group.taxAmount, code))}</td>
+    </tr>`).join('');
+  return `
+    <div class="notes" style="margin-top:18px">
+      <div class="plbl">${tag}</div>
+      <table class="items" style="margin-top:10px">
+        <thead>
+          <tr>
+            <th>Code / Tax Type</th>
+            <th class="r" style="width:140px">Taxable Base</th>
+            <th class="r" style="width:90px">Rate</th>
+            <th class="r" style="width:140px">Tax Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td>Total Tax</td><td class="r">—</td><td class="r">—</td><td class="r">${esc(fmtMoney(summary?.tax || 0, code))}</td></tr>`}
+        </tbody>
+      </table>
+      <p>Total tax on this document: <strong>${esc(fmtMoney(summary?.tax || 0, code))}</strong>.</p>
+    </div>`;
+}
+
 function renderSignatureBlocks(signatures, variant = 'classic') {
   const sigs = Array.isArray(signatures) ? signatures : [];
   if (!sigs.length) return '';
@@ -132,13 +184,14 @@ table.items{width:100%;border-collapse:collapse;font-size:${tf};margin-bottom:4p
 }
 
 function classicLines(lines, code) {
+  const taxed = hasTaxDetails({ lines });
   return (lines || []).map((l, i) => `
 <tr>
   <td>${zeroPad(l.lineNo, i)}</td>
   <td><span class="idesc">${esc(l.description || '—')}</span></td>
   <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
   <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
+  ${taxed ? taxColumnCells(l, code) : `<td class="r">${esc(fmtMoney(l.amount, code))}</td>`}
 </tr>`).join('');
 }
 
@@ -194,9 +247,10 @@ function renderClassic(ctx) {
     <div class="meta">${metaCells}</div>
     <div class="sttl">Line Items</div>
     <table class="items">
-      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th><th class="r" style="width:140px">Amount</th></tr></thead>
+      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th>${hasTaxDetails(payload) ? taxColumnHeader() : `<th class="r" style="width:140px">Amount</th>`}</tr></thead>
       <tbody>${classicLines(payload.lines, code)}</tbody>
     </table>
+    ${renderTaxSummary(sum, code, 'classic')}
     <div class="totals"><table>
       <tr><td class="tl">Subtotal</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
       ${sum.tax      != null ? `<tr><td class="tl">Tax</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
@@ -272,13 +326,14 @@ table.items{width:100%;border-collapse:collapse}
 }
 
 function modernLines(lines, code) {
+  const taxed = hasTaxDetails({ lines });
   return (lines || []).map((l, i) => `
 <tr>
   <td>${zeroPad(l.lineNo, i)}</td>
   <td><span class="idesc">${esc(l.description || '—')}</span></td>
   <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
   <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
+  ${taxed ? taxColumnCells(l, code) : `<td class="r">${esc(fmtMoney(l.amount, code))}</td>`}
 </tr>`).join('');
 }
 
@@ -332,9 +387,10 @@ function renderModern(ctx) {
   <div class="sec">
     <div class="slbl">Line Items</div>
     <table class="items">
-      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th><th class="r" style="width:140px">Amount</th></tr></thead>
+      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th>${hasTaxDetails(payload) ? taxColumnHeader() : `<th class="r" style="width:140px">Amount</th>`}</tr></thead>
       <tbody>${modernLines(payload.lines, code)}</tbody>
     </table>
+    ${renderTaxSummary(sum, code, 'modern')}
   </div>
   <div class="totrow"><div class="tot"><table>
     <tr><td class="tl">SUBTOTAL</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
@@ -402,13 +458,14 @@ table.items{width:100%;border-collapse:collapse;margin-bottom:4px}
 }
 
 function compactLines(lines, code) {
+  const taxed = hasTaxDetails({ lines });
   return (lines || []).map((l, i) => `
 <tr>
   <td>${zeroPad(l.lineNo, i)}</td>
   <td><span class="idesc">${esc(l.description || '—')}</span></td>
   <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
   <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
+  ${taxed ? taxColumnCells(l, code) : `<td class="r">${esc(fmtMoney(l.amount, code))}</td>`}
 </tr>`).join('');
 }
 
@@ -462,9 +519,10 @@ function renderCompact(ctx) {
     </div>
     <div class="meta">${metaCells}</div>
     <table class="items">
-      <thead><tr><th style="width:38px">#</th><th>Item</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th><th class="r" style="width:130px">Amount</th></tr></thead>
+      <thead><tr><th style="width:38px">#</th><th>Item</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:120px">Unit Price</th>${hasTaxDetails(payload) ? taxColumnHeader() : `<th class="r" style="width:130px">Amount</th>`}</tr></thead>
       <tbody>${compactLines(payload.lines, code)}</tbody>
     </table>
+    ${renderTaxSummary(sum, code, 'compact')}
     <div class="totals"><div class="tot"><table>
       <tr><td class="tl">Subtotal</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
       ${sum.tax      != null ? `<tr><td class="tl">Tax / Shipping</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
@@ -546,13 +604,14 @@ table.items{width:100%;border-collapse:collapse}
 
 function corpLines(lines, code) {
   const ROMAN = ['I','II','III','IV','V','VI','VII','VIII','IX','X'];
+  const taxed = hasTaxDetails({ lines });
   return (lines || []).map((l, i) => `
 <tr>
   <td>${ROMAN[i] || zeroPad(l.lineNo, i)}</td>
   <td><span class="idesc">${esc(l.description || '—')}</span></td>
   <td class="r">${l.quantity == null ? '—' : esc(l.quantity)}</td>
   <td class="r">${l.unitPrice == null ? '—' : Number(l.unitPrice).toLocaleString('en-US', {minimumFractionDigits:2})}</td>
-  <td class="r">${esc(fmtMoney(l.amount, code))}</td>
+  ${taxed ? taxColumnCells(l, code) : `<td class="r">${esc(fmtMoney(l.amount, code))}</td>`}
 </tr>`).join('');
 }
 
@@ -609,9 +668,10 @@ function renderCorporate(ctx) {
     <div class="meta">${metaCells}</div>
     <div class="sttl">Services Rendered <span></span></div>
     <table class="items">
-      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:130px">Unit Price</th><th class="r" style="width:140px">Amount</th></tr></thead>
+      <thead><tr><th style="width:42px">#</th><th>Description</th><th class="r" style="width:70px">Qty</th><th class="r" style="width:130px">Unit Price</th>${hasTaxDetails(payload) ? taxColumnHeader() : `<th class="r" style="width:140px">Amount</th>`}</tr></thead>
       <tbody>${corpLines(payload.lines, code)}</tbody>
     </table>
+    ${renderTaxSummary(sum, code, 'corporate')}
     <div class="totals"><div class="tot"><table>
       <tr><td class="tl">Subtotal</td><td>${esc(fmtMoney(sum.subtotal, code))}</td></tr>
       ${sum.tax      != null ? `<tr><td class="tl">VAT / Tax</td><td>${esc(fmtMoney(sum.tax, code))}</td></tr>` : ''}
