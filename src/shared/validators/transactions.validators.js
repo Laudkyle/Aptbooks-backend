@@ -41,10 +41,18 @@ const voidBillSchema = z.object({
  * Vendor Payments (partial allocations)
  * ========================= */
 
-const vendorPaymentAllocationSchema = z.object({
+const vendorPaymentAllocationSchema = z.preprocess((val) => {
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    return {
+      ...val,
+      amountApplied: val.amountApplied ?? val.amount
+    };
+  }
+  return val;
+}, z.object({
   billId: z.string().uuid(),
   amountApplied: z.number().positive()
-});
+}));
 
 const createVendorPaymentSchema = z.object({
   vendorId: z.string().uuid(),
@@ -64,12 +72,21 @@ const voidVendorPaymentSchema = z.object({
  * Customer Receipts (partial allocations)
  * ========================= */
 
-const customerReceiptAllocationSchema = z.object({
+const customerReceiptAllocationSchema = z.preprocess((val) => {
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    return {
+      ...val,
+      amountApplied: val.amountApplied ?? val.amount
+    };
+  }
+  return val;
+}, z.object({
   invoiceId: z.string().uuid(),
   amountApplied: z.number().positive()
-});
+}));
 
 const createCustomerReceiptSchema = z.object({
+
   customerId: z.string().uuid(),
   receiptDate: z.string().min(8), // YYYY-MM-DD
   paymentMethodId: z.string().uuid().optional().nullable(),
