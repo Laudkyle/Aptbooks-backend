@@ -151,19 +151,31 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
   const lines = await repo.getBillLines(billId);
   const taxMap = await loadLineTaxDetails({ client: pool, tableName: 'bill_line_tax_details', lineIds: lines.map((l) => l.id) });
 
-  const { rows: paidRows } = await pool.query(
+  const { rows: appliedRows } = await pool.query(
     `
-    SELECT COALESCE(SUM(vpa.amount_applied),0) AS paid
-    FROM vendor_payment_allocations vpa
-    JOIN vendor_payments vp ON vp.id = vpa.vendor_payment_id
-    WHERE vpa.bill_id=$1
-      AND vp.organization_id=$2
-      AND vp.status='posted'
+    WITH payment_alloc AS (
+      SELECT COALESCE(SUM(vpa.amount_applied),0) AS payment_amount
+      FROM vendor_payment_allocations vpa
+      JOIN vendor_payments vp ON vp.id = vpa.vendor_payment_id
+      WHERE vpa.bill_id=$1
+        AND vp.organization_id=$2
+        AND vp.status='posted'
+    ), debit_alloc AS (
+      SELECT COALESCE(SUM(dna.amount_applied),0) AS debit_amount
+      FROM debit_note_applications dna
+      JOIN debit_notes dn ON dn.id = dna.debit_note_id
+      WHERE dna.bill_id=$1
+        AND dna.organization_id=$2
+        AND dn.status='issued'
+    )
+    SELECT payment_amount, debit_amount
+    FROM payment_alloc
+    CROSS JOIN debit_alloc
     `,
     [billId, orgId]
   );
 
-  const paid = Number(paidRows[0]?.paid || 0);
+  const paid = Number(appliedRows[0]?.payment_amount || 0) + Number(appliedRows[0]?.debit_amount || 0);
   const total = Number(bill.total);
   const outstanding = Number((total - paid).toFixed(2));
 

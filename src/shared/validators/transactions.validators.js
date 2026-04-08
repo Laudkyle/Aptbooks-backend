@@ -128,7 +128,7 @@ const createCreditNoteSchema = z.object({
 
 const applyCreditNoteSchema = z.object({
   invoiceId: z.string().uuid(),
-  amountApplied: z.number().positive()
+  amountApplied: z.coerce.number().positive()
 });
 
 /** =========================
@@ -158,7 +158,7 @@ const createDebitNoteSchema = z.object({
 
 const applyDebitNoteSchema = z.object({
   billId: z.string().uuid(),
-  amountApplied: z.number().positive()
+  amountApplied: z.coerce.number().positive()
 });
 
 /** =========================

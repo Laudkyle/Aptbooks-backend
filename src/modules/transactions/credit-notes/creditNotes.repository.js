@@ -74,7 +74,15 @@ async function getLines({ id, client }) {
 
 async function getApplications({ orgId, id, client }) {
   const { rows } = await client.query(
-    `SELECT cna.*, inv.invoice_no, inv.invoice_date, inv.due_date
+    `SELECT
+        cna.*,
+        cna.invoice_id AS "invoiceId",
+        cna.amount_applied AS "amountApplied",
+        inv.invoice_no,
+        inv.invoice_date,
+        inv.due_date,
+        inv.total,
+        inv.currency_code
        FROM credit_note_applications cna
        JOIN invoices inv ON inv.id = cna.invoice_id
       WHERE cna.organization_id=$1 AND cna.credit_note_id=$2
@@ -212,7 +220,7 @@ async function insertApplication({ orgId, creditNoteId, invoiceId, amountApplied
     `INSERT INTO credit_note_applications(
         organization_id, credit_note_id, invoice_id, amount_applied, applied_by
      ) VALUES ($1,$2,$3,$4,$5)
-     RETURNING *`,
+     RETURNING *, invoice_id AS "invoiceId", amount_applied AS "amountApplied"`,
     [orgId, creditNoteId, invoiceId, amountApplied, actorUserId]
   );
   return rows[0];
