@@ -7,6 +7,7 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const repo = require("./creditNotes.repository");
+const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 
 async function calcTotals({ client, orgId, lines }) {
@@ -282,6 +283,7 @@ async function issueCreditNote({ orgId, actorUserId, id }) {
 
     const taxSettings = await getTaxSettings({ orgId, client });
     const outputTaxAccountId = taxSettings?.output_tax_account_id || null;
+    const withholdingReceivableAccountId = taxSettings?.withholding_tax_receivable_account_id || null;
 
     const period = await periodIF.findOpenPeriodForDate({ orgId, date: cn.credit_note_date, client });
 
@@ -289,54 +291,73 @@ async function issueCreditNote({ orgId, actorUserId, id }) {
     const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
     const taxSummary = summarizeLineTaxDetails(postingLines);
 
-    // Build journal lines
-    const jl = [];
+    const revenueMap = new Map();
     for (const l of postingLines) {
-      jl.push({
-        accountId: l.revenue_account_id,
-        debit: Number(l.taxable_amount ?? l.line_total ?? 0),
-        credit: 0,
-        memo: l.description
-      });
+      const lineTax = taxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
+      const revenueAmount = Number((Number(l.taxable_amount ?? l.line_total ?? 0) + Number(lineTax.nonRecoverable || 0)).toFixed(2));
+      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + revenueAmount);
     }
 
-    const taxTotal = Number(taxSummary.outputTax || 0);
-    if (taxTotal > 0) {
+    const journalLines = [];
+    for (const [accountId, amt] of revenueMap.entries()) {
+      journalLines.push({ accountId, debit: Number(amt.toFixed(2)), credit: 0, description: `Revenue reversal for ${cn.credit_note_no}` });
+    }
+
+    if (taxSummary.outputTax > 0) {
       if (!outputTaxAccountId) throw new AppError(409, "Output tax account is not configured (tax_settings.output_tax_account_id)");
-      jl.push({
-        accountId: outputTaxAccountId,
-        debit: taxTotal,
-        credit: 0,
-        memo: "Output tax reversal" 
-      });
+      journalLines.push({ accountId: outputTaxAccountId, debit: taxSummary.outputTax, credit: 0, description: `Output tax reversal for ${cn.credit_note_no}` });
     }
 
-    jl.push({
-      accountId: customer.default_receivable_account_id,
-      debit: 0,
-      credit: Number(cn.total),
-      memo: `Credit Note ${cn.credit_note_no}`
-    });
+    if (taxSummary.withholdingReceivable > 0) {
+      if (!withholdingReceivableAccountId) {
+        throw new AppError(409, 'Withholding tax receivable account is not configured (tax_settings.withholding_tax_receivable_account_id)');
+      }
+      journalLines.push({ accountId: withholdingReceivableAccountId, debit: 0, credit: taxSummary.withholdingReceivable, description: `Withholding tax reversal for ${cn.credit_note_no}` });
+    }
 
-    const posted = await journalIF.postJournal({
+    const computedReceivableReduction = Number((journalLines.reduce((sum, line) => sum + Number(line.debit || 0), 0) - journalLines.reduce((sum, line) => sum + Number(line.credit || 0), 0)).toFixed(2));
+    if (computedReceivableReduction <= 0) {
+      throw new AppError(400, `Computed receivable reduction is invalid for ${cn.credit_note_no}`);
+    }
+    journalLines.push({ accountId: customer.default_receivable_account_id, debit: 0, credit: computedReceivableReduction, description: `A/R reversal for ${cn.credit_note_no}` });
+
+    const idempotencyKey = `credit_note:${id}:issue`;
+    const draft = await journalIF.createDraftJournal({
       orgId,
       actorUserId,
+      client,
       payload: {
-        entryDate: cn.credit_note_date,
         periodId: period.id,
-        memo: `Credit Note ${cn.credit_note_no}`,
-        sourceType: "CREDIT_NOTE",
-        sourceId: cn.id,
-        lines: jl
-      },
-      client
+        entryDate: cn.credit_note_date,
+        typeCode: 'GENERAL',
+        memo: `Credit Note ${cn.credit_note_no}` + (cn.memo ? `: ${cn.memo}` : ''),
+        idempotencyKey,
+        lines: journalLines
+      }
     });
+
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        workflowDocumentId: cn.workflow_document_id || null,
+        createdBy: cn.created_by || actorUserId,
+        submittedAt: cn.submitted_at || null,
+        submittedBy: cn.submitted_by || null,
+        approvedAt: cn.approved_at || null,
+        approvedBy: cn.approved_by || null,
+        updatedBy: actorUserId
+      }
+    });
+
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
     const issued = await repo.setIssued({
       orgId,
       id,
       periodId: period.id,
-      journalEntryId: posted.journalEntryId,
+      journalEntryId: posted.journalId,
       actorUserId,
       client
     });

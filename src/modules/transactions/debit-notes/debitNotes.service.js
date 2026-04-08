@@ -7,6 +7,7 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 const repo = require("./debitNotes.repository");
+const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 async function calcTotals({ client, orgId, lines }) {
@@ -259,6 +260,8 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
 
     const taxSettings = await getTaxSettings({ orgId, client });
     const inputTaxAccountId = taxSettings?.input_tax_account_id || null;
+    const reverseChargeTaxAccountId = taxSettings?.reverse_charge_tax_account_id || inputTaxAccountId || null;
+    const withholdingPayableAccountId = taxSettings?.withholding_tax_payable_account_id || null;
 
     const period = await periodIF.findOpenPeriodForDate({ orgId, date: dn.debit_note_date, client });
 
@@ -266,58 +269,76 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
     const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
     const taxSummary = summarizeLineTaxDetails(postingLines);
 
-    const jl = [];
-
-    // Debit AP (reduce payable)
-    jl.push({
-      accountId: vendor.default_payable_account_id,
-      debit: Number(dn.total),
-      credit: 0,
-      memo: `Debit Note ${dn.debit_note_no}`
-    });
-
-    // Credit expense lines
+    const expenseMap = new Map();
     for (const l of postingLines) {
       const lineTax = taxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
       const expenseAmount = Number((Number(l.taxable_amount ?? l.line_total ?? 0) + Number(lineTax.nonRecoverable || 0)).toFixed(2));
-      jl.push({
-        accountId: l.expense_account_id,
-        debit: 0,
-        credit: expenseAmount,
-        memo: l.description
-      });
+      expenseMap.set(l.expense_account_id, (expenseMap.get(l.expense_account_id) || 0) + expenseAmount);
     }
 
-    const taxTotal = Number(taxSummary.recoverableInputTax || 0);
-    if (taxTotal > 0) {
+    const journalLines = [];
+    for (const [accountId, amt] of expenseMap.entries()) {
+      journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Expense reversal for ${dn.debit_note_no}` });
+    }
+
+    if (taxSummary.recoverableInputTax > 0) {
       if (!inputTaxAccountId) throw new AppError(409, "Input tax account is not configured (tax_settings.input_tax_account_id)");
-      jl.push({
-        accountId: inputTaxAccountId,
-        debit: 0,
-        credit: taxTotal,
-        memo: "Input tax reversal"
-      });
+      journalLines.push({ accountId: inputTaxAccountId, debit: 0, credit: taxSummary.recoverableInputTax, description: `Recoverable input tax reversal for ${dn.debit_note_no}` });
+    }
+    if (taxSummary.reverseChargeTax > 0 && reverseChargeTaxAccountId) {
+      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: taxSummary.reverseChargeTax, credit: 0, description: `Reverse charge tax debit reversal for ${dn.debit_note_no}` });
+      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: 0, credit: taxSummary.reverseChargeTax, description: `Reverse charge tax credit reversal for ${dn.debit_note_no}` });
+    }
+    if (taxSummary.withholdingPayable > 0) {
+      if (!withholdingPayableAccountId) {
+        throw new AppError(409, 'Withholding tax payable account is not configured (tax_settings.withholding_tax_payable_account_id)');
+      }
+      journalLines.push({ accountId: withholdingPayableAccountId, debit: taxSummary.withholdingPayable, credit: 0, description: `Withholding tax payable reversal for ${dn.debit_note_no}` });
     }
 
-    const posted = await journalIF.postJournal({
+    const computedPayableReduction = Number((journalLines.reduce((sum, line) => sum + Number(line.credit || 0), 0) - journalLines.reduce((sum, line) => sum + Number(line.debit || 0), 0)).toFixed(2));
+    if (computedPayableReduction <= 0) {
+      throw new AppError(400, `Computed payable reduction is invalid for ${dn.debit_note_no}`);
+    }
+    journalLines.unshift({ accountId: vendor.default_payable_account_id, debit: computedPayableReduction, credit: 0, description: `A/P reversal for ${dn.debit_note_no}` });
+
+    const idempotencyKey = `debit_note:${id}:issue`;
+    const draft = await journalIF.createDraftJournal({
       orgId,
       actorUserId,
+      client,
       payload: {
-        entryDate: dn.debit_note_date,
         periodId: period.id,
-        memo: `Debit Note ${dn.debit_note_no}`,
-        sourceType: "DEBIT_NOTE",
-        sourceId: dn.id,
-        lines: jl
-      },
-      client
+        entryDate: dn.debit_note_date,
+        typeCode: 'GENERAL',
+        memo: `Debit Note ${dn.debit_note_no}` + (dn.memo ? `: ${dn.memo}` : ''),
+        idempotencyKey,
+        lines: journalLines
+      }
     });
+
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        workflowDocumentId: dn.workflow_document_id || null,
+        createdBy: dn.created_by || actorUserId,
+        submittedAt: dn.submitted_at || null,
+        submittedBy: dn.submitted_by || null,
+        approvedAt: dn.approved_at || null,
+        approvedBy: dn.approved_by || null,
+        updatedBy: actorUserId
+      }
+    });
+
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
     return repo.setIssued({
       orgId,
       id,
       periodId: period.id,
-      journalEntryId: posted.journalEntryId,
+      journalEntryId: posted.journalId,
       actorUserId,
       client
     });
