@@ -355,7 +355,8 @@ async function applyDebitNote({ orgId, actorUserId, id, payload }) {
     });
 
     await refreshBillPaidStatus({ orgId, billId: payload.billId, client });
-    return app;
+    const balance = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
+    return { ...app, balance, is_available_for_application: balance.remaining > 0 };
   });
 }
 

@@ -375,7 +375,8 @@ async function applyCreditNote({ orgId, actorUserId, id, payload }) {
     });
 
     await refreshInvoicePaidStatus({ orgId, invoiceId: payload.invoiceId, client });
-    return app;
+    const balance = await getCreditNoteBalances({ orgId, creditNoteId: id, client });
+    return { ...app, balance, is_available_for_application: balance.remaining > 0 };
   });
 }
 

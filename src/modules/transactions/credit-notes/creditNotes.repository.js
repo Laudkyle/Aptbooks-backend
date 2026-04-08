@@ -4,7 +4,6 @@ const { AppError } = require("../../../shared/errors/AppError");
 
 
 async function getById({ orgId, id, currentUserId, client }) {
-  console.log("Fetching credit note with id:", id, "for org:", orgId, "and user:", currentUserId);
   const { rows } = await client.query(
     `SELECT 
       cn.*,
@@ -13,6 +12,9 @@ async function getById({ orgId, id, currentUserId, client }) {
       bp.email AS customer_email,
       bp.phone AS customer_phone,
       LOWER(d.workflow_state_code) AS workflow_status,
+      COALESCE(app.applied_amount, 0) AS applied_amount,
+      GREATEST(cn.total - COALESCE(app.applied_amount, 0), 0) AS remaining_amount,
+      (GREATEST(cn.total - COALESCE(app.applied_amount, 0), 0) > 0) AS is_available_for_application,
       CASE
         WHEN d.created_by_user_id = $3
         THEN COALESCE(dws.creator_can_approve, FALSE)
@@ -26,6 +28,12 @@ async function getById({ orgId, id, currentUserId, client }) {
      FROM credit_notes cn
      LEFT JOIN business_partners bp
        ON cn.customer_id = bp.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(cna.amount_applied), 0) AS applied_amount
+       FROM credit_note_applications cna
+       WHERE cna.organization_id = cn.organization_id
+         AND cna.credit_note_id = cn.id
+     ) app ON TRUE
      LEFT JOIN documents d
        ON d.id = cn.workflow_document_id
       AND d.organization_id = cn.organization_id
@@ -144,15 +152,21 @@ async function list({ orgId, query, client }) {
   const params = [orgId];
   const where = ["cn.organization_id=$1"];
   let i = 2;
-  
-  if (query?.status) { 
-    where.push(`cn.status=$${i++}`); 
-    params.push(query.status); 
+
+  if (query?.status) {
+    where.push(`cn.status=$${i++}`);
+    params.push(query.status);
   }
-  
-  if (query?.customer_id) { 
-    where.push(`cn.customer_id=$${i++}`); 
-    params.push(query.customer_id); 
+
+  if (query?.customer_id) {
+    where.push(`cn.customer_id=$${i++}`);
+    params.push(query.customer_id);
+  }
+
+  const availableOnly = [true, "true", 1, "1", "yes"].includes(query?.available_only) || [true, "true", 1, "1", "yes"].includes(query?.availableOnly);
+  if (availableOnly) {
+    where.push(`GREATEST(cn.total - COALESCE(app.applied_amount, 0), 0) > 0`);
+    if (!query?.status) where.push(`cn.status='issued'`);
   }
 
   const { rows } = await client.query(
@@ -161,9 +175,18 @@ async function list({ orgId, query, client }) {
       bp.name as customer_name,
       bp.code as customer_code,
       bp.email as customer_email,
-      bp.phone as customer_phone
+      bp.phone as customer_phone,
+      COALESCE(app.applied_amount, 0) AS applied_amount,
+      GREATEST(cn.total - COALESCE(app.applied_amount, 0), 0) AS remaining_amount,
+      (GREATEST(cn.total - COALESCE(app.applied_amount, 0), 0) > 0) AS is_available_for_application
      FROM credit_notes cn
      LEFT JOIN business_partners bp ON cn.customer_id = bp.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(cna.amount_applied), 0) AS applied_amount
+       FROM credit_note_applications cna
+       WHERE cna.organization_id = cn.organization_id
+         AND cna.credit_note_id = cn.id
+     ) app ON TRUE
      WHERE ${where.join(" AND ")}
      ORDER BY cn.credit_note_date DESC, cn.created_at DESC
      LIMIT 200`,

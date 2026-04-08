@@ -10,6 +10,9 @@ async function getById({ orgId, id, currentUserId, client }) {
       bp.email AS vendor_email,
       bp.phone AS vendor_phone,
       LOWER(d.workflow_state_code) AS workflow_status,
+      COALESCE(app.applied_amount, 0) AS applied_amount,
+      GREATEST(dn.total - COALESCE(app.applied_amount, 0), 0) AS remaining_amount,
+      (GREATEST(dn.total - COALESCE(app.applied_amount, 0), 0) > 0) AS is_available_for_application,
       CASE
         WHEN d.created_by_user_id = $3
         THEN COALESCE(dws.creator_can_approve, FALSE)
@@ -23,6 +26,12 @@ async function getById({ orgId, id, currentUserId, client }) {
      FROM debit_notes dn
      LEFT JOIN business_partners bp
        ON dn.vendor_id = bp.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(dna.amount_applied), 0) AS applied_amount
+       FROM debit_note_applications dna
+       WHERE dna.organization_id = dn.organization_id
+         AND dna.debit_note_id = dn.id
+     ) app ON TRUE
      LEFT JOIN documents d
        ON d.id = dn.workflow_document_id
       AND d.organization_id = dn.organization_id
@@ -138,15 +147,21 @@ async function list({ orgId, query, client }) {
   const params = [orgId];
   const where = ["dn.organization_id=$1"];
   let i = 2;
-  
-  if (query?.status) { 
-    where.push(`dn.status=$${i++}`); 
-    params.push(query.status); 
+
+  if (query?.status) {
+    where.push(`dn.status=$${i++}`);
+    params.push(query.status);
   }
-  
-  if (query?.vendor_id) { 
-    where.push(`dn.vendor_id=$${i++}`); 
-    params.push(query.vendor_id); 
+
+  if (query?.vendor_id) {
+    where.push(`dn.vendor_id=$${i++}`);
+    params.push(query.vendor_id);
+  }
+
+  const availableOnly = [true, "true", 1, "1", "yes"].includes(query?.available_only) || [true, "true", 1, "1", "yes"].includes(query?.availableOnly);
+  if (availableOnly) {
+    where.push(`GREATEST(dn.total - COALESCE(app.applied_amount, 0), 0) > 0`);
+    if (!query?.status) where.push(`dn.status='issued'`);
   }
 
   const { rows } = await client.query(
@@ -155,9 +170,18 @@ async function list({ orgId, query, client }) {
       bp.name as vendor_name,
       bp.code as vendor_code,
       bp.email as vendor_email,
-      bp.phone as vendor_phone
+      bp.phone as vendor_phone,
+      COALESCE(app.applied_amount, 0) AS applied_amount,
+      GREATEST(dn.total - COALESCE(app.applied_amount, 0), 0) AS remaining_amount,
+      (GREATEST(dn.total - COALESCE(app.applied_amount, 0), 0) > 0) AS is_available_for_application
      FROM debit_notes dn
      LEFT JOIN business_partners bp ON dn.vendor_id = bp.id
+     LEFT JOIN LATERAL (
+       SELECT COALESCE(SUM(dna.amount_applied), 0) AS applied_amount
+       FROM debit_note_applications dna
+       WHERE dna.organization_id = dn.organization_id
+         AND dna.debit_note_id = dn.id
+     ) app ON TRUE
      WHERE ${where.join(" AND ")}
      ORDER BY dn.debit_note_date DESC, dn.created_at DESC
      LIMIT 200`,
