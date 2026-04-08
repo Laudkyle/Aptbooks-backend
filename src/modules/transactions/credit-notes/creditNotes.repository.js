@@ -199,11 +199,11 @@ async function setIssued({ orgId, id, periodId, journalEntryId, actorUserId, cli
     `UPDATE credit_notes
         SET status='issued', period_id=$3, journal_entry_id=$4,
             issued_at=NOW(), issued_by=$5
-      WHERE organization_id=$1 AND id=$2 AND status='draft'
+      WHERE organization_id=$1 AND id=$2 AND status='approved'
       RETURNING *`,
     [orgId, id, periodId, journalEntryId, actorUserId]
   );
-  if (!rows.length) throw new AppError(409, "Only draft credit notes can be issued");
+  if (!rows.length) throw new AppError(409, "Only approved credit notes can be issued");
   return rows[0];
 }
 
