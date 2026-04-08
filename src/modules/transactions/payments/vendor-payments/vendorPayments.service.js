@@ -611,6 +611,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
       journalId: draft.journalId,
       source: {
         orgId,
+        workflowDocumentId: vp.workflow_document_id || null,
         createdBy: vp.created_by || actorUserId,
         submittedAt: vp.submitted_at || null,
         submittedBy: vp.submitted_by || null,

@@ -284,6 +284,7 @@ async function issueBill({ orgId, actorUserId, billId }) {
       journalId: draft.journalId,
       source: {
         orgId,
+        workflowDocumentId: bill.workflow_document_id || null,
         createdBy: bill.created_by || actorUserId,
         submittedAt: bill.submitted_at || null,
         submittedBy: bill.submitted_by || null,

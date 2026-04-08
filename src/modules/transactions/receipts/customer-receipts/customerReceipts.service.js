@@ -622,6 +622,7 @@ async function postCustomerReceipt({ orgId, actorUserId, id }) {
       journalId: draft.journalId,
       source: {
         orgId,
+        workflowDocumentId: cr.workflow_document_id || null,
         createdBy: cr.created_by || actorUserId,
         submittedAt: cr.submitted_at || null,
         submittedBy: cr.submitted_by || null,

@@ -415,6 +415,7 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       journalId: draft.journalId,
       source: {
         orgId,
+        workflowDocumentId: invoice.workflow_document_id || null,
         createdBy: invoice.created_by || actorUserId,
         submittedAt: invoice.submitted_at || null,
         submittedBy: invoice.submitted_by || null,
