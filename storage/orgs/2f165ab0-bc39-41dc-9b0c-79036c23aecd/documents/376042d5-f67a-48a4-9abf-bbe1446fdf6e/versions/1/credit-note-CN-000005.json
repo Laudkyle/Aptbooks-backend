@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "entity_type": "credit_note",
+  "entity_id": "58ecf335-fa24-476a-a74f-978581f8bd49",
+  "snapshot_at": "2026-04-09T13:51:01.895Z",
+  "header": {
+    "id": "58ecf335-fa24-476a-a74f-978581f8bd49",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "customer_id": "258e0456-3976-40df-ad25-cee8b7910670",
+    "credit_note_no": "CN-000005",
+    "credit_note_date": "2026-04-09T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "SAFJHDSKA",
+    "subtotal": "20196.00",
+    "tax_total": "242352.00",
+    "total": "262548.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-04-09T13:50:54.628Z",
+    "updated_at": "2026-04-09T13:50:54.628Z",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "customer_name": "Demo Customer Ltd",
+    "customer_code": "CUST-DEMO",
+    "customer_email": "demo.customer@aptbooks.local",
+    "customer_phone": "+233200000001",
+    "workflow_status": null,
+    "applied_amount": "0",
+    "remaining_amount": "262548.00",
+    "is_available_for_application": true,
+    "canApprove": false,
+    "canPost": false
+  },
+  "lines": [
+    {
+      "id": "da6de2be-7f45-4e42-aad4-264395645949",
+      "credit_note_id": "58ecf335-fa24-476a-a74f-978581f8bd49",
+      "line_no": 1,
+      "description": "FDSFDSAF",
+      "quantity": "112.0000",
+      "unit_price": "132.00",
+      "line_total": "14784.00",
+      "revenue_account_id": "e1476a12-3ba0-46d7-8b65-d65bea2b8e15",
+      "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+      "tax_amount": "177408.00",
+      "created_at": "2026-04-09T13:50:54.628Z",
+      "taxes": [
+        {
+          "id": "c3dd037b-89a9-4172-913b-b4641c6883b5",
+          "line_id": "da6de2be-7f45-4e42-aad4-264395645949",
+          "sequence_no": 1,
+          "source_tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+          "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+          "taxable_amount": "14784.00",
+          "tax_rate": "12.000000",
+          "tax_amount": "177408.00",
+          "tax_type": "GST",
+          "direction": "both",
+          "box_code": null,
+          "created_at": "2026-04-09T13:50:54.628Z",
+          "tax_scope": "taxable",
+          "category_code": null,
+          "recoverable_percent": "1.0000",
+          "exemption_reason_code": null,
+          "reverse_charge": false,
+          "posting_account_id": null,
+          "source_rule_id": "00a96af6-1816-447e-9eda-1cfeb2f88624",
+          "metadata": {
+            "placeOfSupply": null,
+            "itemTaxCategory": null,
+            "partnerTaxProfileId": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "cc206364-50c3-4c26-a79a-54242ac0684d",
+      "credit_note_id": "58ecf335-fa24-476a-a74f-978581f8bd49",
+      "line_no": 2,
+      "description": "FDSAFDSA",
+      "quantity": "123.0000",
+      "unit_price": "44.00",
+      "line_total": "5412.00",
+      "revenue_account_id": "e1476a12-3ba0-46d7-8b65-d65bea2b8e15",
+      "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+      "tax_amount": "64944.00",
+      "created_at": "2026-04-09T13:50:54.628Z",
+      "taxes": [
+        {
+          "id": "3d867b8e-7695-41f5-a656-c932cfa17aec",
+          "line_id": "cc206364-50c3-4c26-a79a-54242ac0684d",
+          "sequence_no": 1,
+          "source_tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+          "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+          "taxable_amount": "5412.00",
+          "tax_rate": "12.000000",
+          "tax_amount": "64944.00",
+          "tax_type": "GST",
+          "direction": "both",
+          "box_code": null,
+          "created_at": "2026-04-09T13:50:54.628Z",
+          "tax_scope": "taxable",
+          "category_code": null,
+          "recoverable_percent": "1.0000",
+          "exemption_reason_code": null,
+          "reverse_charge": false,
+          "posting_account_id": null,
+          "source_rule_id": "00a96af6-1816-447e-9eda-1cfeb2f88624",
+          "metadata": {
+            "placeOfSupply": null,
+            "itemTaxCategory": null,
+            "partnerTaxProfileId": null
+          }
+        }
+      ]
+    }
+  ],
+  "applications": [],
+  "totals": {
+    "subtotal": "20196.00",
+    "tax_total": "242352.00",
+    "total": "262548.00"
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}

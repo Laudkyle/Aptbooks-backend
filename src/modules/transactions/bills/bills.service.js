@@ -41,6 +41,7 @@ async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
 async function prepareBillLines({ client, orgId, payload, lines }) {
   let subtotalCents = 0n;
   let taxTotal = 0;
+  let withholdingTotal = 0;
   const computed = [];
 
   for (const l of lines) {
@@ -67,6 +68,7 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
     const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
     subtotalCents += BigInt(Math.round(taxableAmount * 100));
     taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
+    withholdingTotal += Number(resolvedTaxSummary.withholdingTax || 0);
     computed.push({
       ...l,
       quantity: qty,
@@ -81,7 +83,17 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
   }
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), total: (Number(subtotal) + round2(taxTotal)).toFixed(2) };
+  const total = (Number(subtotal) + round2(taxTotal)).toFixed(2);
+  const withholding = round2(withholdingTotal).toFixed(2);
+  const netSettlementTotal = Math.max(0, Number(total) - Number(withholding));
+  return {
+    computed,
+    subtotal,
+    taxTotal: round2(taxTotal).toFixed(2),
+    withholdingTotal: withholding,
+    total,
+    netSettlementTotal: round2(netSettlementTotal).toFixed(2)
+  };
 }
 
 async function createDraftBill({ orgId, actorUserId, payload }) {
@@ -98,7 +110,7 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
-    const { computed, subtotal, taxTotal, total } = await prepareBillLines({ client, orgId, payload, lines: payload.lines });
+    const { computed, subtotal, taxTotal, withholdingTotal, total, netSettlementTotal } = await prepareBillLines({ client, orgId, payload, lines: payload.lines });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const billNo = await repo.nextBillNo(client, orgId);
@@ -111,6 +123,8 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       memo: payload.memo,
       subtotal,
       taxTotal,
+      withholdingTotal,
+      netSettlementTotal,
       total,
       currencyCode: baseCurrency,
       createdBy: actorUserId

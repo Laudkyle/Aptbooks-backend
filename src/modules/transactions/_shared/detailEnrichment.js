@@ -152,6 +152,8 @@ function buildDetailMeta({ header = {}, lines = [], extra = {} }) {
       subtotal,
       tax_total: taxTotal,
       total,
+      withholding_total: round2(firstDefined(header, ['withholding_total'], 0)),
+      net_settlement_total: round2(firstDefined(header, ['net_settlement_total'], total)),
       paid,
       outstanding,
       unapplied_amount: unappliedAmount,
