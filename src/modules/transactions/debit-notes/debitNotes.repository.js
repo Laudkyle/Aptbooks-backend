@@ -69,7 +69,32 @@ async function getLines({ id, client }) {
 
 async function getApplications({ orgId, id, client }) {
   const { rows } = await client.query(
-    `SELECT dna.*, b.bill_no, b.bill_date, b.due_date
+    `SELECT dna.*,
+            b.bill_no,
+            b.bill_date,
+            b.due_date,
+            b.total AS bill_total,
+            b.currency_code,
+            GREATEST(
+              b.total
+              - COALESCE((
+                  SELECT SUM(vpa.amount_applied + COALESCE(vpa.discount_taken, 0))
+                  FROM vendor_payment_allocations vpa
+                  JOIN vendor_payments vp ON vp.id = vpa.vendor_payment_id
+                  WHERE vpa.bill_id = b.id
+                    AND vp.organization_id = b.organization_id
+                    AND vp.status = 'posted'
+                ), 0)
+              - COALESCE((
+                  SELECT SUM(dna2.amount_applied)
+                  FROM debit_note_applications dna2
+                  JOIN debit_notes dn2 ON dn2.id = dna2.debit_note_id
+                  WHERE dna2.bill_id = b.id
+                    AND dna2.organization_id = b.organization_id
+                    AND dn2.status = 'issued'
+                ), 0),
+              0
+            ) AS bill_outstanding
        FROM debit_note_applications dna
        JOIN bills b ON b.id = dna.bill_id
       WHERE dna.organization_id=$1 AND dna.debit_note_id=$2

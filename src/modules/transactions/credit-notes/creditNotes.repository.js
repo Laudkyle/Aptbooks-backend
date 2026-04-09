@@ -74,7 +74,32 @@ async function getLines({ id, client }) {
 
 async function getApplications({ orgId, id, client }) {
   const { rows } = await client.query(
-    `SELECT cna.*, inv.invoice_no, inv.invoice_date, inv.due_date
+    `SELECT cna.*,
+            inv.invoice_no,
+            inv.invoice_date,
+            inv.due_date,
+            inv.total AS invoice_total,
+            inv.currency_code,
+            GREATEST(
+              inv.total
+              - COALESCE((
+                  SELECT SUM(cra.amount_applied + COALESCE(cra.discount_taken, 0))
+                  FROM customer_receipt_allocations cra
+                  JOIN customer_receipts cr ON cr.id = cra.customer_receipt_id
+                  WHERE cra.invoice_id = inv.id
+                    AND cr.organization_id = inv.organization_id
+                    AND cr.status = 'posted'
+                ), 0)
+              - COALESCE((
+                  SELECT SUM(cna2.amount_applied)
+                  FROM credit_note_applications cna2
+                  JOIN credit_notes cn2 ON cn2.id = cna2.credit_note_id
+                  WHERE cna2.invoice_id = inv.id
+                    AND cna2.organization_id = inv.organization_id
+                    AND cn2.status = 'issued'
+                ), 0),
+              0
+            ) AS invoice_outstanding
        FROM credit_note_applications cna
        JOIN invoices inv ON inv.id = cna.invoice_id
       WHERE cna.organization_id=$1 AND cna.credit_note_id=$2

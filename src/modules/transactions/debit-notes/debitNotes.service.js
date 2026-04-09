@@ -55,7 +55,7 @@ async function getDebitNoteBalances({ orgId, debitNoteId, client }) {
   const total = Number(rows[0].total || 0);
   const applied = Number(rows[0].applied || 0);
   const remaining = Number((total - applied).toFixed(2));
-  return { total, applied, remaining };
+  return { total, total_amount: total, applied, applied_amount: applied, remaining, remaining_amount: remaining };
 }
 
 async function getBillOpenBalance({ orgId, billId, client }) {
@@ -132,7 +132,21 @@ async function getDebitNoteDetails({ orgId, id, currentUserId }) {
     const applications = await repo.getApplications({ orgId, id, client });
     const bal = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
     const enrichedLines = await enrichLines({ client, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
-    return { ...dn, lines: enrichedLines, applications, balance: bal, detail_meta: buildDetailMeta({ header: dn, lines: enrichedLines, extra: { paid: Number((bal?.applied_amount || 0)), outstanding: Number((bal?.remaining_amount || 0)) } }) };
+    return {
+      ...dn,
+      lines: enrichedLines,
+      applications,
+      balance: bal,
+      detail_meta: buildDetailMeta({
+        header: { ...dn, unapplied_amount: Number((bal?.remaining_amount ?? bal?.remaining ?? 0)) },
+        lines: enrichedLines,
+        extra: {
+          paid: Number((bal?.applied_amount ?? bal?.applied ?? 0)),
+          outstanding: Number((bal?.remaining_amount ?? bal?.remaining ?? 0)),
+          unapplied_amount: Number((bal?.remaining_amount ?? bal?.remaining ?? 0))
+        }
+      })
+    };
   } finally {
     client.release();
   }

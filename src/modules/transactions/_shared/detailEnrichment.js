@@ -126,8 +126,9 @@ function buildDetailMeta({ header = {}, lines = [], extra = {} }) {
   const subtotal = round2(firstDefined(header, ['subtotal', 'amount_subtotal'], 0));
   const taxTotal = round2(firstDefined(header, ['tax_total', 'taxTotal'], taxSummary.totalTax || 0));
   const total = round2(firstDefined(header, ['total', 'amount_total', 'grand_total'], subtotal + taxTotal));
-  const paid = round2(extra.paid || 0);
+  const paid = round2(firstDefined(extra, ['paid', 'applied', 'applied_amount'], 0));
   const outstanding = extra.outstanding != null ? round2(extra.outstanding) : round2(Math.max(0, total - paid));
+  const unappliedAmount = round2(firstDefined(extra, ['unapplied_amount', 'unappliedAmount'], firstDefined(header, ['unapplied_amount'], 0)));
   const taxedLineCount = lines.filter((line) => Number(line.tax_breakdown?.total_tax || 0) > 0 || Number(line.tax_amount || 0) > 0).length;
 
   return {
@@ -153,7 +154,7 @@ function buildDetailMeta({ header = {}, lines = [], extra = {} }) {
       total,
       paid,
       outstanding,
-      unapplied_amount: round2(firstDefined(header, ['unapplied_amount'], 0)),
+      unapplied_amount: unappliedAmount,
       discount_total: round2(firstDefined(header, ['discount_total', 'discount_amount'], 0)),
       settlement_total: round2(firstDefined(header, ['settlement_total', 'settlement_amount'], 0)),
     },

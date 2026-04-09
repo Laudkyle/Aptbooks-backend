@@ -55,7 +55,7 @@ async function getCreditNoteBalances({ orgId, creditNoteId, client }) {
   const total = Number(rows[0].total || 0);
   const applied = Number(rows[0].applied || 0);
   const remaining = Number((total - applied).toFixed(2));
-  return { total, applied, remaining };
+  return { total, total_amount: total, applied, applied_amount: applied, remaining, remaining_amount: remaining };
 }
 
 async function getInvoiceOpenBalance({ orgId, invoiceId, client }) {
@@ -152,7 +152,15 @@ async function getCreditNoteDetails({ orgId, id, currentUserId }) {
       lines: enrichedLines,
       applications,
       balance: bal,
-      detail_meta: buildDetailMeta({ header: cn, lines: enrichedLines, extra: { paid: Number((bal?.applied_amount || 0)), outstanding: Number((bal?.remaining_amount || 0)) } })
+      detail_meta: buildDetailMeta({
+        header: { ...cn, unapplied_amount: Number((bal?.remaining_amount ?? bal?.remaining ?? 0)) },
+        lines: enrichedLines,
+        extra: {
+          paid: Number((bal?.applied_amount ?? bal?.applied ?? 0)),
+          outstanding: Number((bal?.remaining_amount ?? bal?.remaining ?? 0)),
+          unapplied_amount: Number((bal?.remaining_amount ?? bal?.remaining ?? 0))
+        }
+      })
     };
 
   } finally {
