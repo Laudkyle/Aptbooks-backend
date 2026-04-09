@@ -95,7 +95,11 @@ async function refreshInvoicePaidStatus({ orgId, invoiceId, client }) {
   // Only move to PAID if invoice is issued and fully settled.
   await client.query(
     `UPDATE invoices
-        SET status = CASE WHEN status='issued' AND $3 <= 0 THEN 'paid' ELSE status END,
+        SET status = CASE
+              WHEN status='issued' AND $3::numeric <= 0::numeric THEN 'paid'
+              WHEN status='paid' AND $3::numeric > 0::numeric THEN 'issued'
+              ELSE status
+            END,
             updated_at=NOW()
       WHERE organization_id=$1 AND id=$2`,
     [orgId, invoiceId, open]

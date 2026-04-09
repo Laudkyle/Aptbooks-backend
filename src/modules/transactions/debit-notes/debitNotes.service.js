@@ -94,7 +94,11 @@ async function refreshBillPaidStatus({ orgId, billId, client }) {
   const open = await getBillOpenBalance({ orgId, billId, client });
   await client.query(
     `UPDATE bills
-        SET status = CASE WHEN status='issued' AND $3 <= 0 THEN 'paid' ELSE status END,
+        SET status = CASE
+              WHEN status='issued' AND $3::numeric <= 0::numeric THEN 'paid'
+              WHEN status='paid' AND $3::numeric > 0::numeric THEN 'issued'
+              ELSE status
+            END,
             updated_at=NOW()
       WHERE organization_id=$1 AND id=$2`,
     [orgId, billId, open]
