@@ -2026,7 +2026,10 @@ async function rejectWithholdingCertificate({ orgId, certificateId, actorUserId,
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
-
+async function listWithholdingOpenItems({ orgId, query = {} }) {
+  const direction = query?.direction || 'payable';
+  return getOpenWithholdingItems({ orgId, direction, query });
+}
 // ==================== MODULE EXPORTS ====================
 
 module.exports = {
