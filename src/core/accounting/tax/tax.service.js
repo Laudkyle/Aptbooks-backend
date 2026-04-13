@@ -1928,7 +1928,7 @@ async function getOpenWithholdingItems({
       LEFT JOIN invoice_lines il ON il.invoice_id = i.id
       LEFT JOIN invoice_line_tax_details d ON d.line_id = il.id AND COALESCE(d.tax_type,'')='WITHHOLDING'
       WHERE i.organization_id = $1
-        AND i.status IN ('issued','paid')
+        AND i.status IN ('issued','approved','paid')
         AND COALESCE(i.withholding_total,0) > 0
       GROUP BY i.id, bp.name
     ), applied AS (
