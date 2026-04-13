@@ -68,7 +68,7 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
     const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
     subtotalCents += BigInt(Math.round(taxableAmount * 100));
     taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
-    withholdingTotal += Number(resolvedTaxSummary.withholdingTax || 0);
+    withholdingTotal += Number(resolvedTaxSummary.withholdingTaxAmount || 0);
     computed.push({
       ...l,
       quantity: qty,
@@ -83,17 +83,7 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
   }
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  const total = (Number(subtotal) + round2(taxTotal)).toFixed(2);
-  const withholding = round2(withholdingTotal).toFixed(2);
-  const netSettlementTotal = Math.max(0, Number(total) - Number(withholding));
-  return {
-    computed,
-    subtotal,
-    taxTotal: round2(taxTotal).toFixed(2),
-    withholdingTotal: withholding,
-    total,
-    netSettlementTotal: round2(netSettlementTotal).toFixed(2)
-  };
+  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), withholdingTotal: round2(withholdingTotal).toFixed(2), netSettlementTotal: (Number(subtotal) + round2(taxTotal) - round2(withholdingTotal)).toFixed(2), total: (Number(subtotal) + round2(taxTotal)).toFixed(2) };
 }
 
 async function createDraftBill({ orgId, actorUserId, payload }) {
@@ -110,7 +100,7 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
-    const { computed, subtotal, taxTotal, withholdingTotal, total, netSettlementTotal } = await prepareBillLines({ client, orgId, payload, lines: payload.lines });
+    const { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total } = await prepareBillLines({ client, orgId, payload, lines: payload.lines });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const billNo = await repo.nextBillNo(client, orgId);
@@ -123,10 +113,10 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
       memo: payload.memo,
       subtotal,
       taxTotal,
-      withholdingTotal,
-      netSettlementTotal,
       total,
       currencyCode: baseCurrency,
+      withholdingTotal,
+      netSettlementTotal,
       createdBy: actorUserId
     });
 
@@ -188,8 +178,8 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
 
   const paid = Number(paidRows[0]?.paid || 0);
   const debitApplied = Number(paidRows[0]?.debit_applied || 0);
-  const total = Number(bill.total);
-  const outstanding = Number((total - paid - debitApplied).toFixed(2));
+  const settlementTotal = Number(bill.net_settlement_total ?? bill.total);
+  const outstanding = Number((settlementTotal - paid - debitApplied).toFixed(2));
 
   const enrichedLines = await enrichLines({ client: pool, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
 

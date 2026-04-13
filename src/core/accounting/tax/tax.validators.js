@@ -251,6 +251,65 @@ const createFilingAdapterSchema = z.object({
 
 const updateFilingAdapterSchema = createFilingAdapterSchema.partial();
 
+const withholdingSourceLineSchema = z.object({
+  sourceId: z.string().uuid(),
+  appliedAmount: z.coerce.number().positive().optional(),
+});
+
+const createWithholdingRemittanceSchema = z.object({
+  authorityPartnerId: z.string().uuid().optional().nullable(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  periodStart: isoDate.optional().nullable(),
+  periodEnd: isoDate.optional().nullable(),
+  remittanceDate: isoDate,
+  currencyCode: z.string().min(1).max(10).optional().nullable(),
+  settlementAccountId: z.string().uuid().optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  memo: z.string().max(1000).optional().nullable(),
+  lines: z.array(withholdingSourceLineSchema).min(1)
+}).superRefine((val, ctx) => {
+  if (val.periodStart && val.periodEnd && val.periodEnd < val.periodStart) {
+    ctx.addIssue({ code: 'custom', path: ['periodEnd'], message: 'periodEnd must be on or after periodStart' });
+  }
+});
+
+const updateWithholdingRemittanceSchema = createWithholdingRemittanceSchema.partial();
+
+const postWithholdingRemittanceSchema = z.object({
+  settlementAccountId: z.string().uuid().optional().nullable(),
+  remittanceDate: isoDate.optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  memo: z.string().max(1000).optional().nullable()
+});
+
+const createWithholdingCertificateSchema = z.object({
+  customerId: z.string().uuid().optional().nullable(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  certificateNo: z.string().min(1).max(120),
+  certificateDate: isoDate,
+  counterAccountId: z.string().uuid().optional().nullable(),
+  issuedBy: z.string().max(255).optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  memo: z.string().max(1000).optional().nullable(),
+  lines: z.array(withholdingSourceLineSchema).min(1)
+});
+
+const updateWithholdingCertificateSchema = createWithholdingCertificateSchema.partial();
+
+const postWithholdingCertificateSchema = z.object({
+  counterAccountId: z.string().uuid().optional().nullable(),
+  certificateDate: isoDate.optional().nullable(),
+  issuedBy: z.string().max(255).optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  memo: z.string().max(1000).optional().nullable()
+});
+
+const voidWithholdingWorkflowSchema = z.object({
+  reason: z.string().min(2).max(500)
+});
+
 module.exports = {
   createTaxRegistrationSchema,
   updateTaxRegistrationSchema,
@@ -275,5 +334,12 @@ module.exports = {
   updateTaxReturnConfigSchema,
   updateEinvoicingSettingsSchema,
   createFilingAdapterSchema,
-  updateFilingAdapterSchema
+  updateFilingAdapterSchema,
+  createWithholdingRemittanceSchema,
+  updateWithholdingRemittanceSchema,
+  postWithholdingRemittanceSchema,
+  createWithholdingCertificateSchema,
+  updateWithholdingCertificateSchema,
+  postWithholdingCertificateSchema,
+  voidWithholdingWorkflowSchema
 };

@@ -65,7 +65,7 @@ async function prepareInvoiceLines({ client, orgId, payload, lines }) {
     const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
     subtotalCents += BigInt(Math.round(taxableAmount * 100));
     taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
-    withholdingTotal += Number(resolvedTaxSummary.withholdingTax || 0);
+    withholdingTotal += Number(resolvedTaxSummary.withholdingTaxAmount || 0);
     computed.push({
       ...l,
       quantity: qty,
@@ -81,16 +81,8 @@ async function prepareInvoiceLines({ client, orgId, payload, lines }) {
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
   const total = (Number(subtotal) + round2(taxTotal)).toFixed(2);
-  const withholding = round2(withholdingTotal).toFixed(2);
-  const netSettlementTotal = Math.max(0, Number(total) - Number(withholding));
-  return {
-    computed,
-    subtotal,
-    taxTotal: round2(taxTotal).toFixed(2),
-    withholdingTotal: withholding,
-    total,
-    netSettlementTotal: round2(netSettlementTotal).toFixed(2)
-  };
+  const netSettlementTotal = (Number(subtotal) + round2(taxTotal) - round2(withholdingTotal)).toFixed(2);
+  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), withholdingTotal: round2(withholdingTotal).toFixed(2), netSettlementTotal, total };
 }
 
 async function nextInvoiceNo(client, orgId) {
@@ -127,7 +119,7 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
-    const { computed, subtotal, taxTotal, withholdingTotal, total, netSettlementTotal } = await prepareInvoiceLines({ client, orgId, payload, lines: payload.lines });
+    const { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total } = await prepareInvoiceLines({ client, orgId, payload, lines: payload.lines });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const invoiceNo = await nextInvoiceNo(client, orgId);
@@ -136,12 +128,12 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
       `
       INSERT INTO invoices(
         organization_id, customer_id, invoice_no, invoice_date, due_date,
-        currency_code, fx_rate, status, memo, subtotal, tax_total, withholding_total, net_settlement_total, total, created_by
+        currency_code, fx_rate, status, memo, subtotal, tax_total, total, withholding_total, net_settlement_total, created_by
       )
       VALUES ($1,$2,$3,$4,$5,$6,1,'draft',$7,$8,$9,$10,$11,$12,$13)
       RETURNING *
       `,
-      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total, actorUserId]
+      [orgId, payload.customerId, invoiceNo, payload.invoiceDate, payload.dueDate, baseCurrency, payload.memo || null, subtotal, taxTotal, total, withholdingTotal, netSettlementTotal, actorUserId]
     );
 
     const invoice = invRows[0];
@@ -245,7 +237,8 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
     [invoiceId, orgId]
   );
   const paid = round2(Number(appliedRows[0]?.receipt_amount || 0) + Number(appliedRows[0]?.credit_amount || 0));
-  const outstanding = round2(Math.max(0, Number(invoice.total || 0) - paid));
+  const settlementTotal = Number((invoice.net_settlement_total ?? invoice.total) || 0);
+  const outstanding = round2(Math.max(0, settlementTotal - paid));
 
   return {
     invoice,

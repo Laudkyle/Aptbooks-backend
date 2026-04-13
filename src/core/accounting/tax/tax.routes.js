@@ -32,7 +32,14 @@ const {
   updateTaxReturnConfigSchema,
   updateEinvoicingSettingsSchema,
   createFilingAdapterSchema,
-  updateFilingAdapterSchema
+  updateFilingAdapterSchema,
+  createWithholdingRemittanceSchema,
+  updateWithholdingRemittanceSchema,
+  postWithholdingRemittanceSchema,
+  createWithholdingCertificateSchema,
+  updateWithholdingCertificateSchema,
+  postWithholdingCertificateSchema,
+  voidWithholdingWorkflowSchema
 } = require("./tax.validators");
 
 const router = express.Router();

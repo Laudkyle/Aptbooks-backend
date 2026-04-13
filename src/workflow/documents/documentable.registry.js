@@ -318,6 +318,26 @@ const registry = {
     title: (entity) => `Receipt ${entity.receipt_no || entity.id}`,
     description: (entity) => entity.memo || null,
     versionFilename: (entity) => `receipt-${entity.receipt_no || entity.id}.json`
+  },
+  withholding_remittance: {
+    entityType: "withholding_remittance",
+    documentTypeCode: "WITHHOLDING_REMITTANCE",
+    documentTypeName: "Withholding Remittance",
+    noun: "withholding remittance",
+    blockedActionLabel: "post",
+    title: (entity) => `Withholding Remittance ${entity.remittance_no || entity.id}` ,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `withholding-remittance-${entity.remittance_no || entity.id}.json`
+  },
+  withholding_certificate: {
+    entityType: "withholding_certificate",
+    documentTypeCode: "WITHHOLDING_CERTIFICATE",
+    documentTypeName: "Withholding Certificate",
+    noun: "withholding certificate",
+    blockedActionLabel: "post",
+    title: (entity) => `Withholding Certificate ${entity.certificate_no || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `withholding-certificate-${entity.certificate_no || entity.id}.json`
   }
 };
 

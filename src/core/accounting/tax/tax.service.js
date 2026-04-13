@@ -3,6 +3,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const { withTransaction } = require("../../../db/tx");
+const documentableSvc = require("../../../workflow/documents/documentable.service");
 
 async function assertAccountBelongsToOrg({ orgId, accountId, fieldName }) {
   if (!accountId) return;
@@ -1537,6 +1538,495 @@ async function upsertAutomationRule({ orgId, actorUserId, payload }) {
   return rows[0];
 }
 
+
+async function getOrgBaseCurrency({ orgId, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(`SELECT base_currency_code FROM organizations WHERE id=$1`, [orgId]);
+  if (!rows.length) throw new AppError(404, 'Organization not found');
+  return rows[0].base_currency_code;
+}
+
+async function nextWithholdingRemittanceNo(client, orgId) {
+  const prefix = 'WTR';
+  const { rows } = await client.query(
+    `SELECT COUNT(*)::int AS n FROM withholding_remittances WHERE organization_id=$1`,
+    [orgId]
+  );
+  return `${prefix}-${String((rows[0]?.n || 0) + 1).padStart(6, '0')}`;
+}
+
+async function getOpenWithholdingItems({ orgId, direction = 'payable', query = {} }) {
+  const params = [orgId];
+  let filter = '';
+  let docDateFilter = '';
+  if (query?.partnerId) { params.push(query.partnerId); filter += ` AND src.partner_id = $${params.length}`; }
+  if (query?.taxCodeId) { params.push(query.taxCodeId); filter += ` AND src.tax_code_id = $${params.length}`; }
+  if (query?.fromDate) { params.push(query.fromDate); docDateFilter += ` AND src.document_date >= $${params.length}::date`; }
+  if (query?.toDate) { params.push(query.toDate); docDateFilter += ` AND src.document_date <= $${params.length}::date`; }
+
+  if (direction === 'payable') {
+    const { rows } = await pool.query(
+      `
+      WITH src AS (
+        SELECT b.id AS source_id, 'bill'::text AS source_type, b.organization_id, b.vendor_id AS partner_id, bp.name AS partner_name,
+               b.bill_no AS document_no, b.bill_date AS document_date, b.currency_code,
+               COALESCE(b.withholding_total,0)::numeric(18,2) AS withholding_total,
+               MAX(d.tax_code_id) AS tax_code_id
+        FROM bills b
+        LEFT JOIN business_partners bp ON bp.id = b.vendor_id
+        LEFT JOIN bill_lines bl ON bl.bill_id = b.id
+        LEFT JOIN bill_line_tax_details d ON d.line_id = bl.id AND COALESCE(d.tax_type,'')='WITHHOLDING'
+        WHERE b.organization_id = $1
+          AND b.status IN ('issued','paid')
+          AND COALESCE(b.withholding_total,0) > 0
+        GROUP BY b.id, bp.name
+      ), applied AS (
+        SELECT l.source_id, SUM(CASE WHEN r.status='posted' THEN l.applied_amount ELSE 0 END) AS applied_amount
+        FROM withholding_remittance_lines l
+        JOIN withholding_remittances r ON r.id = l.remittance_id
+        WHERE l.organization_id=$1
+        GROUP BY l.source_id
+      )
+      SELECT src.*,
+             COALESCE(applied.applied_amount,0)::numeric(18,2) AS applied_amount,
+             GREATEST(COALESCE(src.withholding_total,0) - COALESCE(applied.applied_amount,0), 0)::numeric(18,2) AS outstanding_amount
+      FROM src
+      LEFT JOIN applied ON applied.source_id = src.source_id
+      WHERE GREATEST(COALESCE(src.withholding_total,0) - COALESCE(applied.applied_amount,0), 0) > 0
+      ${filter}
+      ${docDateFilter}
+      ORDER BY src.document_date DESC, src.document_no
+      `,
+      params
+    );
+    return rows;
+  }
+
+  const { rows } = await pool.query(
+    `
+    WITH src AS (
+      SELECT i.id AS source_id, 'invoice'::text AS source_type, i.organization_id, i.customer_id AS partner_id, bp.name AS partner_name,
+             i.invoice_no AS document_no, i.invoice_date AS document_date, i.currency_code,
+             COALESCE(i.withholding_total,0)::numeric(18,2) AS withholding_total,
+             MAX(d.tax_code_id) AS tax_code_id
+      FROM invoices i
+      LEFT JOIN business_partners bp ON bp.id = i.customer_id
+      LEFT JOIN invoice_lines il ON il.invoice_id = i.id
+      LEFT JOIN invoice_line_tax_details d ON d.line_id = il.id AND COALESCE(d.tax_type,'')='WITHHOLDING'
+      WHERE i.organization_id = $1
+        AND i.status IN ('issued','paid')
+        AND COALESCE(i.withholding_total,0) > 0
+      GROUP BY i.id, bp.name
+    ), applied AS (
+      SELECT l.source_id, SUM(CASE WHEN c.status='posted' THEN l.applied_amount ELSE 0 END) AS applied_amount
+      FROM withholding_certificate_lines l
+      JOIN withholding_certificates c ON c.id = l.certificate_id
+      WHERE l.organization_id=$1
+      GROUP BY l.source_id
+    )
+    SELECT src.*,
+           COALESCE(applied.applied_amount,0)::numeric(18,2) AS applied_amount,
+           GREATEST(COALESCE(src.withholding_total,0) - COALESCE(applied.applied_amount,0), 0)::numeric(18,2) AS outstanding_amount
+    FROM src
+    LEFT JOIN applied ON applied.source_id = src.source_id
+    WHERE GREATEST(COALESCE(src.withholding_total,0) - COALESCE(applied.applied_amount,0), 0) > 0
+    ${filter}
+    ${docDateFilter}
+    ORDER BY src.document_date DESC, src.document_no
+    `,
+    params
+  );
+  return rows;
+}
+
+async function createWithholdingRemittance({ orgId, actorUserId, payload }) {
+  return withTransaction(async (client) => {
+    await assertPartnerBelongsToOrg({ orgId, partnerId: payload.authorityPartnerId || null });
+    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
+    await assertAccountBelongsToOrg({ orgId, accountId: payload.settlementAccountId || null, fieldName: 'settlementAccountId' });
+
+    const baseCurrency = payload.currencyCode || await getOrgBaseCurrency({ orgId, client });
+    const openItems = await getOpenWithholdingItems({ orgId, direction: 'payable', query: {} });
+    const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
+    let totalAmount = 0;
+    const lines = [];
+    for (const line of payload.lines || []) {
+      const item = itemMap.get(line.sourceId);
+      if (!item) throw new AppError(400, `Bill ${line.sourceId} does not have open withholding to remit`);
+      if (payload.taxCodeId && item.tax_code_id && item.tax_code_id !== payload.taxCodeId) throw new AppError(400, 'Selected line tax code does not match remittance tax code');
+      const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
+      if (appliedAmount <= 0) throw new AppError(400, 'appliedAmount must be greater than zero');
+      if (appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Applied amount exceeds outstanding withholding for ${item.document_no}`);
+      totalAmount += appliedAmount;
+      lines.push({ ...item, appliedAmount: Number(appliedAmount.toFixed(2)) });
+    }
+    if (!lines.length) throw new AppError(400, 'At least one remittance line is required');
+
+    const remittanceNo = await nextWithholdingRemittanceNo(client, orgId);
+    const { rows } = await client.query(
+      `INSERT INTO withholding_remittances (organization_id, remittance_no, direction, status, authority_partner_id, jurisdiction_id, tax_code_id, period_start, period_end, remittance_date, currency_code, settlement_account_id, reference, memo, total_amount, created_by, updated_by)
+       VALUES ($1,$2,'payable','draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
+       RETURNING *`,
+      [orgId, remittanceNo, payload.authorityPartnerId || null, payload.jurisdictionId || null, payload.taxCodeId || null, payload.periodStart || null, payload.periodEnd || null, payload.remittanceDate, baseCurrency, payload.settlementAccountId || null, payload.reference || null, payload.memo || null, Number(totalAmount.toFixed(2)), actorUserId || null]
+    );
+    const remittance = rows[0];
+    for (const line of lines) {
+      await client.query(
+        `INSERT INTO withholding_remittance_lines (organization_id, remittance_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount)
+         VALUES ($1,$2,'bill',$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [orgId, remittance.id, line.source_id, line.partner_id || null, line.tax_code_id || null, line.document_no, line.document_date || null, Number(line.withholding_total || 0), Number(line.outstanding_amount || 0), line.appliedAmount]
+      );
+    }
+    return getWithholdingRemittance({ orgId, remittanceId: remittance.id, client });
+  });
+}
+
+async function listWithholdingRemittances({ orgId, query = {} }) {
+  const params = [orgId];
+  const where = ['r.organization_id=$1'];
+  if (query?.status) { params.push(query.status); where.push(`r.status=$${params.length}`); }
+  const { rows } = await pool.query(
+    `SELECT r.*, bp.name AS authority_partner_name, tc.code AS tax_code, tj.code AS jurisdiction_code
+     FROM withholding_remittances r
+     LEFT JOIN business_partners bp ON bp.id = r.authority_partner_id
+     LEFT JOIN tax_codes tc ON tc.id = r.tax_code_id
+     LEFT JOIN tax_jurisdictions tj ON tj.id = r.jurisdiction_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY r.remittance_date DESC, r.created_at DESC`,
+    params
+  );
+  return rows;
+}
+
+async function getWithholdingRemittance({ orgId, remittanceId, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(
+    `SELECT r.*, bp.name AS authority_partner_name, tc.code AS tax_code, tj.code AS jurisdiction_code
+     FROM withholding_remittances r
+     LEFT JOIN business_partners bp ON bp.id = r.authority_partner_id
+     LEFT JOIN tax_codes tc ON tc.id = r.tax_code_id
+     LEFT JOIN tax_jurisdictions tj ON tj.id = r.jurisdiction_id
+     WHERE r.organization_id=$1 AND r.id=$2`,
+    [orgId, remittanceId]
+  );
+  if (!rows.length) throw new AppError(404, 'Withholding remittance not found');
+  const remittance = rows[0];
+  const { rows: lines } = await db.query(`SELECT * FROM withholding_remittance_lines WHERE organization_id=$1 AND remittance_id=$2 ORDER BY source_document_date, source_document_no`, [orgId, remittanceId]);
+  return { ...remittance, lines };
+}
+
+async function updateWithholdingRemittance({ orgId, remittanceId, payload, actorUserId }) {
+  return withTransaction(async (client) => {
+    const current = await getWithholdingRemittance({ orgId, remittanceId, client });
+    if (current.status !== 'draft') throw new AppError(409, 'Only draft remittances can be updated');
+    if (payload.authorityPartnerId !== undefined) await assertPartnerBelongsToOrg({ orgId, partnerId: payload.authorityPartnerId || null });
+    if (payload.jurisdictionId !== undefined) await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+    if (payload.taxCodeId !== undefined) await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
+    if (payload.settlementAccountId !== undefined) await assertAccountBelongsToOrg({ orgId, accountId: payload.settlementAccountId || null, fieldName: 'settlementAccountId' });
+
+    const merged = { ...current, ...payload };
+    if (payload.lines) {
+      await client.query(`DELETE FROM withholding_remittance_lines WHERE organization_id=$1 AND remittance_id=$2`, [orgId, remittanceId]);
+      const openItems = await getOpenWithholdingItems({ orgId, direction: 'payable', query: {} });
+      const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
+      let totalAmount = 0;
+      for (const line of payload.lines) {
+        const item = itemMap.get(line.sourceId);
+        if (!item) throw new AppError(400, `Bill ${line.sourceId} does not have open withholding to remit`);
+        const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
+        if (appliedAmount <= 0 || appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Invalid applied amount for ${item.document_no}`);
+        totalAmount += appliedAmount;
+        await client.query(`INSERT INTO withholding_remittance_lines (organization_id, remittance_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'bill',$3,$4,$5,$6,$7,$8,$9,$10)`, [orgId, remittanceId, item.source_id, item.partner_id || null, item.tax_code_id || null, item.document_no, item.document_date || null, Number(item.withholding_total || 0), Number(item.outstanding_amount || 0), Number(appliedAmount.toFixed(2))]);
+      }
+      merged.total_amount = Number(totalAmount.toFixed(2));
+    }
+
+    const { rows } = await client.query(
+      `UPDATE withholding_remittances
+       SET authority_partner_id=$3, jurisdiction_id=$4, tax_code_id=$5, period_start=$6, period_end=$7, remittance_date=$8, currency_code=$9, settlement_account_id=$10, reference=$11, memo=$12, total_amount=$13, updated_by=$14, updated_at=NOW()
+       WHERE organization_id=$1 AND id=$2
+       RETURNING *`,
+      [orgId, remittanceId, merged.authority_partner_id ?? merged.authorityPartnerId ?? null, merged.jurisdiction_id ?? merged.jurisdictionId ?? null, merged.tax_code_id ?? merged.taxCodeId ?? null, merged.period_start ?? merged.periodStart ?? null, merged.period_end ?? merged.periodEnd ?? null, merged.remittance_date ?? merged.remittanceDate, merged.currency_code ?? merged.currencyCode, merged.settlement_account_id ?? merged.settlementAccountId ?? null, merged.reference || null, merged.memo || null, Number(merged.total_amount || merged.totalAmount || current.total_amount || 0), actorUserId || null]
+    );
+    return getWithholdingRemittance({ orgId, remittanceId: rows[0].id, client });
+  });
+}
+
+async function postWithholdingRemittance({ orgId, remittanceId, actorUserId, payload = {} }) {
+  return withTransaction(async (client) => {
+    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
+    if (!['draft','approved'].includes(remittance.status)) throw new AppError(409, 'Only draft or approved remittances can be posted');
+    if (remittance.workflow_document_id) {
+      await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: 'withholding_remittance', workflowDocumentId: remittance.workflow_document_id, client, actionLabel: 'post' });
+    }
+    const settlementAccountId = payload.settlementAccountId || remittance.settlement_account_id;
+    if (!settlementAccountId) throw new AppError(400, 'settlementAccountId is required to post remittance');
+    await assertAccountBelongsToOrg({ orgId, accountId: settlementAccountId, fieldName: 'settlementAccountId' });
+
+    const { rows: settingsRows } = await client.query(`SELECT withholding_tax_payable_account_id FROM tax_settings WHERE organization_id=$1`, [orgId]);
+    const withholdingPayableAccountId = settingsRows[0]?.withholding_tax_payable_account_id || null;
+    if (!withholdingPayableAccountId) throw new AppError(409, 'Withholding tax payable account is not configured (tax_settings.withholding_tax_payable_account_id)');
+
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: payload.remittanceDate || remittance.remittance_date, client });
+    const draft = await journalIF.createDraftJournal({
+      orgId,
+      actorUserId,
+      client,
+      payload: {
+        periodId: period.id,
+        entryDate: payload.remittanceDate || remittance.remittance_date,
+        typeCode: 'GENERAL',
+        memo: payload.memo || remittance.memo || `Withholding remittance ${remittance.remittance_no}`,
+        idempotencyKey: `withholding-remittance:${remittanceId}:post`,
+        lines: [
+          { accountId: withholdingPayableAccountId, debit: Number(remittance.total_amount || 0), credit: 0, description: `Clear withholding payable ${remittance.remittance_no}` },
+          { accountId: settlementAccountId, debit: 0, credit: Number(remittance.total_amount || 0), description: `Remit withholding ${remittance.remittance_no}` }
+        ]
+      }
+    });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    await client.query(`UPDATE withholding_remittances SET status='posted', settlement_account_id=$3, remittance_date=$4, reference=$5, memo=$6, journal_entry_id=$7, posted_at=NOW(), posted_by=$8, updated_by=$8, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, settlementAccountId, payload.remittanceDate || remittance.remittance_date, payload.reference || remittance.reference || null, payload.memo || remittance.memo || null, posted.journalId, actorUserId || null]);
+    return getWithholdingRemittance({ orgId, remittanceId, client });
+  });
+}
+
+async function voidWithholdingRemittance({ orgId, remittanceId, actorUserId, reason }) {
+  return withTransaction(async (client) => {
+    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
+    if (remittance.status !== 'posted') throw new AppError(409, 'Only posted remittances can be voided');
+    if (!remittance.journal_entry_id) throw new AppError(409, 'Remittance has no posted journal to void');
+    const reversal = await journalIF.voidPostedJournal({ orgId, journalId: remittance.journal_entry_id, actorUserId, reason, client });
+    await client.query(`UPDATE withholding_remittances SET status='voided', reversal_journal_entry_id=$3, voided_at=NOW(), voided_by=$4, updated_by=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, reversal.journalId || reversal.reversalJournalId || null, actorUserId || null]);
+    return getWithholdingRemittance({ orgId, remittanceId, client });
+  });
+}
+
+async function listWithholdingCertificates({ orgId, query = {} }) {
+  const params = [orgId];
+  const where = ['c.organization_id=$1'];
+  if (query?.status) { params.push(query.status); where.push(`c.status=$${params.length}`); }
+  const { rows } = await pool.query(`SELECT c.*, bp.name AS customer_name, tc.code AS tax_code, tj.code AS jurisdiction_code FROM withholding_certificates c LEFT JOIN business_partners bp ON bp.id = c.customer_id LEFT JOIN tax_codes tc ON tc.id = c.tax_code_id LEFT JOIN tax_jurisdictions tj ON tj.id = c.jurisdiction_id WHERE ${where.join(' AND ')} ORDER BY c.certificate_date DESC, c.created_at DESC`, params);
+  return rows;
+}
+
+async function getWithholdingCertificate({ orgId, certificateId, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(`SELECT c.*, bp.name AS customer_name, tc.code AS tax_code, tj.code AS jurisdiction_code FROM withholding_certificates c LEFT JOIN business_partners bp ON bp.id = c.customer_id LEFT JOIN tax_codes tc ON tc.id = c.tax_code_id LEFT JOIN tax_jurisdictions tj ON tj.id = c.jurisdiction_id WHERE c.organization_id=$1 AND c.id=$2`, [orgId, certificateId]);
+  if (!rows.length) throw new AppError(404, 'Withholding certificate not found');
+  const cert = rows[0];
+  const { rows: lines } = await db.query(`SELECT * FROM withholding_certificate_lines WHERE organization_id=$1 AND certificate_id=$2 ORDER BY source_document_date, source_document_no`, [orgId, certificateId]);
+  return { ...cert, lines };
+}
+
+async function createWithholdingCertificate({ orgId, actorUserId, payload }) {
+  return withTransaction(async (client) => {
+    await assertPartnerBelongsToOrg({ orgId, partnerId: payload.customerId || null });
+    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
+    await assertAccountBelongsToOrg({ orgId, accountId: payload.counterAccountId || null, fieldName: 'counterAccountId' });
+
+    const openItems = await getOpenWithholdingItems({ orgId, direction: 'receivable', query: {} });
+    const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
+    let totalAmount = 0;
+    for (const line of payload.lines || []) {
+      const item = itemMap.get(line.sourceId);
+      if (!item) throw new AppError(400, `Invoice ${line.sourceId} does not have open withholding receivable`);
+      const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
+      if (appliedAmount <= 0 || appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Invalid applied amount for ${item.document_no}`);
+      totalAmount += appliedAmount;
+    }
+    const { rows } = await client.query(`INSERT INTO withholding_certificates (organization_id, certificate_no, status, customer_id, jurisdiction_id, tax_code_id, certificate_date, counter_account_id, issued_by, reference, memo, total_amount, created_by, updated_by) VALUES ($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING *`, [orgId, payload.certificateNo, payload.customerId || null, payload.jurisdictionId || null, payload.taxCodeId || null, payload.certificateDate, payload.counterAccountId || null, payload.issuedBy || null, payload.reference || null, payload.memo || null, Number(totalAmount.toFixed(2)), actorUserId || null]);
+    const cert = rows[0];
+    for (const line of payload.lines || []) {
+      const item = itemMap.get(line.sourceId);
+      const appliedAmount = Number((line.appliedAmount ?? item.outstanding_amount ?? 0).toFixed(2));
+      await client.query(`INSERT INTO withholding_certificate_lines (organization_id, certificate_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'invoice',$3,$4,$5,$6,$7,$8,$9,$10)`, [orgId, cert.id, item.source_id, item.partner_id || null, item.tax_code_id || null, item.document_no, item.document_date || null, Number(item.withholding_total || 0), Number(item.outstanding_amount || 0), appliedAmount]);
+    }
+    return getWithholdingCertificate({ orgId, certificateId: cert.id, client });
+  });
+}
+
+async function updateWithholdingCertificate({ orgId, certificateId, payload, actorUserId }) {
+  return withTransaction(async (client) => {
+    const current = await getWithholdingCertificate({ orgId, certificateId, client });
+    if (current.status !== 'draft') throw new AppError(409, 'Only draft certificates can be updated');
+    if (payload.customerId !== undefined) await assertPartnerBelongsToOrg({ orgId, partnerId: payload.customerId || null });
+    if (payload.jurisdictionId !== undefined) await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+    if (payload.taxCodeId !== undefined) await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
+    if (payload.counterAccountId !== undefined) await assertAccountBelongsToOrg({ orgId, accountId: payload.counterAccountId || null, fieldName: 'counterAccountId' });
+
+    let totalAmount = Number(current.total_amount || 0);
+    if (payload.lines) {
+      await client.query(`DELETE FROM withholding_certificate_lines WHERE organization_id=$1 AND certificate_id=$2`, [orgId, certificateId]);
+      const openItems = await getOpenWithholdingItems({ orgId, direction: 'receivable', query: {} });
+      const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
+      totalAmount = 0;
+      for (const line of payload.lines) {
+        const item = itemMap.get(line.sourceId);
+        if (!item) throw new AppError(400, `Invoice ${line.sourceId} does not have open withholding receivable`);
+        const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
+        if (appliedAmount <= 0 || appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Invalid applied amount for ${item.document_no}`);
+        totalAmount += appliedAmount;
+        await client.query(`INSERT INTO withholding_certificate_lines (organization_id, certificate_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'invoice',$3,$4,$5,$6,$7,$8,$9,$10)`, [orgId, certificateId, item.source_id, item.partner_id || null, item.tax_code_id || null, item.document_no, item.document_date || null, Number(item.withholding_total || 0), Number(item.outstanding_amount || 0), Number(appliedAmount.toFixed(2))]);
+      }
+    }
+    const merged = { ...current, ...payload, total_amount: totalAmount };
+    await client.query(`UPDATE withholding_certificates SET customer_id=$3, jurisdiction_id=$4, tax_code_id=$5, certificate_no=$6, certificate_date=$7, counter_account_id=$8, issued_by=$9, reference=$10, memo=$11, total_amount=$12, updated_by=$13, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, merged.customer_id ?? merged.customerId ?? null, merged.jurisdiction_id ?? merged.jurisdictionId ?? null, merged.tax_code_id ?? merged.taxCodeId ?? null, merged.certificate_no ?? merged.certificateNo, merged.certificate_date ?? merged.certificateDate, merged.counter_account_id ?? merged.counterAccountId ?? null, merged.issued_by ?? merged.issuedBy ?? null, merged.reference || null, merged.memo || null, Number(totalAmount.toFixed(2)), actorUserId || null]);
+    return getWithholdingCertificate({ orgId, certificateId, client });
+  });
+}
+
+async function postWithholdingCertificate({ orgId, certificateId, actorUserId, payload = {} }) {
+  return withTransaction(async (client) => {
+    const cert = await getWithholdingCertificate({ orgId, certificateId, client });
+    if (!['draft','approved'].includes(cert.status)) throw new AppError(409, 'Only draft or approved certificates can be posted');
+    if (cert.workflow_document_id) {
+      await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: 'withholding_certificate', workflowDocumentId: cert.workflow_document_id, client, actionLabel: 'post' });
+    }
+    const counterAccountId = payload.counterAccountId || cert.counter_account_id;
+    if (!counterAccountId) throw new AppError(400, 'counterAccountId is required to post certificate');
+    await assertAccountBelongsToOrg({ orgId, accountId: counterAccountId, fieldName: 'counterAccountId' });
+    const { rows: settingsRows } = await client.query(`SELECT withholding_tax_receivable_account_id FROM tax_settings WHERE organization_id=$1`, [orgId]);
+    const receivableAccountId = settingsRows[0]?.withholding_tax_receivable_account_id || null;
+    if (!receivableAccountId) throw new AppError(409, 'Withholding tax receivable account is not configured (tax_settings.withholding_tax_receivable_account_id)');
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: payload.certificateDate || cert.certificate_date, client });
+    const draft = await journalIF.createDraftJournal({
+      orgId, actorUserId, client,
+      payload: {
+        periodId: period.id,
+        entryDate: payload.certificateDate || cert.certificate_date,
+        typeCode: 'GENERAL',
+        memo: payload.memo || cert.memo || `Withholding certificate ${cert.certificate_no}`,
+        idempotencyKey: `withholding-certificate:${certificateId}:post`,
+        lines: [
+          { accountId: counterAccountId, debit: Number(cert.total_amount || 0), credit: 0, description: `Recognize withholding certificate ${cert.certificate_no}` },
+          { accountId: receivableAccountId, debit: 0, credit: Number(cert.total_amount || 0), description: `Clear withholding receivable ${cert.certificate_no}` }
+        ]
+      }
+    });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    await client.query(`UPDATE withholding_certificates SET status='posted', counter_account_id=$3, certificate_date=$4, issued_by=$5, reference=$6, memo=$7, journal_entry_id=$8, posted_at=NOW(), posted_by=$9, updated_by=$9, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, counterAccountId, payload.certificateDate || cert.certificate_date, payload.issuedBy || cert.issued_by || null, payload.reference || cert.reference || null, payload.memo || cert.memo || null, posted.journalId, actorUserId || null]);
+    return getWithholdingCertificate({ orgId, certificateId, client });
+  });
+}
+
+async function voidWithholdingCertificate({ orgId, certificateId, actorUserId, reason }) {
+  return withTransaction(async (client) => {
+    const cert = await getWithholdingCertificate({ orgId, certificateId, client });
+    if (cert.status !== 'posted') throw new AppError(409, 'Only posted certificates can be voided');
+    if (!cert.journal_entry_id) throw new AppError(409, 'Certificate has no posted journal to void');
+    const reversal = await journalIF.voidPostedJournal({ orgId, journalId: cert.journal_entry_id, actorUserId, reason, client });
+    await client.query(`UPDATE withholding_certificates SET status='voided', reversal_journal_entry_id=$3, voided_at=NOW(), voided_by=$4, updated_by=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, reversal.journalId || reversal.reversalJournalId || null, actorUserId || null]);
+    return getWithholdingCertificate({ orgId, certificateId, client });
+  });
+}
+
+
+
+async function getWithholdingDashboard({ orgId, query = {} }) {
+  const [openItems, remittances, certificates] = await Promise.all([
+    listWithholdingOpenItems({ orgId, query }),
+    listWithholdingRemittances({ orgId, query: { status: query.status, periodStart: query.periodStart, periodEnd: query.periodEnd } }),
+    listWithholdingCertificates({ orgId, query: { status: query.status, periodStart: query.periodStart, periodEnd: query.periodEnd } })
+  ]);
+  const sumOutstanding = (rows) => rows.reduce((acc, row) => acc + Number(row.outstanding_amount || row.available_amount || 0), 0);
+  const payableOpen = openItems.filter((r) => String(r.direction || '').toLowerCase() === 'payable');
+  const receivableOpen = openItems.filter((r) => String(r.direction || '').toLowerCase() === 'receivable');
+  return {
+    open_payable_count: payableOpen.length,
+    open_receivable_count: receivableOpen.length,
+    open_payable_amount: Number(sumOutstanding(payableOpen).toFixed(2)),
+    open_receivable_amount: Number(sumOutstanding(receivableOpen).toFixed(2)),
+    remittance_draft_count: remittances.filter((r) => ['draft','submitted','approved','rejected'].includes(String(r.status || '').toLowerCase())).length,
+    remittance_posted_count: remittances.filter((r) => String(r.status || '').toLowerCase() === 'posted').length,
+    certificate_draft_count: certificates.filter((r) => ['draft','submitted','approved','rejected'].includes(String(r.status || '').toLowerCase())).length,
+    certificate_posted_count: certificates.filter((r) => String(r.status || '').toLowerCase() === 'posted').length
+  };
+}
+
+async function submitWithholdingRemittanceForApproval({ orgId, remittanceId, actorUserId }) {
+  return withTransaction(async (client) => {
+    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
+    if (!['draft','rejected'].includes(remittance.status)) throw new AppError(409, 'Only draft or rejected remittances can be submitted');
+    const workflowDocument = await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: 'withholding_remittance',
+      entity: remittance,
+      workflowDocumentId: remittance.workflow_document_id,
+      snapshot: { remittance, lines: remittance.lines || [] },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE withholding_remittances SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, workflowDocumentId]);
+      }
+    });
+    await client.query(`UPDATE withholding_remittances SET status='submitted', submitted_at=NOW(), submitted_by=$3, rejection_reason=NULL, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, actorUserId || null]);
+    return getWithholdingRemittance({ orgId, remittanceId, client });
+  });
+}
+
+async function approveWithholdingRemittance({ orgId, remittanceId, actorUserId, comment }) {
+  return withTransaction(async (client) => {
+    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
+    if (!remittance.workflow_document_id) throw new AppError(409, 'Remittance has no workflow document');
+    await documentableSvc.approveEntityDocument({ orgId, actorUserId, entityType: 'withholding_remittance', workflowDocumentId: remittance.workflow_document_id, creatorUserId: remittance.created_by || null, comment: comment || null, client });
+    await client.query(`UPDATE withholding_remittances SET status='approved', approved_at=NOW(), approved_by=$3, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, actorUserId || null]);
+    return getWithholdingRemittance({ orgId, remittanceId, client });
+  });
+}
+
+async function rejectWithholdingRemittance({ orgId, remittanceId, actorUserId, reason }) {
+  return withTransaction(async (client) => {
+    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
+    if (!remittance.workflow_document_id) throw new AppError(409, 'Remittance has no workflow document');
+    await documentableSvc.rejectEntityDocument({ orgId, actorUserId, entityType: 'withholding_remittance', workflowDocumentId: remittance.workflow_document_id, creatorUserId: remittance.created_by || null, comment: reason, client });
+    await client.query(`UPDATE withholding_remittances SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, actorUserId || null, reason || null]);
+    return getWithholdingRemittance({ orgId, remittanceId, client });
+  });
+}
+
+async function submitWithholdingCertificateForApproval({ orgId, certificateId, actorUserId }) {
+  return withTransaction(async (client) => {
+    const certificate = await getWithholdingCertificate({ orgId, certificateId, client });
+    if (!['draft','rejected'].includes(certificate.status)) throw new AppError(409, 'Only draft or rejected certificates can be submitted');
+    await documentableSvc.submitEntityForApproval({
+      orgId,
+      actorUserId,
+      entityType: 'withholding_certificate',
+      entity: certificate,
+      workflowDocumentId: certificate.workflow_document_id,
+      snapshot: { certificate, lines: certificate.lines || [] },
+      client,
+      persistWorkflowDocumentId: async (workflowDocumentId) => {
+        await client.query(`UPDATE withholding_certificates SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, workflowDocumentId]);
+      }
+    });
+    await client.query(`UPDATE withholding_certificates SET status='submitted', submitted_at=NOW(), submitted_by=$3, rejection_reason=NULL, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, actorUserId || null]);
+    return getWithholdingCertificate({ orgId, certificateId, client });
+  });
+}
+
+async function approveWithholdingCertificate({ orgId, certificateId, actorUserId, comment }) {
+  return withTransaction(async (client) => {
+    const certificate = await getWithholdingCertificate({ orgId, certificateId, client });
+    if (!certificate.workflow_document_id) throw new AppError(409, 'Certificate has no workflow document');
+    await documentableSvc.approveEntityDocument({ orgId, actorUserId, entityType: 'withholding_certificate', workflowDocumentId: certificate.workflow_document_id, creatorUserId: certificate.created_by || null, comment: comment || null, client });
+    await client.query(`UPDATE withholding_certificates SET status='approved', approved_at=NOW(), approved_by=$3, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, actorUserId || null]);
+    return getWithholdingCertificate({ orgId, certificateId, client });
+  });
+}
+
+async function rejectWithholdingCertificate({ orgId, certificateId, actorUserId, reason }) {
+  return withTransaction(async (client) => {
+    const certificate = await getWithholdingCertificate({ orgId, certificateId, client });
+    if (!certificate.workflow_document_id) throw new AppError(409, 'Certificate has no workflow document');
+    await documentableSvc.rejectEntityDocument({ orgId, actorUserId, entityType: 'withholding_certificate', workflowDocumentId: certificate.workflow_document_id, creatorUserId: certificate.created_by || null, comment: reason, client });
+    await client.query(`UPDATE withholding_certificates SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, actorUserId || null, reason || null]);
+    return getWithholdingCertificate({ orgId, certificateId, client });
+  });
+}
+
 // ==================== MODULE EXPORTS ====================
 
 module.exports = {
@@ -1609,5 +2099,27 @@ module.exports = {
   
   // Automation Rules
   listAutomationRules,
-  upsertAutomationRule
+  upsertAutomationRule,
+
+  // Withholding lifecycle
+  getWithholdingDashboard,
+  listWithholdingOpenItems,
+  createWithholdingRemittance,
+  listWithholdingRemittances,
+  getWithholdingRemittance,
+  updateWithholdingRemittance,
+  submitWithholdingRemittanceForApproval,
+  approveWithholdingRemittance,
+  rejectWithholdingRemittance,
+  postWithholdingRemittance,
+  voidWithholdingRemittance,
+  createWithholdingCertificate,
+  listWithholdingCertificates,
+  getWithholdingCertificate,
+  updateWithholdingCertificate,
+  submitWithholdingCertificateForApproval,
+  approveWithholdingCertificate,
+  rejectWithholdingCertificate,
+  postWithholdingCertificate,
+  voidWithholdingCertificate,
 };
