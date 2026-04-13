@@ -9,42 +9,49 @@ async function assertAccountBelongsToOrg({ orgId, accountId, fieldName }) {
   if (!accountId) return;
   const { rows } = await pool.query(
     `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
-    [orgId, accountId]
+    [orgId, accountId],
   );
-  if (!rows.length) throw new AppError(400, `${fieldName} is invalid for this organization`);
+  if (!rows.length)
+    throw new AppError(400, `${fieldName} is invalid for this organization`);
 }
 
 async function assertTaxCodeBelongsToOrg({ orgId, taxCodeId }) {
   if (!taxCodeId) return;
   const { rows } = await pool.query(
     `SELECT id FROM tax_codes WHERE organization_id=$1 AND id=$2`,
-    [orgId, taxCodeId]
+    [orgId, taxCodeId],
   );
-  if (!rows.length) throw new AppError(400, `defaultTaxCodeId is invalid for this organization`);
+  if (!rows.length)
+    throw new AppError(
+      400,
+      `defaultTaxCodeId is invalid for this organization`,
+    );
 }
 
 async function assertJurisdictionBelongsToOrg({ orgId, jurisdictionId }) {
   if (!jurisdictionId) return;
   const { rows } = await pool.query(
     `SELECT id FROM tax_jurisdictions WHERE organization_id=$1 AND id=$2`,
-    [orgId, jurisdictionId]
+    [orgId, jurisdictionId],
   );
-  if (!rows.length) throw new AppError(400, `jurisdictionId is invalid for this organization`);
+  if (!rows.length)
+    throw new AppError(400, `jurisdictionId is invalid for this organization`);
 }
 
 async function assertPartnerBelongsToOrg({ orgId, partnerId }) {
   if (!partnerId) return;
   const { rows } = await pool.query(
     `SELECT id FROM business_partners WHERE organization_id=$1 AND id=$2`,
-    [orgId, partnerId]
+    [orgId, partnerId],
   );
-  if (!rows.length) throw new AppError(400, `partnerId is invalid for this organization`);
+  if (!rows.length)
+    throw new AppError(400, `partnerId is invalid for this organization`);
 }
 
 async function listJurisdictions({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_jurisdictions WHERE organization_id=$1 ORDER BY code`,
-    [orgId]
+    [orgId],
   );
   return rows;
 }
@@ -54,7 +61,7 @@ async function createJurisdiction({ orgId, payload }) {
     `INSERT INTO tax_jurisdictions(organization_id, code, name, country_code)
      VALUES ($1,$2,$3,$4)
      RETURNING *`,
-    [orgId, payload.code, payload.name, payload.countryCode || null]
+    [orgId, payload.code, payload.name, payload.countryCode || null],
   );
   return rows[0];
 }
@@ -62,7 +69,7 @@ async function createJurisdiction({ orgId, payload }) {
 async function updateJurisdiction({ orgId, jurisdictionId, payload }) {
   const { rows: beforeRows } = await pool.query(
     `SELECT * FROM tax_jurisdictions WHERE organization_id=$1 AND id=$2`,
-    [orgId, jurisdictionId]
+    [orgId, jurisdictionId],
   );
   if (!beforeRows.length) throw new AppError(404, "Tax jurisdiction not found");
   const before = beforeRows[0];
@@ -73,7 +80,7 @@ async function updateJurisdiction({ orgId, jurisdictionId, payload }) {
   const map = {
     code: "code",
     name: "name",
-    countryCode: "country_code"
+    countryCode: "country_code",
   };
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
@@ -87,7 +94,7 @@ async function updateJurisdiction({ orgId, jurisdictionId, payload }) {
     `UPDATE tax_jurisdictions SET ${columns.join(", ")}
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
-    params
+    params,
   );
 
   return { before, after: rows[0] };
@@ -96,7 +103,7 @@ async function updateJurisdiction({ orgId, jurisdictionId, payload }) {
 async function deleteJurisdiction({ orgId, jurisdictionId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_jurisdictions WHERE organization_id=$1 AND id=$2`,
-    [orgId, jurisdictionId]
+    [orgId, jurisdictionId],
   );
   if (!rowCount) throw new AppError(404, "Tax jurisdiction not found");
   return { deleted: true };
@@ -108,7 +115,7 @@ async function getTaxRegistrationById({ orgId, registrationId }) {
        FROM tax_registrations tr
        LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
       WHERE tr.organization_id=$1 AND tr.id=$2`,
-    [orgId, registrationId]
+    [orgId, registrationId],
   );
   if (!rows.length) throw new AppError(404, "Tax registration not found");
   return rows[0];
@@ -118,9 +125,18 @@ async function listTaxRegistrations({ orgId, query }) {
   const params = [orgId];
   const where = ["tr.organization_id=$1"];
   let i = 2;
-  if (query?.registrationType) { where.push(`tr.registration_type=$${i++}`); params.push(query.registrationType); }
-  if (query?.jurisdictionId) { where.push(`tr.jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
-  if (query?.isPrimary !== undefined) { where.push(`tr.is_primary=$${i++}`); params.push(query.isPrimary === true || query.isPrimary === 'true'); }
+  if (query?.registrationType) {
+    where.push(`tr.registration_type=$${i++}`);
+    params.push(query.registrationType);
+  }
+  if (query?.jurisdictionId) {
+    where.push(`tr.jurisdiction_id=$${i++}`);
+    params.push(query.jurisdictionId);
+  }
+  if (query?.isPrimary !== undefined) {
+    where.push(`tr.is_primary=$${i++}`);
+    params.push(query.isPrimary === true || query.isPrimary === "true");
+  }
   if (query?.activeOn) {
     where.push(`tr.effective_from <= $${i}`);
     params.push(query.activeOn);
@@ -135,20 +151,23 @@ async function listTaxRegistrations({ orgId, query }) {
        LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
       WHERE ${where.join(" AND ")}
       ORDER BY tr.is_primary DESC, tr.registration_type, tr.registration_no`,
-    params
+    params,
   );
   return rows;
 }
 
 async function createTaxRegistration({ orgId, payload }) {
-  await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+  await assertJurisdictionBelongsToOrg({
+    orgId,
+    jurisdictionId: payload.jurisdictionId || null,
+  });
 
   return withTransaction(async (client) => {
     if (payload.isPrimary === true) {
       await client.query(
         `UPDATE tax_registrations SET is_primary=FALSE, updated_at=NOW()
           WHERE organization_id=$1 AND registration_type=COALESCE($2, 'VAT')`,
-        [orgId, payload.registrationType || 'VAT']
+        [orgId, payload.registrationType || "VAT"],
       );
     }
 
@@ -171,8 +190,8 @@ async function createTaxRegistration({ orgId, payload }) {
         payload.effectiveFrom || null,
         payload.effectiveTo ?? null,
         payload.isPrimary === true,
-        JSON.stringify(payload.metadata || {})
-      ]
+        JSON.stringify(payload.metadata || {}),
+      ],
     );
     return rows[0];
   });
@@ -181,7 +200,10 @@ async function createTaxRegistration({ orgId, payload }) {
 async function updateTaxRegistration({ orgId, registrationId, payload }) {
   const before = await getTaxRegistrationById({ orgId, registrationId });
   if (payload.jurisdictionId !== undefined) {
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId,
+    });
   }
 
   return withTransaction(async (client) => {
@@ -190,7 +212,7 @@ async function updateTaxRegistration({ orgId, registrationId, payload }) {
       await client.query(
         `UPDATE tax_registrations SET is_primary=FALSE, updated_at=NOW()
           WHERE organization_id=$1 AND registration_type=$2 AND id<>$3`,
-        [orgId, nextType, registrationId]
+        [orgId, nextType, registrationId],
       );
     }
 
@@ -198,20 +220,20 @@ async function updateTaxRegistration({ orgId, registrationId, payload }) {
     const params = [orgId, registrationId];
     let i = 3;
     const map = {
-      jurisdictionId: 'jurisdiction_id',
-      registrationNumber: 'registration_no',
-      registrationType: 'registration_type',
-      legalEntityName: 'legal_entity_name',
-      filingFrequency: 'filing_frequency',
-      filingBasis: 'filing_basis',
-      effectiveFrom: 'effective_from',
-      effectiveTo: 'effective_to',
-      isPrimary: 'is_primary'
+      jurisdictionId: "jurisdiction_id",
+      registrationNumber: "registration_no",
+      registrationType: "registration_type",
+      legalEntityName: "legal_entity_name",
+      filingFrequency: "filing_frequency",
+      filingBasis: "filing_basis",
+      effectiveFrom: "effective_from",
+      effectiveTo: "effective_to",
+      isPrimary: "is_primary",
     };
     for (const [k, col] of Object.entries(map)) {
       if (payload[k] !== undefined) {
         columns.push(`${col}=$${i++}`);
-        params.push(payload[k] === '' ? null : payload[k]);
+        params.push(payload[k] === "" ? null : payload[k]);
       }
     }
     if (payload.metadata !== undefined) {
@@ -222,10 +244,10 @@ async function updateTaxRegistration({ orgId, registrationId, payload }) {
 
     const { rows } = await client.query(
       `UPDATE tax_registrations
-          SET ${columns.join(', ')}, updated_at=NOW()
+          SET ${columns.join(", ")}, updated_at=NOW()
         WHERE organization_id=$1 AND id=$2
         RETURNING *`,
-      params
+      params,
     );
     return { before, after: rows[0] };
   });
@@ -234,7 +256,7 @@ async function updateTaxRegistration({ orgId, registrationId, payload }) {
 async function deleteTaxRegistration({ orgId, registrationId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_registrations WHERE organization_id=$1 AND id=$2`,
-    [orgId, registrationId]
+    [orgId, registrationId],
   );
   if (!rowCount) throw new AppError(404, "Tax registration not found");
   return { deleted: true };
@@ -247,7 +269,7 @@ async function getTaxRuleById({ orgId, ruleId, client = pool }) {
        LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
        JOIN tax_codes tc ON tc.id = tr.tax_code_id
       WHERE tr.organization_id=$1 AND tr.id=$2`,
-    [orgId, ruleId]
+    [orgId, ruleId],
   );
   if (!rows.length) throw new AppError(404, "Tax rule not found");
   return rows[0];
@@ -257,14 +279,38 @@ async function listTaxRules({ orgId, query }) {
   const params = [orgId];
   const where = ["tr.organization_id=$1"];
   let i = 2;
-  if (query?.status) { where.push(`tr.status=$${i++}`); params.push(query.status); }
-  if (query?.documentType) { where.push(`tr.document_type=$${i++}`); params.push(query.documentType); }
-  if (query?.partnerType) { where.push(`tr.partner_type=$${i++}`); params.push(query.partnerType); }
-  if (query?.supplyType) { where.push(`tr.supply_type=$${i++}`); params.push(query.supplyType); }
-  if (query?.placeOfSupplyBasis) { where.push(`tr.place_of_supply_basis=$${i++}`); params.push(query.placeOfSupplyBasis); }
-  if (query?.transactionScope) { where.push(`tr.transaction_scope=$${i++}`); params.push(query.transactionScope); }
-  if (query?.jurisdictionId) { where.push(`tr.jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
-  if (query?.taxCodeId) { where.push(`tr.tax_code_id=$${i++}`); params.push(query.taxCodeId); }
+  if (query?.status) {
+    where.push(`tr.status=$${i++}`);
+    params.push(query.status);
+  }
+  if (query?.documentType) {
+    where.push(`tr.document_type=$${i++}`);
+    params.push(query.documentType);
+  }
+  if (query?.partnerType) {
+    where.push(`tr.partner_type=$${i++}`);
+    params.push(query.partnerType);
+  }
+  if (query?.supplyType) {
+    where.push(`tr.supply_type=$${i++}`);
+    params.push(query.supplyType);
+  }
+  if (query?.placeOfSupplyBasis) {
+    where.push(`tr.place_of_supply_basis=$${i++}`);
+    params.push(query.placeOfSupplyBasis);
+  }
+  if (query?.transactionScope) {
+    where.push(`tr.transaction_scope=$${i++}`);
+    params.push(query.transactionScope);
+  }
+  if (query?.jurisdictionId) {
+    where.push(`tr.jurisdiction_id=$${i++}`);
+    params.push(query.jurisdictionId);
+  }
+  if (query?.taxCodeId) {
+    where.push(`tr.tax_code_id=$${i++}`);
+    params.push(query.taxCodeId);
+  }
   if (query?.activeOn) {
     where.push(`tr.effective_from <= $${i}`);
     params.push(query.activeOn);
@@ -282,13 +328,16 @@ async function listTaxRules({ orgId, query }) {
        JOIN tax_codes tc ON tc.id = tr.tax_code_id
       WHERE ${where.join(" AND ")}
       ORDER BY tr.priority ASC, tr.name ASC, tr.created_at DESC`,
-    params
+    params,
   );
   return rows;
 }
 
 async function createTaxRule({ orgId, payload }) {
-  await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
+  await assertJurisdictionBelongsToOrg({
+    orgId,
+    jurisdictionId: payload.jurisdictionId || null,
+  });
   await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId });
 
   const { rows } = await pool.query(
@@ -315,8 +364,8 @@ async function createTaxRule({ orgId, payload }) {
       payload.effectiveFrom || null,
       payload.effectiveTo ?? null,
       JSON.stringify(payload.conditions || {}),
-      payload.status || null
-    ]
+      payload.status || null,
+    ],
   );
   return rows[0];
 }
@@ -324,7 +373,10 @@ async function createTaxRule({ orgId, payload }) {
 async function updateTaxRule({ orgId, ruleId, payload }) {
   const before = await getTaxRuleById({ orgId, ruleId });
   if (payload.jurisdictionId !== undefined) {
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId,
+    });
   }
   if (payload.taxCodeId !== undefined) {
     await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId });
@@ -334,24 +386,24 @@ async function updateTaxRule({ orgId, ruleId, payload }) {
   const params = [orgId, ruleId];
   let i = 3;
   const map = {
-    code: 'code',
-    name: 'name',
-    documentType: 'document_type',
-    partnerType: 'partner_type',
-    supplyType: 'supply_type',
-    placeOfSupplyBasis: 'place_of_supply_basis',
-    transactionScope: 'transaction_scope',
-    jurisdictionId: 'jurisdiction_id',
-    taxCodeId: 'tax_code_id',
-    priority: 'priority',
-    effectiveFrom: 'effective_from',
-    effectiveTo: 'effective_to',
-    status: 'status'
+    code: "code",
+    name: "name",
+    documentType: "document_type",
+    partnerType: "partner_type",
+    supplyType: "supply_type",
+    placeOfSupplyBasis: "place_of_supply_basis",
+    transactionScope: "transaction_scope",
+    jurisdictionId: "jurisdiction_id",
+    taxCodeId: "tax_code_id",
+    priority: "priority",
+    effectiveFrom: "effective_from",
+    effectiveTo: "effective_to",
+    status: "status",
   };
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
-      params.push(payload[k] === '' ? null : payload[k]);
+      params.push(payload[k] === "" ? null : payload[k]);
     }
   }
   if (payload.conditions !== undefined) {
@@ -362,10 +414,10 @@ async function updateTaxRule({ orgId, ruleId, payload }) {
 
   const { rows } = await pool.query(
     `UPDATE tax_rules
-        SET ${columns.join(', ')}, updated_at=NOW()
+        SET ${columns.join(", ")}, updated_at=NOW()
       WHERE organization_id=$1 AND id=$2
       RETURNING *`,
-    params
+    params,
   );
   if (!rows.length) throw new AppError(404, "Tax rule not found");
   return { before, after: rows[0] };
@@ -374,7 +426,7 @@ async function updateTaxRule({ orgId, ruleId, payload }) {
 async function deleteTaxRule({ orgId, ruleId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_rules WHERE organization_id=$1 AND id=$2`,
-    [orgId, ruleId]
+    [orgId, ruleId],
   );
   if (!rowCount) throw new AppError(404, "Tax rule not found");
   return { deleted: true };
@@ -384,21 +436,37 @@ async function listTaxCodes({ orgId, query }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
   let i = 2;
-  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
-  if (query?.taxType) { where.push(`tax_type=$${i++}`); params.push(query.taxType); }
-  if (query?.jurisdictionId) { where.push(`jurisdiction_id=$${i++}`); params.push(query.jurisdictionId); }
+  if (query?.status) {
+    where.push(`status=$${i++}`);
+    params.push(query.status);
+  }
+  if (query?.taxType) {
+    where.push(`tax_type=$${i++}`);
+    params.push(query.taxType);
+  }
+  if (query?.jurisdictionId) {
+    where.push(`jurisdiction_id=$${i++}`);
+    params.push(query.jurisdictionId);
+  }
 
   const { rows } = await pool.query(
     `SELECT * FROM tax_codes WHERE ${where.join(" AND ")}
      ORDER BY code`,
-    params
+    params,
   );
   return rows;
 }
 
 async function createTaxCode({ orgId, payload }) {
-  await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
-  await assertAccountBelongsToOrg({ orgId, accountId: payload.postingAccountId || null, fieldName: "postingAccountId" });
+  await assertJurisdictionBelongsToOrg({
+    orgId,
+    jurisdictionId: payload.jurisdictionId || null,
+  });
+  await assertAccountBelongsToOrg({
+    orgId,
+    accountId: payload.postingAccountId || null,
+    fieldName: "postingAccountId",
+  });
 
   const { rows } = await pool.query(
     `INSERT INTO tax_codes(
@@ -416,13 +484,22 @@ async function createTaxCode({ orgId, payload }) {
       payload.jurisdictionId || null,
       payload.code,
       payload.name,
-      payload.taxType === 'WHT' ? 'WITHHOLDING' : payload.taxType,
+      payload.taxType === "WHT" ? "WITHHOLDING" : payload.taxType,
       payload.rate,
       payload.isCompound === true,
       payload.boxCode ?? null,
       payload.direction ?? null,
       payload.categoryCode ?? payload.taxCategory ?? null,
-      payload.taxScope ?? (payload.taxCategory === 'zero_rated' ? 'zero_rated' : payload.taxCategory === 'exempt' ? 'exempt' : payload.taxCategory === 'reverse_charge' ? 'reverse_charge' : payload.taxCategory === 'withholding' ? 'withholding' : null),
+      payload.taxScope ??
+        (payload.taxCategory === "zero_rated"
+          ? "zero_rated"
+          : payload.taxCategory === "exempt"
+            ? "exempt"
+            : payload.taxCategory === "reverse_charge"
+              ? "reverse_charge"
+              : payload.taxCategory === "withholding"
+                ? "withholding"
+                : null),
       payload.applicationScope ?? null,
       payload.calculationMethod ?? null,
       payload.exemptionReasonCode ?? null,
@@ -433,8 +510,8 @@ async function createTaxCode({ orgId, payload }) {
       payload.postingAccountId ?? null,
       payload.effectiveFrom || null,
       payload.effectiveTo ?? null,
-      payload.status || null
-    ]
+      payload.status || null,
+    ],
   );
   return rows[0];
 }
@@ -442,16 +519,23 @@ async function createTaxCode({ orgId, payload }) {
 async function updateTaxCode({ orgId, taxCodeId, payload }) {
   const { rows: beforeRows } = await pool.query(
     `SELECT * FROM tax_codes WHERE organization_id=$1 AND id=$2`,
-    [orgId, taxCodeId]
+    [orgId, taxCodeId],
   );
   if (!beforeRows.length) throw new AppError(404, "Tax code not found");
   const before = beforeRows[0];
 
   if (payload.jurisdictionId !== undefined) {
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId,
+    });
   }
   if (payload.postingAccountId !== undefined) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.postingAccountId, fieldName: "postingAccountId" });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.postingAccountId,
+      fieldName: "postingAccountId",
+    });
   }
 
   const columns = [];
@@ -480,7 +564,7 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
     postingAccountId: "posting_account_id",
     effectiveFrom: "effective_from",
     effectiveTo: "effective_to",
-    status: "status"
+    status: "status",
   };
 
   for (const [k, col] of Object.entries(map)) {
@@ -497,7 +581,7 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
      SET ${columns.join(", ")}, updated_at=NOW()
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
-    params
+    params,
   );
 
   return { before, after: rows[0] };
@@ -506,7 +590,7 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
 async function deleteTaxCode({ orgId, taxCodeId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_codes WHERE organization_id=$1 AND id=$2`,
-    [orgId, taxCodeId]
+    [orgId, taxCodeId],
   );
   if (!rowCount) throw new AppError(404, "Tax code not found");
   return { deleted: true };
@@ -515,11 +599,17 @@ async function deleteTaxCode({ orgId, taxCodeId }) {
 async function getTaxSettings({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_settings WHERE organization_id=$1`,
-    [orgId]
+    [orgId],
   );
   if (!rows.length) {
-    await pool.query(`INSERT INTO tax_settings(organization_id) VALUES ($1) ON CONFLICT DO NOTHING`, [orgId]);
-    const { rows: r2 } = await pool.query(`SELECT * FROM tax_settings WHERE organization_id=$1`, [orgId]);
+    await pool.query(
+      `INSERT INTO tax_settings(organization_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+      [orgId],
+    );
+    const { rows: r2 } = await pool.query(
+      `SELECT * FROM tax_settings WHERE organization_id=$1`,
+      [orgId],
+    );
     return r2[0];
   }
   return rows[0];
@@ -527,19 +617,31 @@ async function getTaxSettings({ orgId }) {
 
 async function setTaxSettings({ orgId, payload }) {
   if (payload.outputTaxAccountId !== undefined) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.outputTaxAccountId, fieldName: "outputTaxAccountId" });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.outputTaxAccountId,
+      fieldName: "outputTaxAccountId",
+    });
   }
   if (payload.inputTaxAccountId !== undefined) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.inputTaxAccountId, fieldName: "inputTaxAccountId" });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.inputTaxAccountId,
+      fieldName: "inputTaxAccountId",
+    });
   }
   if (payload.defaultTaxCodeId !== undefined) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.defaultTaxCodeId,
+    });
   }
   for (const [fieldName, accountId] of Object.entries({
     nonRecoverableInputTaxAccountId: payload.nonRecoverableInputTaxAccountId,
     withholdingTaxPayableAccountId: payload.withholdingTaxPayableAccountId,
-    withholdingTaxReceivableAccountId: payload.withholdingTaxReceivableAccountId,
-    reverseChargeTaxAccountId: payload.reverseChargeTaxAccountId
+    withholdingTaxReceivableAccountId:
+      payload.withholdingTaxReceivableAccountId,
+    reverseChargeTaxAccountId: payload.reverseChargeTaxAccountId,
   })) {
     if (accountId !== undefined) {
       await assertAccountBelongsToOrg({ orgId, accountId, fieldName });
@@ -549,16 +651,32 @@ async function setTaxSettings({ orgId, payload }) {
   const current = await getTaxSettings({ orgId });
 
   const out = {
-    output_tax_account_id: payload.outputTaxAccountId ?? current.output_tax_account_id,
-    input_tax_account_id: payload.inputTaxAccountId ?? current.input_tax_account_id,
-    default_tax_code_id: payload.defaultTaxCodeId ?? current.default_tax_code_id,
-    non_recoverable_input_tax_account_id: payload.nonRecoverableInputTaxAccountId ?? current.non_recoverable_input_tax_account_id,
-    withholding_tax_payable_account_id: payload.withholdingTaxPayableAccountId ?? current.withholding_tax_payable_account_id,
-    withholding_tax_receivable_account_id: payload.withholdingTaxReceivableAccountId ?? current.withholding_tax_receivable_account_id,
-    reverse_charge_tax_account_id: payload.reverseChargeTaxAccountId ?? current.reverse_charge_tax_account_id,
-    tax_rounding_strategy: (payload.taxRoundingStrategy === 'total' ? 'document' : payload.taxRoundingStrategy) ?? current.tax_rounding_strategy,
-    enforce_partner_tax_profile: payload.enforcePartnerTaxProfile ?? current.enforce_partner_tax_profile,
-    require_tax_jurisdiction: payload.requireTaxJurisdiction ?? current.require_tax_jurisdiction
+    output_tax_account_id:
+      payload.outputTaxAccountId ?? current.output_tax_account_id,
+    input_tax_account_id:
+      payload.inputTaxAccountId ?? current.input_tax_account_id,
+    default_tax_code_id:
+      payload.defaultTaxCodeId ?? current.default_tax_code_id,
+    non_recoverable_input_tax_account_id:
+      payload.nonRecoverableInputTaxAccountId ??
+      current.non_recoverable_input_tax_account_id,
+    withholding_tax_payable_account_id:
+      payload.withholdingTaxPayableAccountId ??
+      current.withholding_tax_payable_account_id,
+    withholding_tax_receivable_account_id:
+      payload.withholdingTaxReceivableAccountId ??
+      current.withholding_tax_receivable_account_id,
+    reverse_charge_tax_account_id:
+      payload.reverseChargeTaxAccountId ??
+      current.reverse_charge_tax_account_id,
+    tax_rounding_strategy:
+      (payload.taxRoundingStrategy === "total"
+        ? "document"
+        : payload.taxRoundingStrategy) ?? current.tax_rounding_strategy,
+    enforce_partner_tax_profile:
+      payload.enforcePartnerTaxProfile ?? current.enforce_partner_tax_profile,
+    require_tax_jurisdiction:
+      payload.requireTaxJurisdiction ?? current.require_tax_jurisdiction,
   };
 
   const { rows } = await pool.query(
@@ -576,10 +694,19 @@ async function setTaxSettings({ orgId, payload }) {
          updated_at=NOW()
      WHERE organization_id=$1
      RETURNING *`,
-    [orgId, out.output_tax_account_id || null, out.input_tax_account_id || null, out.default_tax_code_id || null,
-      out.non_recoverable_input_tax_account_id || null, out.withholding_tax_payable_account_id || null,
-      out.withholding_tax_receivable_account_id || null, out.reverse_charge_tax_account_id || null,
-      out.tax_rounding_strategy || 'line', !!out.enforce_partner_tax_profile, !!out.require_tax_jurisdiction]
+    [
+      orgId,
+      out.output_tax_account_id || null,
+      out.input_tax_account_id || null,
+      out.default_tax_code_id || null,
+      out.non_recoverable_input_tax_account_id || null,
+      out.withholding_tax_payable_account_id || null,
+      out.withholding_tax_receivable_account_id || null,
+      out.reverse_charge_tax_account_id || null,
+      out.tax_rounding_strategy || "line",
+      !!out.enforce_partner_tax_profile,
+      !!out.require_tax_jurisdiction,
+    ],
   );
 
   return rows[0];
@@ -588,7 +715,7 @@ async function setTaxSettings({ orgId, payload }) {
 async function getTaxAdjustmentById({ orgId, adjustmentId, client = pool }) {
   const { rows } = await client.query(
     `SELECT * FROM tax_adjustments WHERE organization_id=$1 AND id=$2`,
-    [orgId, adjustmentId]
+    [orgId, adjustmentId],
   );
   return rows[0] || null;
 }
@@ -597,25 +724,48 @@ async function listTaxAdjustments({ orgId, query = {} }) {
   const params = [orgId];
   const where = ["organization_id=$1"];
   let i = 2;
-  if (query.status) { where.push(`status=$${i++}`); params.push(query.status); }
-  if (query.taxType) { where.push(`tax_type=$${i++}`); params.push(query.taxType); }
-  if (query.direction) { where.push(`direction=$${i++}`); params.push(query.direction); }
-  if (query.fromDate) { where.push(`adjustment_date >= $${i++}`); params.push(query.fromDate); }
-  if (query.toDate) { where.push(`adjustment_date <= $${i++}`); params.push(query.toDate); }
+  if (query.status) {
+    where.push(`status=$${i++}`);
+    params.push(query.status);
+  }
+  if (query.taxType) {
+    where.push(`tax_type=$${i++}`);
+    params.push(query.taxType);
+  }
+  if (query.direction) {
+    where.push(`direction=$${i++}`);
+    params.push(query.direction);
+  }
+  if (query.fromDate) {
+    where.push(`adjustment_date >= $${i++}`);
+    params.push(query.fromDate);
+  }
+  if (query.toDate) {
+    where.push(`adjustment_date <= $${i++}`);
+    params.push(query.toDate);
+  }
 
   const { rows } = await pool.query(
     `SELECT * FROM tax_adjustments WHERE ${where.join(" AND ")} ORDER BY adjustment_date DESC, created_at DESC`,
-    params
+    params,
   );
   return rows;
 }
 
 async function createTaxAdjustment({ orgId, actorUserId, payload }) {
   if (payload.accountId !== undefined) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.accountId, fieldName: "accountId" });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.accountId,
+      fieldName: "accountId",
+    });
   }
   if (payload.counterAccountId !== undefined) {
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.counterAccountId, fieldName: "counterAccountId" });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.counterAccountId,
+      fieldName: "counterAccountId",
+    });
   }
 
   const { rows } = await pool.query(
@@ -630,7 +780,7 @@ async function createTaxAdjustment({ orgId, actorUserId, payload }) {
     [
       orgId,
       payload.adjustmentDate,
-      payload.taxType || 'VAT',
+      payload.taxType || "VAT",
       payload.direction,
       payload.boxCode || null,
       payload.description,
@@ -638,8 +788,8 @@ async function createTaxAdjustment({ orgId, actorUserId, payload }) {
       payload.accountId || null,
       payload.counterAccountId || null,
       payload.reference || null,
-      actorUserId || null
-    ]
+      actorUserId || null,
+    ],
   );
 
   const created = rows[0];
@@ -653,23 +803,48 @@ async function postTaxAdjustment({ orgId, actorUserId, adjustmentId }) {
   return withTransaction(async (client) => {
     const adj = await getTaxAdjustmentById({ orgId, adjustmentId, client });
     if (!adj) throw new AppError(404, "Tax adjustment not found");
-    if (adj.status !== 'draft') throw new AppError(409, 'Only draft tax adjustments can be posted');
+    if (adj.status !== "draft")
+      throw new AppError(409, "Only draft tax adjustments can be posted");
 
     const settings = await getTaxSettings({ orgId });
-    const taxAccountId = adj.account_id || (adj.direction === 'output' ? settings.output_tax_account_id : settings.input_tax_account_id);
+    const taxAccountId =
+      adj.account_id ||
+      (adj.direction === "output"
+        ? settings.output_tax_account_id
+        : settings.input_tax_account_id);
     if (!taxAccountId) {
-      throw new AppError(409, `No ${adj.direction} tax account configured and adjustment has no explicit accountId`);
+      throw new AppError(
+        409,
+        `No ${adj.direction} tax account configured and adjustment has no explicit accountId`,
+      );
     }
     if (!adj.counter_account_id) {
-      throw new AppError(409, 'counterAccountId is required before posting a tax adjustment');
+      throw new AppError(
+        409,
+        "counterAccountId is required before posting a tax adjustment",
+      );
     }
 
-    const period = await periodIF.findOpenPeriodForDate({ orgId, date: adj.adjustment_date, client });
+    const period = await periodIF.findOpenPeriodForDate({
+      orgId,
+      date: adj.adjustment_date,
+      client,
+    });
     const amount = Number(adj.amount || 0);
-    const isOutput = adj.direction === 'output';
+    const isOutput = adj.direction === "output";
     const lines = [
-      { accountId: adj.counter_account_id, debit: isOutput ? amount : 0, credit: isOutput ? 0 : amount, description: adj.description },
-      { accountId: taxAccountId, debit: isOutput ? 0 : amount, credit: isOutput ? amount : 0, description: `${adj.description} (tax)` }
+      {
+        accountId: adj.counter_account_id,
+        debit: isOutput ? amount : 0,
+        credit: isOutput ? 0 : amount,
+        description: adj.description,
+      },
+      {
+        accountId: taxAccountId,
+        debit: isOutput ? 0 : amount,
+        credit: isOutput ? amount : 0,
+        description: `${adj.description} (tax)`,
+      },
     ];
 
     const draft = await journalIF.createDraftJournal({
@@ -679,14 +854,19 @@ async function postTaxAdjustment({ orgId, actorUserId, adjustmentId }) {
       payload: {
         periodId: period.id,
         entryDate: adj.adjustment_date,
-        typeCode: 'GENERAL',
+        typeCode: "GENERAL",
         memo: `Tax adjustment ${adj.description}`,
         idempotencyKey: `tax-adjustment:${adj.id}:post`,
-        lines
-      }
+        lines,
+      },
     });
 
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    const posted = await journalIF.postDraftJournal({
+      orgId,
+      journalId: draft.journalId,
+      actorUserId,
+      client,
+    });
 
     const { rows } = await client.query(
       `
@@ -700,7 +880,12 @@ async function postTaxAdjustment({ orgId, actorUserId, adjustmentId }) {
        WHERE organization_id=$1 AND id=$2
        RETURNING *
       `,
-      [orgId, adjustmentId, posted.journalId || posted.id || posted.journal_id, actorUserId]
+      [
+        orgId,
+        adjustmentId,
+        posted.journalId || posted.id || posted.journal_id,
+        actorUserId,
+      ],
     );
     return rows[0];
   });
@@ -709,10 +894,16 @@ async function postTaxAdjustment({ orgId, actorUserId, adjustmentId }) {
 async function voidTaxAdjustment({ orgId, actorUserId, adjustmentId, reason }) {
   return withTransaction(async (client) => {
     const adj = await getTaxAdjustmentById({ orgId, adjustmentId, client });
-    if (!adj) throw new AppError(404, 'Tax adjustment not found');
-    if (adj.status === 'voided') return adj;
+    if (!adj) throw new AppError(404, "Tax adjustment not found");
+    if (adj.status === "voided") return adj;
     if (adj.journal_entry_id) {
-      await journalIF.voidPostedJournal({ orgId, journalId: adj.journal_entry_id, actorUserId, reason, client });
+      await journalIF.voidPostedJournal({
+        orgId,
+        journalId: adj.journal_entry_id,
+        actorUserId,
+        reason,
+        client,
+      });
     }
     const { rows } = await client.query(
       `
@@ -726,7 +917,7 @@ async function voidTaxAdjustment({ orgId, actorUserId, adjustmentId, reason }) {
        WHERE organization_id=$1 AND id=$2
        RETURNING *
       `,
-      [orgId, adjustmentId, reason || null, actorUserId]
+      [orgId, adjustmentId, reason || null, actorUserId],
     );
     return rows[0];
   });
@@ -739,7 +930,7 @@ async function listTaxCodeComponents({ orgId, taxCodeId, client = pool }) {
        JOIN tax_codes tc ON tc.id = tcc.component_tax_code_id
       WHERE tcc.organization_id=$1 AND tcc.parent_tax_code_id=$2
       ORDER BY tcc.sequence_no, tc.code`,
-    [orgId, taxCodeId]
+    [orgId, taxCodeId],
   );
   return rows;
 }
@@ -748,19 +939,35 @@ async function setTaxCodeComponents({ orgId, taxCodeId, payload }) {
   await assertTaxCodeBelongsToOrg({ orgId, taxCodeId });
   for (const c of payload.components || []) {
     await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: c.componentTaxCodeId });
-    if (c.componentTaxCodeId === taxCodeId) throw new AppError(400, 'A tax code cannot include itself as a component');
+    if (c.componentTaxCodeId === taxCodeId)
+      throw new AppError(
+        400,
+        "A tax code cannot include itself as a component",
+      );
   }
   return withTransaction(async (client) => {
-    await client.query(`DELETE FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2`, [orgId, taxCodeId]);
+    await client.query(
+      `DELETE FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2`,
+      [orgId, taxCodeId],
+    );
     let seq = 1;
     for (const c of payload.components || []) {
       await client.query(
         `INSERT INTO tax_code_components(organization_id, parent_tax_code_id, component_tax_code_id, sequence_no, rate_override)
          VALUES ($1,$2,$3,$4,$5)`,
-        [orgId, taxCodeId, c.componentTaxCodeId, c.sequenceNo || seq++, c.rateOverride == null ? null : c.rateOverride]
+        [
+          orgId,
+          taxCodeId,
+          c.componentTaxCodeId,
+          c.sequenceNo || seq++,
+          c.rateOverride == null ? null : c.rateOverride,
+        ],
       );
     }
-    await client.query(`UPDATE tax_codes SET is_compound = CASE WHEN EXISTS (SELECT 1 FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2) THEN TRUE ELSE is_compound END, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, taxCodeId]);
+    await client.query(
+      `UPDATE tax_codes SET is_compound = CASE WHEN EXISTS (SELECT 1 FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2) THEN TRUE ELSE is_compound END, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, taxCodeId],
+    );
     return listTaxCodeComponents({ orgId, taxCodeId, client });
   });
 }
@@ -769,28 +976,30 @@ async function setTaxCodeComponents({ orgId, taxCodeId, payload }) {
 
 async function listPartnerTaxProfiles({ orgId, query = {} }) {
   const params = [orgId];
-  const where = ["tpp.organization_id=$1"];  
+  const where = ["tpp.organization_id=$1"];
   let i = 2;
-  
-  if (query.partnerId) { 
-    where.push(`tpp.partner_id=$${i++}`);   
-    params.push(query.partnerId); 
+
+  if (query.partnerId) {
+    where.push(`tpp.partner_id=$${i++}`);
+    params.push(query.partnerId);
   }
-  if (query.taxClass) { 
-    where.push(`tpp.tax_class=$${i++}`);   
-    params.push(query.taxClass); 
+  if (query.taxClass) {
+    where.push(`tpp.tax_class=$${i++}`);
+    params.push(query.taxClass);
   }
-  if (query.isTaxRegistered !== undefined) { 
-    where.push(`tpp.is_tax_registered=$${i++}`);  
-    params.push(query.isTaxRegistered === true || query.isTaxRegistered === 'true'); 
+  if (query.isTaxRegistered !== undefined) {
+    where.push(`tpp.is_tax_registered=$${i++}`);
+    params.push(
+      query.isTaxRegistered === true || query.isTaxRegistered === "true",
+    );
   }
-  if (query.isTaxExempt !== undefined) { 
-    where.push(`tpp.is_tax_exempt=$${i++}`);      // ← Add tpp. prefix
-    params.push(query.isTaxExempt === true || query.isTaxExempt === 'true'); 
+  if (query.isTaxExempt !== undefined) {
+    where.push(`tpp.is_tax_exempt=$${i++}`); // ← Add tpp. prefix
+    params.push(query.isTaxExempt === true || query.isTaxExempt === "true");
   }
-  if (query.jurisdictionId) { 
-    where.push(`tpp.jurisdiction_id=$${i++}`);    // ← Add tpp. prefix
-    params.push(query.jurisdictionId); 
+  if (query.jurisdictionId) {
+    where.push(`tpp.jurisdiction_id=$${i++}`); // ← Add tpp. prefix
+    params.push(query.jurisdictionId);
   }
 
   const { rows } = await pool.query(
@@ -804,7 +1013,7 @@ async function listPartnerTaxProfiles({ orgId, query = {} }) {
        JOIN business_partners bp ON bp.id = tpp.partner_id AND bp.organization_id = tpp.organization_id
      WHERE ${where.join(" AND ")}
      ORDER BY tpp.created_at DESC`,
-    params
+    params,
   );
   return rows;
 }
@@ -820,7 +1029,7 @@ async function getPartnerTaxProfile({ orgId, profileId }) {
        FROM tax_partner_profiles tpp
        JOIN business_partners bp ON bp.id = tpp.partner_id AND bp.organization_id = tpp.organization_id
      WHERE tpp.organization_id=$1 AND tpp.id=$2`,
-    [orgId, profileId]
+    [orgId, profileId],
   );
   if (!rows.length) throw new AppError(404, "Partner tax profile not found");
   return rows[0];
@@ -829,19 +1038,34 @@ async function getPartnerTaxProfile({ orgId, profileId }) {
 async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
   await assertPartnerBelongsToOrg({ orgId, partnerId: payload.partnerId });
   if (payload.defaultTaxCodeId) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.defaultTaxCodeId,
+    });
   }
   if (payload.purchaseTaxCodeId) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.purchaseTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.purchaseTaxCodeId,
+    });
   }
   if (payload.salesTaxCodeId) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.salesTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.salesTaxCodeId,
+    });
   }
   if (payload.withholdingTaxCodeId) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.withholdingTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.withholdingTaxCodeId,
+    });
   }
   if (payload.jurisdictionId) {
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId,
+    });
   }
 
   const { rows } = await pool.query(
@@ -865,7 +1089,7 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       payload.partnerId,
       payload.taxRegistrationNo || null,
       payload.legalName || null,
-      payload.taxClass || 'standard',
+      payload.taxClass || "standard",
       payload.defaultTaxCodeId || null,
       payload.purchaseTaxCodeId || null,
       payload.salesTaxCodeId || null,
@@ -887,34 +1111,54 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       payload.filingContactEmail || null,
       payload.customerTaxIdentifierType || null,
       payload.vendorTaxIdentifierType || null,
-      payload.inputTaxRecoveryMode || 'default',
+      payload.inputTaxRecoveryMode || "default",
       payload.destinationCountryCode || null,
-      payload.registrationStatus || 'registered',
+      payload.registrationStatus || "registered",
       payload.eInvoiceNetwork || null,
       payload.eInvoiceEndpoint || null,
-      actorUserId || null
-    ]
+      actorUserId || null,
+    ],
   );
   return getPartnerTaxProfile({ orgId, profileId: rows[0].id });
 }
 
-async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId }) {
+async function updatePartnerTaxProfile({
+  orgId,
+  profileId,
+  payload,
+  actorUserId,
+}) {
   await getPartnerTaxProfile({ orgId, profileId });
 
   if (payload.defaultTaxCodeId !== undefined) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.defaultTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.defaultTaxCodeId,
+    });
   }
   if (payload.purchaseTaxCodeId !== undefined) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.purchaseTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.purchaseTaxCodeId,
+    });
   }
   if (payload.salesTaxCodeId !== undefined) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.salesTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.salesTaxCodeId,
+    });
   }
   if (payload.withholdingTaxCodeId !== undefined) {
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.withholdingTaxCodeId });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.withholdingTaxCodeId,
+    });
   }
   if (payload.jurisdictionId !== undefined) {
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId,
+    });
   }
 
   const columns = [];
@@ -922,40 +1166,40 @@ async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId 
   let i = 3;
 
   const map = {
-    taxRegistrationNo: 'tax_registration_no',
-    legalName: 'legal_name',
-    taxClass: 'tax_class',
-    defaultTaxCodeId: 'default_tax_code_id',
-    purchaseTaxCodeId: 'purchase_tax_code_id',
-    salesTaxCodeId: 'sales_tax_code_id',
-    jurisdictionId: 'jurisdiction_id',
-    placeOfSupply: 'place_of_supply',
-    isTaxRegistered: 'is_tax_registered',
-    isTaxExempt: 'is_tax_exempt',
-    exemptionReasonCode: 'exemption_reason_code',
-    exemptionReason: 'exemption_reason',
-    reverseChargeApplicable: 'reverse_charge_applicable',
-    withholdingApplicable: 'withholding_applicable',
-    withholdingTaxCodeId: 'withholding_tax_code_id',
-    recoverablePercentOverride: 'recoverable_percent_override',
-    certificateReference: 'certificate_reference',
-    certificateExpiry: 'certificate_expiry',
-    withholdingRateOverride: 'withholding_rate_override',
-    withholdingCertificateNo: 'withholding_certificate_no',
-    filingContactEmail: 'filing_contact_email',
-    customerTaxIdentifierType: 'customer_tax_identifier_type',
-    vendorTaxIdentifierType: 'vendor_tax_identifier_type',
-    inputTaxRecoveryMode: 'input_tax_recovery_mode',
-    destinationCountryCode: 'destination_country_code',
-    registrationStatus: 'registration_status',
-    eInvoiceNetwork: 'e_invoice_network',
-    eInvoiceEndpoint: 'e_invoice_endpoint'
+    taxRegistrationNo: "tax_registration_no",
+    legalName: "legal_name",
+    taxClass: "tax_class",
+    defaultTaxCodeId: "default_tax_code_id",
+    purchaseTaxCodeId: "purchase_tax_code_id",
+    salesTaxCodeId: "sales_tax_code_id",
+    jurisdictionId: "jurisdiction_id",
+    placeOfSupply: "place_of_supply",
+    isTaxRegistered: "is_tax_registered",
+    isTaxExempt: "is_tax_exempt",
+    exemptionReasonCode: "exemption_reason_code",
+    exemptionReason: "exemption_reason",
+    reverseChargeApplicable: "reverse_charge_applicable",
+    withholdingApplicable: "withholding_applicable",
+    withholdingTaxCodeId: "withholding_tax_code_id",
+    recoverablePercentOverride: "recoverable_percent_override",
+    certificateReference: "certificate_reference",
+    certificateExpiry: "certificate_expiry",
+    withholdingRateOverride: "withholding_rate_override",
+    withholdingCertificateNo: "withholding_certificate_no",
+    filingContactEmail: "filing_contact_email",
+    customerTaxIdentifierType: "customer_tax_identifier_type",
+    vendorTaxIdentifierType: "vendor_tax_identifier_type",
+    inputTaxRecoveryMode: "input_tax_recovery_mode",
+    destinationCountryCode: "destination_country_code",
+    registrationStatus: "registration_status",
+    eInvoiceNetwork: "e_invoice_network",
+    eInvoiceEndpoint: "e_invoice_endpoint",
   };
 
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
-      params.push(payload[k] === '' ? null : payload[k]);
+      params.push(payload[k] === "" ? null : payload[k]);
     }
   }
 
@@ -974,10 +1218,10 @@ async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId 
 
   const { rows } = await pool.query(
     `UPDATE tax_partner_profiles
-     SET ${columns.join(', ')}
+     SET ${columns.join(", ")}
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
-    params
+    params,
   );
 
   return rows[0];
@@ -986,7 +1230,7 @@ async function updatePartnerTaxProfile({ orgId, profileId, payload, actorUserId 
 async function deletePartnerTaxProfile({ orgId, profileId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_partner_profiles WHERE organization_id=$1 AND id=$2`,
-    [orgId, profileId]
+    [orgId, profileId],
   );
   if (!rowCount) throw new AppError(404, "Partner tax profile not found");
   return { deleted: true };
@@ -1008,7 +1252,7 @@ async function listTaxReturnTemplates({ orgId, query = {} }) {
     `SELECT * FROM tax_return_templates
      WHERE ${where.join(" AND ")}
      ORDER BY tax_type, code`,
-    params
+    params,
   );
   return rows.map((row) => ({ ...row, description: null, is_active: true }));
 }
@@ -1017,7 +1261,7 @@ async function getTaxReturnTemplate({ orgId, templateId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_return_templates
      WHERE organization_id=$1 AND id=$2`,
-    [orgId, templateId]
+    [orgId, templateId],
   );
   if (!rows.length) throw new AppError(404, "Tax return template not found");
 
@@ -1025,14 +1269,18 @@ async function getTaxReturnTemplate({ orgId, templateId }) {
     `SELECT * FROM tax_return_template_boxes
      WHERE template_id=$1
      ORDER BY sort_order`,
-    [templateId]
+    [templateId],
   );
 
   return {
     ...rows[0],
     description: null,
     is_active: true,
-    boxes: boxes.map((box) => ({ ...box, calculation_formula: null, is_required: false }))
+    boxes: boxes.map((box) => ({
+      ...box,
+      calculation_formula: null,
+      is_required: false,
+    })),
   };
 }
 
@@ -1043,7 +1291,7 @@ async function createTaxReturnTemplate({ orgId, actorUserId, payload }) {
         organization_id, tax_type, code, name
       ) VALUES ($1,$2,$3,$4)
       RETURNING *`,
-      [orgId, payload.taxType || 'VAT', payload.code, payload.name]
+      [orgId, payload.taxType || "VAT", payload.code, payload.name],
     );
 
     const template = rows[0];
@@ -1054,7 +1302,13 @@ async function createTaxReturnTemplate({ orgId, actorUserId, payload }) {
           `INSERT INTO tax_return_template_boxes(
             template_id, box_code, label, sort_order, direction
           ) VALUES ($1,$2,$3,$4,$5)`,
-          [template.id, box.boxCode, box.label, box.sortOrder || 0, box.direction || null]
+          [
+            template.id,
+            box.boxCode,
+            box.label,
+            box.sortOrder || 0,
+            box.direction || null,
+          ],
         );
       }
     }
@@ -1063,16 +1317,21 @@ async function createTaxReturnTemplate({ orgId, actorUserId, payload }) {
   });
 }
 
-async function updateTaxReturnTemplate({ orgId, templateId, payload, actorUserId }) {
+async function updateTaxReturnTemplate({
+  orgId,
+  templateId,
+  payload,
+  actorUserId,
+}) {
   return withTransaction(async (client) => {
     const columns = [];
     const params = [orgId, templateId];
     let i = 3;
 
     const map = {
-      taxType: 'tax_type',
-      code: 'code',
-      name: 'name'
+      taxType: "tax_type",
+      code: "code",
+      name: "name",
     };
 
     for (const [k, col] of Object.entries(map)) {
@@ -1085,20 +1344,29 @@ async function updateTaxReturnTemplate({ orgId, templateId, payload, actorUserId
     if (columns.length) {
       await client.query(
         `UPDATE tax_return_templates
-         SET ${columns.join(', ')}
+         SET ${columns.join(", ")}
          WHERE organization_id=$1 AND id=$2`,
-        params
+        params,
       );
     }
 
     if (payload.boxes !== undefined) {
-      await client.query(`DELETE FROM tax_return_template_boxes WHERE template_id=$1`, [templateId]);
+      await client.query(
+        `DELETE FROM tax_return_template_boxes WHERE template_id=$1`,
+        [templateId],
+      );
       for (const box of payload.boxes || []) {
         await client.query(
           `INSERT INTO tax_return_template_boxes(
             template_id, box_code, label, sort_order, direction
           ) VALUES ($1,$2,$3,$4,$5)`,
-          [templateId, box.boxCode, box.label, box.sortOrder || 0, box.direction || null]
+          [
+            templateId,
+            box.boxCode,
+            box.label,
+            box.sortOrder || 0,
+            box.direction || null,
+          ],
         );
       }
     }
@@ -1110,7 +1378,7 @@ async function updateTaxReturnTemplate({ orgId, templateId, payload, actorUserId
 async function deleteTaxReturnTemplate({ orgId, templateId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_return_templates WHERE organization_id=$1 AND id=$2`,
-    [orgId, templateId]
+    [orgId, templateId],
   );
   if (!rowCount) throw new AppError(404, "Tax return template not found");
   return { deleted: true };
@@ -1148,7 +1416,7 @@ async function listTaxReturns({ orgId, query = {} }) {
     `SELECT * FROM tax_returns
      WHERE ${where.join(" AND ")}
      ORDER BY to_date DESC, created_at DESC`,
-    params
+    params,
   );
   return rows;
 }
@@ -1159,7 +1427,7 @@ async function getTaxReturn({ orgId, returnId }) {
      FROM tax_returns tr
      LEFT JOIN tax_jurisdictions tj ON tj.id = tr.jurisdiction_id
      WHERE tr.organization_id=$1 AND tr.id=$2`,
-    [orgId, returnId]
+    [orgId, returnId],
   );
   if (!rows.length) throw new AppError(404, "Tax return not found");
   return rows[0];
@@ -1170,7 +1438,10 @@ async function createTaxReturn({ orgId, actorUserId, payload }) {
     await getTaxReturnTemplate({ orgId, templateId: payload.templateId });
   }
   if (payload.jurisdictionId) {
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId,
+    });
   }
 
   const seedPayload = {};
@@ -1185,15 +1456,15 @@ async function createTaxReturn({ orgId, actorUserId, payload }) {
     RETURNING *`,
     [
       orgId,
-      payload.taxType || 'VAT',
+      payload.taxType || "VAT",
       payload.filingPeriodStart,
       payload.filingPeriodEnd,
       payload.templateId || null,
       payload.jurisdictionId || null,
       payload.filingAdapterCode || null,
       JSON.stringify(seedPayload),
-      actorUserId || null
-    ]
+      actorUserId || null,
+    ],
   );
   return rows[0];
 }
@@ -1201,13 +1472,13 @@ async function createTaxReturn({ orgId, actorUserId, payload }) {
 async function submitTaxReturn({ orgId, returnId, payload, actorUserId }) {
   const taxReturn = await getTaxReturn({ orgId, returnId });
 
-  if (taxReturn.status !== 'draft') {
-    throw new AppError(409, 'Only draft tax returns can be submitted');
+  if (taxReturn.status !== "draft") {
+    throw new AppError(409, "Only draft tax returns can be submitted");
   }
 
   const nextPayload = {
     ...(taxReturn.payload_json || {}),
-    filingData: payload.filingData || {}
+    filingData: payload.filingData || {},
   };
 
   const { rows } = await pool.query(
@@ -1219,7 +1490,12 @@ async function submitTaxReturn({ orgId, returnId, payload, actorUserId }) {
          updated_at=NOW()
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
-    [orgId, returnId, payload.filingAdapterCode || null, JSON.stringify(nextPayload)]
+    [
+      orgId,
+      returnId,
+      payload.filingAdapterCode || null,
+      JSON.stringify(nextPayload),
+    ],
   );
 
   return rows[0];
@@ -1228,12 +1504,12 @@ async function submitTaxReturn({ orgId, returnId, payload, actorUserId }) {
 async function getTaxReturnConfig({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_return_config WHERE organization_id=$1`,
-    [orgId]
+    [orgId],
   );
   if (!rows.length) {
     const { rows: inserted } = await pool.query(
       `INSERT INTO tax_return_config(organization_id) VALUES ($1) RETURNING *`,
-      [orgId]
+      [orgId],
     );
     return inserted[0];
   }
@@ -1247,16 +1523,16 @@ async function updateTaxReturnConfig({ orgId, payload, actorUserId }) {
   const params = [orgId];
   let i = 2;
   const map = {
-    defaultTemplateId: 'default_template_id',
-    autoSubmitEnabled: 'auto_submit_enabled',
-    notificationEmail: 'notification_email',
-    filingMethod: 'filing_method'
+    defaultTemplateId: "default_template_id",
+    autoSubmitEnabled: "auto_submit_enabled",
+    notificationEmail: "notification_email",
+    filingMethod: "filing_method",
   };
 
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
-      params.push(payload[k] === '' ? null : payload[k]);
+      params.push(payload[k] === "" ? null : payload[k]);
     }
   }
 
@@ -1266,10 +1542,10 @@ async function updateTaxReturnConfig({ orgId, payload, actorUserId }) {
 
   const { rows } = await pool.query(
     `UPDATE tax_return_config
-     SET ${columns.join(', ')}
+     SET ${columns.join(", ")}
      WHERE organization_id=$1
      RETURNING *`,
-    params
+    params,
   );
   return rows[0];
 }
@@ -1279,12 +1555,12 @@ async function updateTaxReturnConfig({ orgId, payload, actorUserId }) {
 async function getEinvoicingSettings({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM einvoicing_settings WHERE organization_id=$1`,
-    [orgId]
+    [orgId],
   );
   if (!rows.length) {
     const { rows: inserted } = await pool.query(
       `INSERT INTO einvoicing_settings(organization_id) VALUES ($1) RETURNING *`,
-      [orgId]
+      [orgId],
     );
     return inserted[0];
   }
@@ -1298,20 +1574,20 @@ async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
   const params = [orgId];
   let i = 2;
   const map = {
-    enabled: 'enabled',
-    provider: 'provider',
-    apiEndpoint: 'api_endpoint',
-    apiKey: 'api_key',
-    apiSecret: 'api_secret',
-    sandboxMode: 'sandbox_mode',
-    documentTypes: 'document_types'
+    enabled: "enabled",
+    provider: "provider",
+    apiEndpoint: "api_endpoint",
+    apiKey: "api_key",
+    apiSecret: "api_secret",
+    sandboxMode: "sandbox_mode",
+    documentTypes: "document_types",
   };
 
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
-      if (k === 'documentTypes') params.push(JSON.stringify(payload[k] || []));
-      else params.push(payload[k] === '' ? null : payload[k]);
+      if (k === "documentTypes") params.push(JSON.stringify(payload[k] || []));
+      else params.push(payload[k] === "" ? null : payload[k]);
     }
   }
 
@@ -1321,10 +1597,10 @@ async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
 
   const { rows } = await pool.query(
     `UPDATE einvoicing_settings
-     SET ${columns.join(', ')}
+     SET ${columns.join(", ")}
      WHERE organization_id=$1
      RETURNING *`,
-    params
+    params,
   );
   return rows[0];
 }
@@ -1346,14 +1622,14 @@ async function listFilingAdapters({ orgId, query = {} }) {
   }
   if (query.isActive !== undefined) {
     where.push(`is_active=$${i++}`);
-    params.push(query.isActive === true || query.isActive === 'true');
+    params.push(query.isActive === true || query.isActive === "true");
   }
 
   const { rows } = await pool.query(
     `SELECT * FROM tax_filing_adapters
      WHERE ${where.join(" AND ")}
      ORDER BY organization_id NULLS FIRST, country_code, adapter_code`,
-    params
+    params,
   );
   return rows;
 }
@@ -1362,7 +1638,7 @@ async function getFilingAdapter({ orgId, adapterId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_filing_adapters
      WHERE (organization_id=$1 OR organization_id IS NULL) AND id=$2`,
-    [orgId, adapterId]
+    [orgId, adapterId],
   );
   if (!rows.length) throw new AppError(404, "Filing adapter not found");
   return rows[0];
@@ -1380,14 +1656,14 @@ async function createFilingAdapter({ orgId, actorUserId, payload }) {
       orgId,
       payload.adapterCode,
       payload.name,
-      payload.channelType || 'api',
-      payload.supportedTaxTypes || ['VAT'],
+      payload.channelType || "api",
+      payload.supportedTaxTypes || ["VAT"],
       payload.supportedCountries || [],
       String(payload.countryCode).toUpperCase(),
       JSON.stringify(payload.configJson || {}),
       payload.isRealtime || false,
-      payload.isActive !== undefined ? payload.isActive : true
-    ]
+      payload.isActive !== undefined ? payload.isActive : true,
+    ],
   );
   return rows[0];
 }
@@ -1398,23 +1674,23 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
   let i = 3;
 
   const map = {
-    adapterCode: 'adapter_code',
-    name: 'name',
-    channelType: 'channel_type',
-    supportedTaxTypes: 'supported_tax_types',
-    supportedCountries: 'supported_countries',
-    countryCode: 'country_code',
-    configJson: 'config_json',
-    isRealtime: 'is_realtime',
-    isActive: 'is_active'
+    adapterCode: "adapter_code",
+    name: "name",
+    channelType: "channel_type",
+    supportedTaxTypes: "supported_tax_types",
+    supportedCountries: "supported_countries",
+    countryCode: "country_code",
+    configJson: "config_json",
+    isRealtime: "is_realtime",
+    isActive: "is_active",
   };
 
   for (const [k, col] of Object.entries(map)) {
     if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
-      if (k === 'configJson') {
+      if (k === "configJson") {
         params.push(JSON.stringify(payload[k] || {}));
-      } else if (k === 'countryCode') {
+      } else if (k === "countryCode") {
         params.push(String(payload[k]).toUpperCase());
       } else {
         params.push(payload[k]);
@@ -1428,10 +1704,10 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
 
   const { rows } = await pool.query(
     `UPDATE tax_filing_adapters
-     SET ${columns.join(', ')}
+     SET ${columns.join(", ")}
      WHERE organization_id=$1 AND id=$2
      RETURNING *`,
-    params
+    params,
   );
 
   if (!rows.length) throw new AppError(404, "Filing adapter not found");
@@ -1441,7 +1717,7 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
 async function deleteFilingAdapter({ orgId, adapterId }) {
   const { rowCount } = await pool.query(
     `DELETE FROM tax_filing_adapters WHERE organization_id=$1 AND id=$2`,
-    [orgId, adapterId]
+    [orgId, adapterId],
   );
   if (!rowCount) throw new AppError(404, "Filing adapter not found");
   return { deleted: true };
@@ -1449,11 +1725,11 @@ async function deleteFilingAdapter({ orgId, adapterId }) {
 
 async function testFilingAdapter({ orgId, adapterId, actorUserId }) {
   const adapter = await getFilingAdapter({ orgId, adapterId });
-  
-  return { 
-    success: true, 
+
+  return {
+    success: true,
     message: `Adapter ${adapter.name} tested successfully`,
-    adapter: adapter
+    adapter: adapter,
   };
 }
 
@@ -1462,7 +1738,7 @@ async function testFilingAdapter({ orgId, adapterId, actorUserId }) {
 async function listCountryPacks({ orgId }) {
   const { rows } = await pool.query(
     `SELECT * FROM tax_country_packs WHERE organization_id=$1 OR organization_id IS NULL ORDER BY is_active DESC, country_code`,
-    [orgId]
+    [orgId],
   );
   return rows;
 }
@@ -1471,7 +1747,7 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
   const packCode = payload.packCode || payload.countryCode;
   const { rows: packRows } = await pool.query(
     `SELECT * FROM tax_country_packs WHERE (organization_id=$1 OR organization_id IS NULL) AND (pack_code=$2 OR country_code=$2) ORDER BY organization_id NULLS FIRST LIMIT 1`,
-    [orgId, packCode]
+    [orgId, packCode],
   );
   const pack = packRows[0];
   if (!pack) throw new AppError(404, "Tax country pack not found");
@@ -1484,16 +1760,25 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
            VALUES($1,$2,$3,$4)
            ON CONFLICT (organization_id, tax_type, code) DO UPDATE SET name=EXCLUDED.name
            RETURNING id`,
-          [orgId, tpl.taxType || 'VAT', tpl.code, tpl.name]
+          [orgId, tpl.taxType || "VAT", tpl.code, tpl.name],
         );
         const templateId = tRows[0].id;
         if (Array.isArray(tpl.boxes)) {
-          await client.query(`DELETE FROM tax_return_template_boxes WHERE template_id=$1`, [templateId]);
+          await client.query(
+            `DELETE FROM tax_return_template_boxes WHERE template_id=$1`,
+            [templateId],
+          );
           for (const box of tpl.boxes) {
             await client.query(
               `INSERT INTO tax_return_template_boxes(template_id, box_code, label, sort_order, direction)
                VALUES($1,$2,$3,$4,$5)`,
-              [templateId, box.boxCode, box.label, box.sortOrder || 0, box.direction || null]
+              [
+                templateId,
+                box.boxCode,
+                box.label,
+                box.sortOrder || 0,
+                box.direction || null,
+              ],
             );
           }
         }
@@ -1504,7 +1789,7 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
       `INSERT INTO tax_country_pack_installs(organization_id, pack_id, installed_by, installed_at)
        VALUES ($1,$2,$3,NOW())
        ON CONFLICT (organization_id, pack_id) DO UPDATE SET installed_by=EXCLUDED.installed_by, installed_at=EXCLUDED.installed_at`,
-      [orgId, pack.id, actorUserId || null]
+      [orgId, pack.id, actorUserId || null],
     );
     return { installed: true, pack };
   });
@@ -1514,8 +1799,8 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
 
 async function listAutomationRules({ orgId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM tax_automation_rules WHERE organization_id=$1 ORDER BY created_at DESC`, 
-    [orgId]
+    `SELECT * FROM tax_automation_rules WHERE organization_id=$1 ORDER BY created_at DESC`,
+    [orgId],
   );
   return rows;
 }
@@ -1533,51 +1818,79 @@ async function upsertAutomationRule({ orgId, actorUserId, payload }) {
            updated_by=EXCLUDED.updated_by,
            updated_at=NOW()
      RETURNING *`,
-    [orgId, payload.name, payload.triggerCode, payload.scheduleCode || null, JSON.stringify(payload.scope || {}), JSON.stringify(payload.action || {}), payload.isEnabled, actorUserId || null]
+    [
+      orgId,
+      payload.name,
+      payload.triggerCode,
+      payload.scheduleCode || null,
+      JSON.stringify(payload.scope || {}),
+      JSON.stringify(payload.action || {}),
+      payload.isEnabled,
+      actorUserId || null,
+    ],
   );
   return rows[0];
 }
 
-
 async function getOrgBaseCurrency({ orgId, client = null }) {
   const db = client || pool;
-  const { rows } = await db.query(`SELECT base_currency_code FROM organizations WHERE id=$1`, [orgId]);
-  if (!rows.length) throw new AppError(404, 'Organization not found');
+  const { rows } = await db.query(
+    `SELECT base_currency_code FROM organizations WHERE id=$1`,
+    [orgId],
+  );
+  if (!rows.length) throw new AppError(404, "Organization not found");
   return rows[0].base_currency_code;
 }
 
 async function nextWithholdingRemittanceNo(client, orgId) {
-  const prefix = 'WTR';
+  const prefix = "WTR";
   const { rows } = await client.query(
     `SELECT COUNT(*)::int AS n FROM withholding_remittances WHERE organization_id=$1`,
-    [orgId]
+    [orgId],
   );
-  return `${prefix}-${String((rows[0]?.n || 0) + 1).padStart(6, '0')}`;
+  return `${prefix}-${String((rows[0]?.n || 0) + 1).padStart(6, "0")}`;
 }
 
-async function getOpenWithholdingItems({ orgId, direction = 'payable', query = {} }) {
+async function getOpenWithholdingItems({
+  orgId,
+  direction = "payable",
+  query = {},
+}) {
   const params = [orgId];
-  let filter = '';
-  let docDateFilter = '';
-  if (query?.partnerId) { params.push(query.partnerId); filter += ` AND src.partner_id = $${params.length}`; }
-  if (query?.taxCodeId) { params.push(query.taxCodeId); filter += ` AND src.tax_code_id = $${params.length}`; }
-  if (query?.fromDate) { params.push(query.fromDate); docDateFilter += ` AND src.document_date >= $${params.length}::date`; }
-  if (query?.toDate) { params.push(query.toDate); docDateFilter += ` AND src.document_date <= $${params.length}::date`; }
+  let filter = "";
+  let docDateFilter = "";
+  if (query?.partnerId) {
+    params.push(query.partnerId);
+    filter += ` AND src.partner_id = $${params.length}`;
+  }
+  if (query?.taxCodeId) {
+    params.push(query.taxCodeId);
+    filter += ` AND src.tax_code_id = $${params.length}`;
+  }
+  if (query?.fromDate) {
+    params.push(query.fromDate);
+    docDateFilter += ` AND src.document_date >= $${params.length}::date`;
+  }
+  if (query?.toDate) {
+    params.push(query.toDate);
+    docDateFilter += ` AND src.document_date <= $${params.length}::date`;
+  }
 
-  if (direction === 'payable') {
+  if (direction === "payable") {
     const { rows } = await pool.query(
       `
       WITH src AS (
         SELECT b.id AS source_id, 'bill'::text AS source_type, b.organization_id, b.vendor_id AS partner_id, bp.name AS partner_name,
                b.bill_no AS document_no, b.bill_date AS document_date, b.currency_code,
                COALESCE(b.withholding_total,0)::numeric(18,2) AS withholding_total,
-               MAX(d.tax_code_id) AS tax_code_id
+               -- Instead of MIN(uuid) or MAX(uuid), use:
+(MIN(d.tax_code_id::text))::uuid AS tax_code_id
         FROM bills b
         LEFT JOIN business_partners bp ON bp.id = b.vendor_id
         LEFT JOIN bill_lines bl ON bl.bill_id = b.id
         LEFT JOIN bill_line_tax_details d ON d.line_id = bl.id AND COALESCE(d.tax_type,'')='WITHHOLDING'
         WHERE b.organization_id = $1
-          AND b.status IN ('issued','paid')
+          AND b.status IN ('issued','approved','paid')
           AND COALESCE(b.withholding_total,0) > 0
         GROUP BY b.id, bp.name
       ), applied AS (
@@ -1597,7 +1910,7 @@ async function getOpenWithholdingItems({ orgId, direction = 'payable', query = {
       ${docDateFilter}
       ORDER BY src.document_date DESC, src.document_no
       `,
-      params
+      params,
     );
     return rows;
   }
@@ -1608,7 +1921,8 @@ async function getOpenWithholdingItems({ orgId, direction = 'payable', query = {
       SELECT i.id AS source_id, 'invoice'::text AS source_type, i.organization_id, i.customer_id AS partner_id, bp.name AS partner_name,
              i.invoice_no AS document_no, i.invoice_date AS document_date, i.currency_code,
              COALESCE(i.withholding_total,0)::numeric(18,2) AS withholding_total,
-             MAX(d.tax_code_id) AS tax_code_id
+             -- Instead of MIN(uuid) or MAX(uuid), use:
+              (MIN(d.tax_code_id::text))::uuid AS tax_code_id
       FROM invoices i
       LEFT JOIN business_partners bp ON bp.id = i.customer_id
       LEFT JOIN invoice_lines il ON il.invoice_id = i.id
@@ -1634,72 +1948,147 @@ async function getOpenWithholdingItems({ orgId, direction = 'payable', query = {
     ${docDateFilter}
     ORDER BY src.document_date DESC, src.document_no
     `,
-    params
+    params,
   );
   return rows;
 }
 
 async function createWithholdingRemittance({ orgId, actorUserId, payload }) {
   return withTransaction(async (client) => {
-    await assertPartnerBelongsToOrg({ orgId, partnerId: payload.authorityPartnerId || null });
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.settlementAccountId || null, fieldName: 'settlementAccountId' });
+    await assertPartnerBelongsToOrg({
+      orgId,
+      partnerId: payload.authorityPartnerId || null,
+    });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId || null,
+    });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.taxCodeId || null,
+    });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.settlementAccountId || null,
+      fieldName: "settlementAccountId",
+    });
 
-    const baseCurrency = payload.currencyCode || await getOrgBaseCurrency({ orgId, client });
-    const openItems = await getOpenWithholdingItems({ orgId, direction: 'payable', query: {} });
+    const baseCurrency =
+      payload.currencyCode || (await getOrgBaseCurrency({ orgId, client }));
+    const openItems = await getOpenWithholdingItems({
+      orgId,
+      direction: "payable",
+      query: {},
+    });
     const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
     let totalAmount = 0;
     const lines = [];
     for (const line of payload.lines || []) {
       const item = itemMap.get(line.sourceId);
-      if (!item) throw new AppError(400, `Bill ${line.sourceId} does not have open withholding to remit`);
-      if (payload.taxCodeId && item.tax_code_id && item.tax_code_id !== payload.taxCodeId) throw new AppError(400, 'Selected line tax code does not match remittance tax code');
-      const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
-      if (appliedAmount <= 0) throw new AppError(400, 'appliedAmount must be greater than zero');
-      if (appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Applied amount exceeds outstanding withholding for ${item.document_no}`);
+      if (!item)
+        throw new AppError(
+          400,
+          `Bill ${line.sourceId} does not have open withholding to remit`,
+        );
+      if (
+        payload.taxCodeId &&
+        item.tax_code_id &&
+        item.tax_code_id !== payload.taxCodeId
+      )
+        throw new AppError(
+          400,
+          "Selected line tax code does not match remittance tax code",
+        );
+      const appliedAmount = Number(
+        line.appliedAmount ?? item.outstanding_amount ?? 0,
+      );
+      if (appliedAmount <= 0)
+        throw new AppError(400, "appliedAmount must be greater than zero");
+      if (appliedAmount - Number(item.outstanding_amount || 0) > 0.0001)
+        throw new AppError(
+          400,
+          `Applied amount exceeds outstanding withholding for ${item.document_no}`,
+        );
       totalAmount += appliedAmount;
       lines.push({ ...item, appliedAmount: Number(appliedAmount.toFixed(2)) });
     }
-    if (!lines.length) throw new AppError(400, 'At least one remittance line is required');
+    if (!lines.length)
+      throw new AppError(400, "At least one remittance line is required");
 
     const remittanceNo = await nextWithholdingRemittanceNo(client, orgId);
     const { rows } = await client.query(
       `INSERT INTO withholding_remittances (organization_id, remittance_no, direction, status, authority_partner_id, jurisdiction_id, tax_code_id, period_start, period_end, remittance_date, currency_code, settlement_account_id, reference, memo, total_amount, created_by, updated_by)
        VALUES ($1,$2,'payable','draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
        RETURNING *`,
-      [orgId, remittanceNo, payload.authorityPartnerId || null, payload.jurisdictionId || null, payload.taxCodeId || null, payload.periodStart || null, payload.periodEnd || null, payload.remittanceDate, baseCurrency, payload.settlementAccountId || null, payload.reference || null, payload.memo || null, Number(totalAmount.toFixed(2)), actorUserId || null]
+      [
+        orgId,
+        remittanceNo,
+        payload.authorityPartnerId || null,
+        payload.jurisdictionId || null,
+        payload.taxCodeId || null,
+        payload.periodStart || null,
+        payload.periodEnd || null,
+        payload.remittanceDate,
+        baseCurrency,
+        payload.settlementAccountId || null,
+        payload.reference || null,
+        payload.memo || null,
+        Number(totalAmount.toFixed(2)),
+        actorUserId || null,
+      ],
     );
     const remittance = rows[0];
     for (const line of lines) {
       await client.query(
         `INSERT INTO withholding_remittance_lines (organization_id, remittance_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount)
          VALUES ($1,$2,'bill',$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [orgId, remittance.id, line.source_id, line.partner_id || null, line.tax_code_id || null, line.document_no, line.document_date || null, Number(line.withholding_total || 0), Number(line.outstanding_amount || 0), line.appliedAmount]
+        [
+          orgId,
+          remittance.id,
+          line.source_id,
+          line.partner_id || null,
+          line.tax_code_id || null,
+          line.document_no,
+          line.document_date || null,
+          Number(line.withholding_total || 0),
+          Number(line.outstanding_amount || 0),
+          line.appliedAmount,
+        ],
       );
     }
-    return getWithholdingRemittance({ orgId, remittanceId: remittance.id, client });
+    return getWithholdingRemittance({
+      orgId,
+      remittanceId: remittance.id,
+      client,
+    });
   });
 }
 
 async function listWithholdingRemittances({ orgId, query = {} }) {
   const params = [orgId];
-  const where = ['r.organization_id=$1'];
-  if (query?.status) { params.push(query.status); where.push(`r.status=$${params.length}`); }
+  const where = ["r.organization_id=$1"];
+  if (query?.status) {
+    params.push(query.status);
+    where.push(`r.status=$${params.length}`);
+  }
   const { rows } = await pool.query(
     `SELECT r.*, bp.name AS authority_partner_name, tc.code AS tax_code, tj.code AS jurisdiction_code
      FROM withholding_remittances r
      LEFT JOIN business_partners bp ON bp.id = r.authority_partner_id
      LEFT JOIN tax_codes tc ON tc.id = r.tax_code_id
      LEFT JOIN tax_jurisdictions tj ON tj.id = r.jurisdiction_id
-     WHERE ${where.join(' AND ')}
+     WHERE ${where.join(" AND ")}
      ORDER BY r.remittance_date DESC, r.created_at DESC`,
-    params
+    params,
   );
   return rows;
 }
 
-async function getWithholdingRemittance({ orgId, remittanceId, client = null }) {
+async function getWithholdingRemittance({
+  orgId,
+  remittanceId,
+  client = null,
+}) {
   const db = client || pool;
   const { rows } = await db.query(
     `SELECT r.*, bp.name AS authority_partner_name, tc.code AS tax_code, tj.code AS jurisdiction_code
@@ -1708,36 +2097,100 @@ async function getWithholdingRemittance({ orgId, remittanceId, client = null }) 
      LEFT JOIN tax_codes tc ON tc.id = r.tax_code_id
      LEFT JOIN tax_jurisdictions tj ON tj.id = r.jurisdiction_id
      WHERE r.organization_id=$1 AND r.id=$2`,
-    [orgId, remittanceId]
+    [orgId, remittanceId],
   );
-  if (!rows.length) throw new AppError(404, 'Withholding remittance not found');
+  if (!rows.length) throw new AppError(404, "Withholding remittance not found");
   const remittance = rows[0];
-  const { rows: lines } = await db.query(`SELECT * FROM withholding_remittance_lines WHERE organization_id=$1 AND remittance_id=$2 ORDER BY source_document_date, source_document_no`, [orgId, remittanceId]);
+  const { rows: lines } = await db.query(
+    `SELECT * FROM withholding_remittance_lines WHERE organization_id=$1 AND remittance_id=$2 ORDER BY source_document_date, source_document_no`,
+    [orgId, remittanceId],
+  );
   return { ...remittance, lines };
 }
 
-async function updateWithholdingRemittance({ orgId, remittanceId, payload, actorUserId }) {
+async function updateWithholdingRemittance({
+  orgId,
+  remittanceId,
+  payload,
+  actorUserId,
+}) {
   return withTransaction(async (client) => {
-    const current = await getWithholdingRemittance({ orgId, remittanceId, client });
-    if (current.status !== 'draft') throw new AppError(409, 'Only draft remittances can be updated');
-    if (payload.authorityPartnerId !== undefined) await assertPartnerBelongsToOrg({ orgId, partnerId: payload.authorityPartnerId || null });
-    if (payload.jurisdictionId !== undefined) await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
-    if (payload.taxCodeId !== undefined) await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
-    if (payload.settlementAccountId !== undefined) await assertAccountBelongsToOrg({ orgId, accountId: payload.settlementAccountId || null, fieldName: 'settlementAccountId' });
+    const current = await getWithholdingRemittance({
+      orgId,
+      remittanceId,
+      client,
+    });
+    if (current.status !== "draft")
+      throw new AppError(409, "Only draft remittances can be updated");
+    if (payload.authorityPartnerId !== undefined)
+      await assertPartnerBelongsToOrg({
+        orgId,
+        partnerId: payload.authorityPartnerId || null,
+      });
+    if (payload.jurisdictionId !== undefined)
+      await assertJurisdictionBelongsToOrg({
+        orgId,
+        jurisdictionId: payload.jurisdictionId || null,
+      });
+    if (payload.taxCodeId !== undefined)
+      await assertTaxCodeBelongsToOrg({
+        orgId,
+        taxCodeId: payload.taxCodeId || null,
+      });
+    if (payload.settlementAccountId !== undefined)
+      await assertAccountBelongsToOrg({
+        orgId,
+        accountId: payload.settlementAccountId || null,
+        fieldName: "settlementAccountId",
+      });
 
     const merged = { ...current, ...payload };
     if (payload.lines) {
-      await client.query(`DELETE FROM withholding_remittance_lines WHERE organization_id=$1 AND remittance_id=$2`, [orgId, remittanceId]);
-      const openItems = await getOpenWithholdingItems({ orgId, direction: 'payable', query: {} });
+      await client.query(
+        `DELETE FROM withholding_remittance_lines WHERE organization_id=$1 AND remittance_id=$2`,
+        [orgId, remittanceId],
+      );
+      const openItems = await getOpenWithholdingItems({
+        orgId,
+        direction: "payable",
+        query: {},
+      });
       const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
       let totalAmount = 0;
       for (const line of payload.lines) {
         const item = itemMap.get(line.sourceId);
-        if (!item) throw new AppError(400, `Bill ${line.sourceId} does not have open withholding to remit`);
-        const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
-        if (appliedAmount <= 0 || appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Invalid applied amount for ${item.document_no}`);
+        if (!item)
+          throw new AppError(
+            400,
+            `Bill ${line.sourceId} does not have open withholding to remit`,
+          );
+        const appliedAmount = Number(
+          line.appliedAmount ?? item.outstanding_amount ?? 0,
+        );
+        if (
+          appliedAmount <= 0 ||
+          appliedAmount - Number(item.outstanding_amount || 0) > 0.0001
+        )
+          throw new AppError(
+            400,
+            `Invalid applied amount for ${item.document_no}`,
+          );
         totalAmount += appliedAmount;
-        await client.query(`INSERT INTO withholding_remittance_lines (organization_id, remittance_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'bill',$3,$4,$5,$6,$7,$8,$9,$10)`, [orgId, remittanceId, item.source_id, item.partner_id || null, item.tax_code_id || null, item.document_no, item.document_date || null, Number(item.withholding_total || 0), Number(item.outstanding_amount || 0), Number(appliedAmount.toFixed(2))]);
+        await client.query(
+          `INSERT INTO withholding_remittance_lines (organization_id, remittance_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'bill',$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [
+            orgId,
+            remittanceId,
+            item.source_id,
+            item.partner_id || null,
+            item.tax_code_id || null,
+            item.document_no,
+            item.document_date || null,
+            Number(item.withholding_total || 0),
+            Number(item.outstanding_amount || 0),
+            Number(appliedAmount.toFixed(2)),
+          ],
+        );
       }
       merged.total_amount = Number(totalAmount.toFixed(2));
     }
@@ -1747,28 +2200,92 @@ async function updateWithholdingRemittance({ orgId, remittanceId, payload, actor
        SET authority_partner_id=$3, jurisdiction_id=$4, tax_code_id=$5, period_start=$6, period_end=$7, remittance_date=$8, currency_code=$9, settlement_account_id=$10, reference=$11, memo=$12, total_amount=$13, updated_by=$14, updated_at=NOW()
        WHERE organization_id=$1 AND id=$2
        RETURNING *`,
-      [orgId, remittanceId, merged.authority_partner_id ?? merged.authorityPartnerId ?? null, merged.jurisdiction_id ?? merged.jurisdictionId ?? null, merged.tax_code_id ?? merged.taxCodeId ?? null, merged.period_start ?? merged.periodStart ?? null, merged.period_end ?? merged.periodEnd ?? null, merged.remittance_date ?? merged.remittanceDate, merged.currency_code ?? merged.currencyCode, merged.settlement_account_id ?? merged.settlementAccountId ?? null, merged.reference || null, merged.memo || null, Number(merged.total_amount || merged.totalAmount || current.total_amount || 0), actorUserId || null]
+      [
+        orgId,
+        remittanceId,
+        merged.authority_partner_id ?? merged.authorityPartnerId ?? null,
+        merged.jurisdiction_id ?? merged.jurisdictionId ?? null,
+        merged.tax_code_id ?? merged.taxCodeId ?? null,
+        merged.period_start ?? merged.periodStart ?? null,
+        merged.period_end ?? merged.periodEnd ?? null,
+        merged.remittance_date ?? merged.remittanceDate,
+        merged.currency_code ?? merged.currencyCode,
+        merged.settlement_account_id ?? merged.settlementAccountId ?? null,
+        merged.reference || null,
+        merged.memo || null,
+        Number(
+          merged.total_amount ||
+            merged.totalAmount ||
+            current.total_amount ||
+            0,
+        ),
+        actorUserId || null,
+      ],
     );
-    return getWithholdingRemittance({ orgId, remittanceId: rows[0].id, client });
+    return getWithholdingRemittance({
+      orgId,
+      remittanceId: rows[0].id,
+      client,
+    });
   });
 }
 
-async function postWithholdingRemittance({ orgId, remittanceId, actorUserId, payload = {} }) {
+async function postWithholdingRemittance({
+  orgId,
+  remittanceId,
+  actorUserId,
+  payload = {},
+}) {
   return withTransaction(async (client) => {
-    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
-    if (!['draft','approved'].includes(remittance.status)) throw new AppError(409, 'Only draft or approved remittances can be posted');
+    const remittance = await getWithholdingRemittance({
+      orgId,
+      remittanceId,
+      client,
+    });
+    if (!["draft", "approved"].includes(remittance.status))
+      throw new AppError(
+        409,
+        "Only draft or approved remittances can be posted",
+      );
     if (remittance.workflow_document_id) {
-      await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: 'withholding_remittance', workflowDocumentId: remittance.workflow_document_id, client, actionLabel: 'post' });
+      await documentableSvc.assertEntityApprovedForAction({
+        orgId,
+        entityType: "withholding_remittance",
+        workflowDocumentId: remittance.workflow_document_id,
+        client,
+        actionLabel: "post",
+      });
     }
-    const settlementAccountId = payload.settlementAccountId || remittance.settlement_account_id;
-    if (!settlementAccountId) throw new AppError(400, 'settlementAccountId is required to post remittance');
-    await assertAccountBelongsToOrg({ orgId, accountId: settlementAccountId, fieldName: 'settlementAccountId' });
+    const settlementAccountId =
+      payload.settlementAccountId || remittance.settlement_account_id;
+    if (!settlementAccountId)
+      throw new AppError(
+        400,
+        "settlementAccountId is required to post remittance",
+      );
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: settlementAccountId,
+      fieldName: "settlementAccountId",
+    });
 
-    const { rows: settingsRows } = await client.query(`SELECT withholding_tax_payable_account_id FROM tax_settings WHERE organization_id=$1`, [orgId]);
-    const withholdingPayableAccountId = settingsRows[0]?.withholding_tax_payable_account_id || null;
-    if (!withholdingPayableAccountId) throw new AppError(409, 'Withholding tax payable account is not configured (tax_settings.withholding_tax_payable_account_id)');
+    const { rows: settingsRows } = await client.query(
+      `SELECT withholding_tax_payable_account_id FROM tax_settings WHERE organization_id=$1`,
+      [orgId],
+    );
+    const withholdingPayableAccountId =
+      settingsRows[0]?.withholding_tax_payable_account_id || null;
+    if (!withholdingPayableAccountId)
+      throw new AppError(
+        409,
+        "Withholding tax payable account is not configured (tax_settings.withholding_tax_payable_account_id)",
+      );
 
-    const period = await periodIF.findOpenPeriodForDate({ orgId, date: payload.remittanceDate || remittance.remittance_date, client });
+    const period = await periodIF.findOpenPeriodForDate({
+      orgId,
+      date: payload.remittanceDate || remittance.remittance_date,
+      client,
+    });
     const draft = await journalIF.createDraftJournal({
       orgId,
       actorUserId,
@@ -1776,258 +2293,721 @@ async function postWithholdingRemittance({ orgId, remittanceId, actorUserId, pay
       payload: {
         periodId: period.id,
         entryDate: payload.remittanceDate || remittance.remittance_date,
-        typeCode: 'GENERAL',
-        memo: payload.memo || remittance.memo || `Withholding remittance ${remittance.remittance_no}`,
+        typeCode: "GENERAL",
+        memo:
+          payload.memo ||
+          remittance.memo ||
+          `Withholding remittance ${remittance.remittance_no}`,
         idempotencyKey: `withholding-remittance:${remittanceId}:post`,
         lines: [
-          { accountId: withholdingPayableAccountId, debit: Number(remittance.total_amount || 0), credit: 0, description: `Clear withholding payable ${remittance.remittance_no}` },
-          { accountId: settlementAccountId, debit: 0, credit: Number(remittance.total_amount || 0), description: `Remit withholding ${remittance.remittance_no}` }
-        ]
-      }
+          {
+            accountId: withholdingPayableAccountId,
+            debit: Number(remittance.total_amount || 0),
+            credit: 0,
+            description: `Clear withholding payable ${remittance.remittance_no}`,
+          },
+          {
+            accountId: settlementAccountId,
+            debit: 0,
+            credit: Number(remittance.total_amount || 0),
+            description: `Remit withholding ${remittance.remittance_no}`,
+          },
+        ],
+      },
     });
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
-    await client.query(`UPDATE withholding_remittances SET status='posted', settlement_account_id=$3, remittance_date=$4, reference=$5, memo=$6, journal_entry_id=$7, posted_at=NOW(), posted_by=$8, updated_by=$8, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, settlementAccountId, payload.remittanceDate || remittance.remittance_date, payload.reference || remittance.reference || null, payload.memo || remittance.memo || null, posted.journalId, actorUserId || null]);
+    const posted = await journalIF.postDraftJournal({
+      orgId,
+      journalId: draft.journalId,
+      actorUserId,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_remittances SET status='posted', settlement_account_id=$3, remittance_date=$4, reference=$5, memo=$6, journal_entry_id=$7, posted_at=NOW(), posted_by=$8, updated_by=$8, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [
+        orgId,
+        remittanceId,
+        settlementAccountId,
+        payload.remittanceDate || remittance.remittance_date,
+        payload.reference || remittance.reference || null,
+        payload.memo || remittance.memo || null,
+        posted.journalId,
+        actorUserId || null,
+      ],
+    );
     return getWithholdingRemittance({ orgId, remittanceId, client });
   });
 }
 
-async function voidWithholdingRemittance({ orgId, remittanceId, actorUserId, reason }) {
+async function voidWithholdingRemittance({
+  orgId,
+  remittanceId,
+  actorUserId,
+  reason,
+}) {
   return withTransaction(async (client) => {
-    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
-    if (remittance.status !== 'posted') throw new AppError(409, 'Only posted remittances can be voided');
-    if (!remittance.journal_entry_id) throw new AppError(409, 'Remittance has no posted journal to void');
-    const reversal = await journalIF.voidPostedJournal({ orgId, journalId: remittance.journal_entry_id, actorUserId, reason, client });
-    await client.query(`UPDATE withholding_remittances SET status='voided', reversal_journal_entry_id=$3, voided_at=NOW(), voided_by=$4, updated_by=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, reversal.journalId || reversal.reversalJournalId || null, actorUserId || null]);
+    const remittance = await getWithholdingRemittance({
+      orgId,
+      remittanceId,
+      client,
+    });
+    if (remittance.status !== "posted")
+      throw new AppError(409, "Only posted remittances can be voided");
+    if (!remittance.journal_entry_id)
+      throw new AppError(409, "Remittance has no posted journal to void");
+    const reversal = await journalIF.voidPostedJournal({
+      orgId,
+      journalId: remittance.journal_entry_id,
+      actorUserId,
+      reason,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_remittances SET status='voided', reversal_journal_entry_id=$3, voided_at=NOW(), voided_by=$4, updated_by=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [
+        orgId,
+        remittanceId,
+        reversal.journalId || reversal.reversalJournalId || null,
+        actorUserId || null,
+      ],
+    );
     return getWithholdingRemittance({ orgId, remittanceId, client });
   });
 }
 
 async function listWithholdingCertificates({ orgId, query = {} }) {
   const params = [orgId];
-  const where = ['c.organization_id=$1'];
-  if (query?.status) { params.push(query.status); where.push(`c.status=$${params.length}`); }
-  const { rows } = await pool.query(`SELECT c.*, bp.name AS customer_name, tc.code AS tax_code, tj.code AS jurisdiction_code FROM withholding_certificates c LEFT JOIN business_partners bp ON bp.id = c.customer_id LEFT JOIN tax_codes tc ON tc.id = c.tax_code_id LEFT JOIN tax_jurisdictions tj ON tj.id = c.jurisdiction_id WHERE ${where.join(' AND ')} ORDER BY c.certificate_date DESC, c.created_at DESC`, params);
+  const where = ["c.organization_id=$1"];
+  if (query?.status) {
+    params.push(query.status);
+    where.push(`c.status=$${params.length}`);
+  }
+  const { rows } = await pool.query(
+    `SELECT c.*, bp.name AS customer_name, tc.code AS tax_code, tj.code AS jurisdiction_code FROM withholding_certificates c LEFT JOIN business_partners bp ON bp.id = c.customer_id LEFT JOIN tax_codes tc ON tc.id = c.tax_code_id LEFT JOIN tax_jurisdictions tj ON tj.id = c.jurisdiction_id WHERE ${where.join(" AND ")} ORDER BY c.certificate_date DESC, c.created_at DESC`,
+    params,
+  );
   return rows;
 }
 
-async function getWithholdingCertificate({ orgId, certificateId, client = null }) {
+async function getWithholdingCertificate({
+  orgId,
+  certificateId,
+  client = null,
+}) {
   const db = client || pool;
-  const { rows } = await db.query(`SELECT c.*, bp.name AS customer_name, tc.code AS tax_code, tj.code AS jurisdiction_code FROM withholding_certificates c LEFT JOIN business_partners bp ON bp.id = c.customer_id LEFT JOIN tax_codes tc ON tc.id = c.tax_code_id LEFT JOIN tax_jurisdictions tj ON tj.id = c.jurisdiction_id WHERE c.organization_id=$1 AND c.id=$2`, [orgId, certificateId]);
-  if (!rows.length) throw new AppError(404, 'Withholding certificate not found');
+  const { rows } = await db.query(
+    `SELECT c.*, bp.name AS customer_name, tc.code AS tax_code, tj.code AS jurisdiction_code FROM withholding_certificates c LEFT JOIN business_partners bp ON bp.id = c.customer_id LEFT JOIN tax_codes tc ON tc.id = c.tax_code_id LEFT JOIN tax_jurisdictions tj ON tj.id = c.jurisdiction_id WHERE c.organization_id=$1 AND c.id=$2`,
+    [orgId, certificateId],
+  );
+  if (!rows.length)
+    throw new AppError(404, "Withholding certificate not found");
   const cert = rows[0];
-  const { rows: lines } = await db.query(`SELECT * FROM withholding_certificate_lines WHERE organization_id=$1 AND certificate_id=$2 ORDER BY source_document_date, source_document_no`, [orgId, certificateId]);
+  const { rows: lines } = await db.query(
+    `SELECT * FROM withholding_certificate_lines WHERE organization_id=$1 AND certificate_id=$2 ORDER BY source_document_date, source_document_no`,
+    [orgId, certificateId],
+  );
   return { ...cert, lines };
 }
 
 async function createWithholdingCertificate({ orgId, actorUserId, payload }) {
   return withTransaction(async (client) => {
-    await assertPartnerBelongsToOrg({ orgId, partnerId: payload.customerId || null });
-    await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
-    await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
-    await assertAccountBelongsToOrg({ orgId, accountId: payload.counterAccountId || null, fieldName: 'counterAccountId' });
+    await assertPartnerBelongsToOrg({
+      orgId,
+      partnerId: payload.customerId || null,
+    });
+    await assertJurisdictionBelongsToOrg({
+      orgId,
+      jurisdictionId: payload.jurisdictionId || null,
+    });
+    await assertTaxCodeBelongsToOrg({
+      orgId,
+      taxCodeId: payload.taxCodeId || null,
+    });
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: payload.counterAccountId || null,
+      fieldName: "counterAccountId",
+    });
 
-    const openItems = await getOpenWithholdingItems({ orgId, direction: 'receivable', query: {} });
+    const openItems = await getOpenWithholdingItems({
+      orgId,
+      direction: "receivable",
+      query: {},
+    });
     const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
     let totalAmount = 0;
     for (const line of payload.lines || []) {
       const item = itemMap.get(line.sourceId);
-      if (!item) throw new AppError(400, `Invoice ${line.sourceId} does not have open withholding receivable`);
-      const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
-      if (appliedAmount <= 0 || appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Invalid applied amount for ${item.document_no}`);
+      if (!item)
+        throw new AppError(
+          400,
+          `Invoice ${line.sourceId} does not have open withholding receivable`,
+        );
+      const appliedAmount = Number(
+        line.appliedAmount ?? item.outstanding_amount ?? 0,
+      );
+      if (
+        appliedAmount <= 0 ||
+        appliedAmount - Number(item.outstanding_amount || 0) > 0.0001
+      )
+        throw new AppError(
+          400,
+          `Invalid applied amount for ${item.document_no}`,
+        );
       totalAmount += appliedAmount;
     }
-    const { rows } = await client.query(`INSERT INTO withholding_certificates (organization_id, certificate_no, status, customer_id, jurisdiction_id, tax_code_id, certificate_date, counter_account_id, issued_by, reference, memo, total_amount, created_by, updated_by) VALUES ($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING *`, [orgId, payload.certificateNo, payload.customerId || null, payload.jurisdictionId || null, payload.taxCodeId || null, payload.certificateDate, payload.counterAccountId || null, payload.issuedBy || null, payload.reference || null, payload.memo || null, Number(totalAmount.toFixed(2)), actorUserId || null]);
+    const { rows } = await client.query(
+      `INSERT INTO withholding_certificates (organization_id, certificate_no, status, customer_id, jurisdiction_id, tax_code_id, certificate_date, counter_account_id, issued_by, reference, memo, total_amount, created_by, updated_by) VALUES ($1,$2,'draft',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING *`,
+      [
+        orgId,
+        payload.certificateNo,
+        payload.customerId || null,
+        payload.jurisdictionId || null,
+        payload.taxCodeId || null,
+        payload.certificateDate,
+        payload.counterAccountId || null,
+        payload.issuedBy || null,
+        payload.reference || null,
+        payload.memo || null,
+        Number(totalAmount.toFixed(2)),
+        actorUserId || null,
+      ],
+    );
     const cert = rows[0];
     for (const line of payload.lines || []) {
       const item = itemMap.get(line.sourceId);
-      const appliedAmount = Number((line.appliedAmount ?? item.outstanding_amount ?? 0).toFixed(2));
-      await client.query(`INSERT INTO withholding_certificate_lines (organization_id, certificate_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'invoice',$3,$4,$5,$6,$7,$8,$9,$10)`, [orgId, cert.id, item.source_id, item.partner_id || null, item.tax_code_id || null, item.document_no, item.document_date || null, Number(item.withholding_total || 0), Number(item.outstanding_amount || 0), appliedAmount]);
+      const appliedAmount = Number(
+        (line.appliedAmount ?? item.outstanding_amount ?? 0).toFixed(2),
+      );
+      await client.query(
+        `INSERT INTO withholding_certificate_lines (organization_id, certificate_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'invoice',$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [
+          orgId,
+          cert.id,
+          item.source_id,
+          item.partner_id || null,
+          item.tax_code_id || null,
+          item.document_no,
+          item.document_date || null,
+          Number(item.withholding_total || 0),
+          Number(item.outstanding_amount || 0),
+          appliedAmount,
+        ],
+      );
     }
     return getWithholdingCertificate({ orgId, certificateId: cert.id, client });
   });
 }
 
-async function updateWithholdingCertificate({ orgId, certificateId, payload, actorUserId }) {
+async function updateWithholdingCertificate({
+  orgId,
+  certificateId,
+  payload,
+  actorUserId,
+}) {
   return withTransaction(async (client) => {
-    const current = await getWithholdingCertificate({ orgId, certificateId, client });
-    if (current.status !== 'draft') throw new AppError(409, 'Only draft certificates can be updated');
-    if (payload.customerId !== undefined) await assertPartnerBelongsToOrg({ orgId, partnerId: payload.customerId || null });
-    if (payload.jurisdictionId !== undefined) await assertJurisdictionBelongsToOrg({ orgId, jurisdictionId: payload.jurisdictionId || null });
-    if (payload.taxCodeId !== undefined) await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.taxCodeId || null });
-    if (payload.counterAccountId !== undefined) await assertAccountBelongsToOrg({ orgId, accountId: payload.counterAccountId || null, fieldName: 'counterAccountId' });
+    const current = await getWithholdingCertificate({
+      orgId,
+      certificateId,
+      client,
+    });
+    if (current.status !== "draft")
+      throw new AppError(409, "Only draft certificates can be updated");
+    if (payload.customerId !== undefined)
+      await assertPartnerBelongsToOrg({
+        orgId,
+        partnerId: payload.customerId || null,
+      });
+    if (payload.jurisdictionId !== undefined)
+      await assertJurisdictionBelongsToOrg({
+        orgId,
+        jurisdictionId: payload.jurisdictionId || null,
+      });
+    if (payload.taxCodeId !== undefined)
+      await assertTaxCodeBelongsToOrg({
+        orgId,
+        taxCodeId: payload.taxCodeId || null,
+      });
+    if (payload.counterAccountId !== undefined)
+      await assertAccountBelongsToOrg({
+        orgId,
+        accountId: payload.counterAccountId || null,
+        fieldName: "counterAccountId",
+      });
 
     let totalAmount = Number(current.total_amount || 0);
     if (payload.lines) {
-      await client.query(`DELETE FROM withholding_certificate_lines WHERE organization_id=$1 AND certificate_id=$2`, [orgId, certificateId]);
-      const openItems = await getOpenWithholdingItems({ orgId, direction: 'receivable', query: {} });
+      await client.query(
+        `DELETE FROM withholding_certificate_lines WHERE organization_id=$1 AND certificate_id=$2`,
+        [orgId, certificateId],
+      );
+      const openItems = await getOpenWithholdingItems({
+        orgId,
+        direction: "receivable",
+        query: {},
+      });
       const itemMap = new Map(openItems.map((item) => [item.source_id, item]));
       totalAmount = 0;
       for (const line of payload.lines) {
         const item = itemMap.get(line.sourceId);
-        if (!item) throw new AppError(400, `Invoice ${line.sourceId} does not have open withholding receivable`);
-        const appliedAmount = Number(line.appliedAmount ?? item.outstanding_amount ?? 0);
-        if (appliedAmount <= 0 || appliedAmount - Number(item.outstanding_amount || 0) > 0.0001) throw new AppError(400, `Invalid applied amount for ${item.document_no}`);
+        if (!item)
+          throw new AppError(
+            400,
+            `Invoice ${line.sourceId} does not have open withholding receivable`,
+          );
+        const appliedAmount = Number(
+          line.appliedAmount ?? item.outstanding_amount ?? 0,
+        );
+        if (
+          appliedAmount <= 0 ||
+          appliedAmount - Number(item.outstanding_amount || 0) > 0.0001
+        )
+          throw new AppError(
+            400,
+            `Invalid applied amount for ${item.document_no}`,
+          );
         totalAmount += appliedAmount;
-        await client.query(`INSERT INTO withholding_certificate_lines (organization_id, certificate_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'invoice',$3,$4,$5,$6,$7,$8,$9,$10)`, [orgId, certificateId, item.source_id, item.partner_id || null, item.tax_code_id || null, item.document_no, item.document_date || null, Number(item.withholding_total || 0), Number(item.outstanding_amount || 0), Number(appliedAmount.toFixed(2))]);
+        await client.query(
+          `INSERT INTO withholding_certificate_lines (organization_id, certificate_id, source_type, source_id, partner_id, tax_code_id, source_document_no, source_document_date, original_withholding_amount, available_amount, applied_amount) VALUES ($1,$2,'invoice',$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [
+            orgId,
+            certificateId,
+            item.source_id,
+            item.partner_id || null,
+            item.tax_code_id || null,
+            item.document_no,
+            item.document_date || null,
+            Number(item.withholding_total || 0),
+            Number(item.outstanding_amount || 0),
+            Number(appliedAmount.toFixed(2)),
+          ],
+        );
       }
     }
     const merged = { ...current, ...payload, total_amount: totalAmount };
-    await client.query(`UPDATE withholding_certificates SET customer_id=$3, jurisdiction_id=$4, tax_code_id=$5, certificate_no=$6, certificate_date=$7, counter_account_id=$8, issued_by=$9, reference=$10, memo=$11, total_amount=$12, updated_by=$13, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, merged.customer_id ?? merged.customerId ?? null, merged.jurisdiction_id ?? merged.jurisdictionId ?? null, merged.tax_code_id ?? merged.taxCodeId ?? null, merged.certificate_no ?? merged.certificateNo, merged.certificate_date ?? merged.certificateDate, merged.counter_account_id ?? merged.counterAccountId ?? null, merged.issued_by ?? merged.issuedBy ?? null, merged.reference || null, merged.memo || null, Number(totalAmount.toFixed(2)), actorUserId || null]);
+    await client.query(
+      `UPDATE withholding_certificates SET customer_id=$3, jurisdiction_id=$4, tax_code_id=$5, certificate_no=$6, certificate_date=$7, counter_account_id=$8, issued_by=$9, reference=$10, memo=$11, total_amount=$12, updated_by=$13, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [
+        orgId,
+        certificateId,
+        merged.customer_id ?? merged.customerId ?? null,
+        merged.jurisdiction_id ?? merged.jurisdictionId ?? null,
+        merged.tax_code_id ?? merged.taxCodeId ?? null,
+        merged.certificate_no ?? merged.certificateNo,
+        merged.certificate_date ?? merged.certificateDate,
+        merged.counter_account_id ?? merged.counterAccountId ?? null,
+        merged.issued_by ?? merged.issuedBy ?? null,
+        merged.reference || null,
+        merged.memo || null,
+        Number(totalAmount.toFixed(2)),
+        actorUserId || null,
+      ],
+    );
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
 
-async function postWithholdingCertificate({ orgId, certificateId, actorUserId, payload = {} }) {
+async function postWithholdingCertificate({
+  orgId,
+  certificateId,
+  actorUserId,
+  payload = {},
+}) {
   return withTransaction(async (client) => {
-    const cert = await getWithholdingCertificate({ orgId, certificateId, client });
-    if (!['draft','approved'].includes(cert.status)) throw new AppError(409, 'Only draft or approved certificates can be posted');
+    const cert = await getWithholdingCertificate({
+      orgId,
+      certificateId,
+      client,
+    });
+    if (!["draft", "approved"].includes(cert.status))
+      throw new AppError(
+        409,
+        "Only draft or approved certificates can be posted",
+      );
     if (cert.workflow_document_id) {
-      await documentableSvc.assertEntityApprovedForAction({ orgId, entityType: 'withholding_certificate', workflowDocumentId: cert.workflow_document_id, client, actionLabel: 'post' });
+      await documentableSvc.assertEntityApprovedForAction({
+        orgId,
+        entityType: "withholding_certificate",
+        workflowDocumentId: cert.workflow_document_id,
+        client,
+        actionLabel: "post",
+      });
     }
-    const counterAccountId = payload.counterAccountId || cert.counter_account_id;
-    if (!counterAccountId) throw new AppError(400, 'counterAccountId is required to post certificate');
-    await assertAccountBelongsToOrg({ orgId, accountId: counterAccountId, fieldName: 'counterAccountId' });
-    const { rows: settingsRows } = await client.query(`SELECT withholding_tax_receivable_account_id FROM tax_settings WHERE organization_id=$1`, [orgId]);
-    const receivableAccountId = settingsRows[0]?.withholding_tax_receivable_account_id || null;
-    if (!receivableAccountId) throw new AppError(409, 'Withholding tax receivable account is not configured (tax_settings.withholding_tax_receivable_account_id)');
-    const period = await periodIF.findOpenPeriodForDate({ orgId, date: payload.certificateDate || cert.certificate_date, client });
+    const counterAccountId =
+      payload.counterAccountId || cert.counter_account_id;
+    if (!counterAccountId)
+      throw new AppError(
+        400,
+        "counterAccountId is required to post certificate",
+      );
+    await assertAccountBelongsToOrg({
+      orgId,
+      accountId: counterAccountId,
+      fieldName: "counterAccountId",
+    });
+    const { rows: settingsRows } = await client.query(
+      `SELECT withholding_tax_receivable_account_id FROM tax_settings WHERE organization_id=$1`,
+      [orgId],
+    );
+    const receivableAccountId =
+      settingsRows[0]?.withholding_tax_receivable_account_id || null;
+    if (!receivableAccountId)
+      throw new AppError(
+        409,
+        "Withholding tax receivable account is not configured (tax_settings.withholding_tax_receivable_account_id)",
+      );
+    const period = await periodIF.findOpenPeriodForDate({
+      orgId,
+      date: payload.certificateDate || cert.certificate_date,
+      client,
+    });
     const draft = await journalIF.createDraftJournal({
-      orgId, actorUserId, client,
+      orgId,
+      actorUserId,
+      client,
       payload: {
         periodId: period.id,
         entryDate: payload.certificateDate || cert.certificate_date,
-        typeCode: 'GENERAL',
-        memo: payload.memo || cert.memo || `Withholding certificate ${cert.certificate_no}`,
+        typeCode: "GENERAL",
+        memo:
+          payload.memo ||
+          cert.memo ||
+          `Withholding certificate ${cert.certificate_no}`,
         idempotencyKey: `withholding-certificate:${certificateId}:post`,
         lines: [
-          { accountId: counterAccountId, debit: Number(cert.total_amount || 0), credit: 0, description: `Recognize withholding certificate ${cert.certificate_no}` },
-          { accountId: receivableAccountId, debit: 0, credit: Number(cert.total_amount || 0), description: `Clear withholding receivable ${cert.certificate_no}` }
-        ]
-      }
+          {
+            accountId: counterAccountId,
+            debit: Number(cert.total_amount || 0),
+            credit: 0,
+            description: `Recognize withholding certificate ${cert.certificate_no}`,
+          },
+          {
+            accountId: receivableAccountId,
+            debit: 0,
+            credit: Number(cert.total_amount || 0),
+            description: `Clear withholding receivable ${cert.certificate_no}`,
+          },
+        ],
+      },
     });
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
-    await client.query(`UPDATE withholding_certificates SET status='posted', counter_account_id=$3, certificate_date=$4, issued_by=$5, reference=$6, memo=$7, journal_entry_id=$8, posted_at=NOW(), posted_by=$9, updated_by=$9, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, counterAccountId, payload.certificateDate || cert.certificate_date, payload.issuedBy || cert.issued_by || null, payload.reference || cert.reference || null, payload.memo || cert.memo || null, posted.journalId, actorUserId || null]);
+    const posted = await journalIF.postDraftJournal({
+      orgId,
+      journalId: draft.journalId,
+      actorUserId,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_certificates SET status='posted', counter_account_id=$3, certificate_date=$4, issued_by=$5, reference=$6, memo=$7, journal_entry_id=$8, posted_at=NOW(), posted_by=$9, updated_by=$9, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [
+        orgId,
+        certificateId,
+        counterAccountId,
+        payload.certificateDate || cert.certificate_date,
+        payload.issuedBy || cert.issued_by || null,
+        payload.reference || cert.reference || null,
+        payload.memo || cert.memo || null,
+        posted.journalId,
+        actorUserId || null,
+      ],
+    );
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
 
-async function voidWithholdingCertificate({ orgId, certificateId, actorUserId, reason }) {
+async function voidWithholdingCertificate({
+  orgId,
+  certificateId,
+  actorUserId,
+  reason,
+}) {
   return withTransaction(async (client) => {
-    const cert = await getWithholdingCertificate({ orgId, certificateId, client });
-    if (cert.status !== 'posted') throw new AppError(409, 'Only posted certificates can be voided');
-    if (!cert.journal_entry_id) throw new AppError(409, 'Certificate has no posted journal to void');
-    const reversal = await journalIF.voidPostedJournal({ orgId, journalId: cert.journal_entry_id, actorUserId, reason, client });
-    await client.query(`UPDATE withholding_certificates SET status='voided', reversal_journal_entry_id=$3, voided_at=NOW(), voided_by=$4, updated_by=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, reversal.journalId || reversal.reversalJournalId || null, actorUserId || null]);
+    const cert = await getWithholdingCertificate({
+      orgId,
+      certificateId,
+      client,
+    });
+    if (cert.status !== "posted")
+      throw new AppError(409, "Only posted certificates can be voided");
+    if (!cert.journal_entry_id)
+      throw new AppError(409, "Certificate has no posted journal to void");
+    const reversal = await journalIF.voidPostedJournal({
+      orgId,
+      journalId: cert.journal_entry_id,
+      actorUserId,
+      reason,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_certificates SET status='voided', reversal_journal_entry_id=$3, voided_at=NOW(), voided_by=$4, updated_by=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [
+        orgId,
+        certificateId,
+        reversal.journalId || reversal.reversalJournalId || null,
+        actorUserId || null,
+      ],
+    );
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
-
-
 
 async function getWithholdingDashboard({ orgId, query = {} }) {
   const [openItems, remittances, certificates] = await Promise.all([
     listWithholdingOpenItems({ orgId, query }),
-    listWithholdingRemittances({ orgId, query: { status: query.status, periodStart: query.periodStart, periodEnd: query.periodEnd } }),
-    listWithholdingCertificates({ orgId, query: { status: query.status, periodStart: query.periodStart, periodEnd: query.periodEnd } })
+    listWithholdingRemittances({
+      orgId,
+      query: {
+        status: query.status,
+        periodStart: query.periodStart,
+        periodEnd: query.periodEnd,
+      },
+    }),
+    listWithholdingCertificates({
+      orgId,
+      query: {
+        status: query.status,
+        periodStart: query.periodStart,
+        periodEnd: query.periodEnd,
+      },
+    }),
   ]);
-  const sumOutstanding = (rows) => rows.reduce((acc, row) => acc + Number(row.outstanding_amount || row.available_amount || 0), 0);
-  const payableOpen = openItems.filter((r) => String(r.direction || '').toLowerCase() === 'payable');
-  const receivableOpen = openItems.filter((r) => String(r.direction || '').toLowerCase() === 'receivable');
+  const sumOutstanding = (rows) =>
+    rows.reduce(
+      (acc, row) =>
+        acc + Number(row.outstanding_amount || row.available_amount || 0),
+      0,
+    );
+  const payableOpen = openItems.filter(
+    (r) => String(r.direction || "").toLowerCase() === "payable",
+  );
+  const receivableOpen = openItems.filter(
+    (r) => String(r.direction || "").toLowerCase() === "receivable",
+  );
   return {
     open_payable_count: payableOpen.length,
     open_receivable_count: receivableOpen.length,
     open_payable_amount: Number(sumOutstanding(payableOpen).toFixed(2)),
     open_receivable_amount: Number(sumOutstanding(receivableOpen).toFixed(2)),
-    remittance_draft_count: remittances.filter((r) => ['draft','submitted','approved','rejected'].includes(String(r.status || '').toLowerCase())).length,
-    remittance_posted_count: remittances.filter((r) => String(r.status || '').toLowerCase() === 'posted').length,
-    certificate_draft_count: certificates.filter((r) => ['draft','submitted','approved','rejected'].includes(String(r.status || '').toLowerCase())).length,
-    certificate_posted_count: certificates.filter((r) => String(r.status || '').toLowerCase() === 'posted').length
+    remittance_draft_count: remittances.filter((r) =>
+      ["draft", "submitted", "approved", "rejected"].includes(
+        String(r.status || "").toLowerCase(),
+      ),
+    ).length,
+    remittance_posted_count: remittances.filter(
+      (r) => String(r.status || "").toLowerCase() === "posted",
+    ).length,
+    certificate_draft_count: certificates.filter((r) =>
+      ["draft", "submitted", "approved", "rejected"].includes(
+        String(r.status || "").toLowerCase(),
+      ),
+    ).length,
+    certificate_posted_count: certificates.filter(
+      (r) => String(r.status || "").toLowerCase() === "posted",
+    ).length,
   };
 }
 
-async function submitWithholdingRemittanceForApproval({ orgId, remittanceId, actorUserId }) {
+async function submitWithholdingRemittanceForApproval({
+  orgId,
+  remittanceId,
+  actorUserId,
+}) {
   return withTransaction(async (client) => {
-    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
-    if (!['draft','rejected'].includes(remittance.status)) throw new AppError(409, 'Only draft or rejected remittances can be submitted');
+    const remittance = await getWithholdingRemittance({
+      orgId,
+      remittanceId,
+      client,
+    });
+    if (!["draft", "rejected"].includes(remittance.status))
+      throw new AppError(
+        409,
+        "Only draft or rejected remittances can be submitted",
+      );
     const workflowDocument = await documentableSvc.submitEntityForApproval({
       orgId,
       actorUserId,
-      entityType: 'withholding_remittance',
+      entityType: "withholding_remittance",
       entity: remittance,
       workflowDocumentId: remittance.workflow_document_id,
       snapshot: { remittance, lines: remittance.lines || [] },
       client,
       persistWorkflowDocumentId: async (workflowDocumentId) => {
-        await client.query(`UPDATE withholding_remittances SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, workflowDocumentId]);
-      }
+        await client.query(
+          `UPDATE withholding_remittances SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2`,
+          [orgId, remittanceId, workflowDocumentId],
+        );
+      },
     });
-    await client.query(`UPDATE withholding_remittances SET status='submitted', submitted_at=NOW(), submitted_by=$3, rejection_reason=NULL, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, actorUserId || null]);
+    await client.query(
+      `UPDATE withholding_remittances SET status='submitted', submitted_at=NOW(), submitted_by=$3, rejection_reason=NULL, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, remittanceId, actorUserId || null],
+    );
     return getWithholdingRemittance({ orgId, remittanceId, client });
   });
 }
 
-async function approveWithholdingRemittance({ orgId, remittanceId, actorUserId, comment }) {
+async function approveWithholdingRemittance({
+  orgId,
+  remittanceId,
+  actorUserId,
+  comment,
+}) {
   return withTransaction(async (client) => {
-    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
-    if (!remittance.workflow_document_id) throw new AppError(409, 'Remittance has no workflow document');
-    await documentableSvc.approveEntityDocument({ orgId, actorUserId, entityType: 'withholding_remittance', workflowDocumentId: remittance.workflow_document_id, creatorUserId: remittance.created_by || null, comment: comment || null, client });
-    await client.query(`UPDATE withholding_remittances SET status='approved', approved_at=NOW(), approved_by=$3, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, actorUserId || null]);
+    const remittance = await getWithholdingRemittance({
+      orgId,
+      remittanceId,
+      client,
+    });
+    if (!remittance.workflow_document_id)
+      throw new AppError(409, "Remittance has no workflow document");
+    await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "withholding_remittance",
+      workflowDocumentId: remittance.workflow_document_id,
+      creatorUserId: remittance.created_by || null,
+      comment: comment || null,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_remittances SET status='approved', approved_at=NOW(), approved_by=$3, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, remittanceId, actorUserId || null],
+    );
     return getWithholdingRemittance({ orgId, remittanceId, client });
   });
 }
 
-async function rejectWithholdingRemittance({ orgId, remittanceId, actorUserId, reason }) {
+async function rejectWithholdingRemittance({
+  orgId,
+  remittanceId,
+  actorUserId,
+  reason,
+}) {
   return withTransaction(async (client) => {
-    const remittance = await getWithholdingRemittance({ orgId, remittanceId, client });
-    if (!remittance.workflow_document_id) throw new AppError(409, 'Remittance has no workflow document');
-    await documentableSvc.rejectEntityDocument({ orgId, actorUserId, entityType: 'withholding_remittance', workflowDocumentId: remittance.workflow_document_id, creatorUserId: remittance.created_by || null, comment: reason, client });
-    await client.query(`UPDATE withholding_remittances SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, remittanceId, actorUserId || null, reason || null]);
+    const remittance = await getWithholdingRemittance({
+      orgId,
+      remittanceId,
+      client,
+    });
+    if (!remittance.workflow_document_id)
+      throw new AppError(409, "Remittance has no workflow document");
+    await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "withholding_remittance",
+      workflowDocumentId: remittance.workflow_document_id,
+      creatorUserId: remittance.created_by || null,
+      comment: reason,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_remittances SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, remittanceId, actorUserId || null, reason || null],
+    );
     return getWithholdingRemittance({ orgId, remittanceId, client });
   });
 }
 
-async function submitWithholdingCertificateForApproval({ orgId, certificateId, actorUserId }) {
+async function submitWithholdingCertificateForApproval({
+  orgId,
+  certificateId,
+  actorUserId,
+}) {
   return withTransaction(async (client) => {
-    const certificate = await getWithholdingCertificate({ orgId, certificateId, client });
-    if (!['draft','rejected'].includes(certificate.status)) throw new AppError(409, 'Only draft or rejected certificates can be submitted');
+    const certificate = await getWithholdingCertificate({
+      orgId,
+      certificateId,
+      client,
+    });
+    if (!["draft", "rejected"].includes(certificate.status))
+      throw new AppError(
+        409,
+        "Only draft or rejected certificates can be submitted",
+      );
     await documentableSvc.submitEntityForApproval({
       orgId,
       actorUserId,
-      entityType: 'withholding_certificate',
+      entityType: "withholding_certificate",
       entity: certificate,
       workflowDocumentId: certificate.workflow_document_id,
       snapshot: { certificate, lines: certificate.lines || [] },
       client,
       persistWorkflowDocumentId: async (workflowDocumentId) => {
-        await client.query(`UPDATE withholding_certificates SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, workflowDocumentId]);
-      }
+        await client.query(
+          `UPDATE withholding_certificates SET workflow_document_id=$3 WHERE organization_id=$1 AND id=$2`,
+          [orgId, certificateId, workflowDocumentId],
+        );
+      },
     });
-    await client.query(`UPDATE withholding_certificates SET status='submitted', submitted_at=NOW(), submitted_by=$3, rejection_reason=NULL, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, actorUserId || null]);
+    await client.query(
+      `UPDATE withholding_certificates SET status='submitted', submitted_at=NOW(), submitted_by=$3, rejection_reason=NULL, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, certificateId, actorUserId || null],
+    );
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
 
-async function approveWithholdingCertificate({ orgId, certificateId, actorUserId, comment }) {
+async function approveWithholdingCertificate({
+  orgId,
+  certificateId,
+  actorUserId,
+  comment,
+}) {
   return withTransaction(async (client) => {
-    const certificate = await getWithholdingCertificate({ orgId, certificateId, client });
-    if (!certificate.workflow_document_id) throw new AppError(409, 'Certificate has no workflow document');
-    await documentableSvc.approveEntityDocument({ orgId, actorUserId, entityType: 'withholding_certificate', workflowDocumentId: certificate.workflow_document_id, creatorUserId: certificate.created_by || null, comment: comment || null, client });
-    await client.query(`UPDATE withholding_certificates SET status='approved', approved_at=NOW(), approved_by=$3, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, actorUserId || null]);
+    const certificate = await getWithholdingCertificate({
+      orgId,
+      certificateId,
+      client,
+    });
+    if (!certificate.workflow_document_id)
+      throw new AppError(409, "Certificate has no workflow document");
+    await documentableSvc.approveEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "withholding_certificate",
+      workflowDocumentId: certificate.workflow_document_id,
+      creatorUserId: certificate.created_by || null,
+      comment: comment || null,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_certificates SET status='approved', approved_at=NOW(), approved_by=$3, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, certificateId, actorUserId || null],
+    );
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
 
-async function rejectWithholdingCertificate({ orgId, certificateId, actorUserId, reason }) {
+async function rejectWithholdingCertificate({
+  orgId,
+  certificateId,
+  actorUserId,
+  reason,
+}) {
   return withTransaction(async (client) => {
-    const certificate = await getWithholdingCertificate({ orgId, certificateId, client });
-    if (!certificate.workflow_document_id) throw new AppError(409, 'Certificate has no workflow document');
-    await documentableSvc.rejectEntityDocument({ orgId, actorUserId, entityType: 'withholding_certificate', workflowDocumentId: certificate.workflow_document_id, creatorUserId: certificate.created_by || null, comment: reason, client });
-    await client.query(`UPDATE withholding_certificates SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, certificateId, actorUserId || null, reason || null]);
+    const certificate = await getWithholdingCertificate({
+      orgId,
+      certificateId,
+      client,
+    });
+    if (!certificate.workflow_document_id)
+      throw new AppError(409, "Certificate has no workflow document");
+    await documentableSvc.rejectEntityDocument({
+      orgId,
+      actorUserId,
+      entityType: "withholding_certificate",
+      workflowDocumentId: certificate.workflow_document_id,
+      creatorUserId: certificate.created_by || null,
+      comment: reason,
+      client,
+    });
+    await client.query(
+      `UPDATE withholding_certificates SET status='rejected', rejected_at=NOW(), rejected_by=$3, rejection_reason=$4, updated_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, certificateId, actorUserId || null, reason || null],
+    );
     return getWithholdingCertificate({ orgId, certificateId, client });
   });
 }
 async function listWithholdingOpenItems({ orgId, query = {} }) {
-  const direction = query?.direction || 'payable';
+  const direction = query?.direction || "payable";
   return getOpenWithholdingItems({ orgId, direction, query });
 }
 // ==================== MODULE EXPORTS ====================
@@ -2061,21 +3041,21 @@ module.exports = {
   voidTaxAdjustment,
   listTaxCodeComponents,
   setTaxCodeComponents,
-  
+
   // Partner Tax Profiles
   listPartnerTaxProfiles,
   getPartnerTaxProfile,
   createPartnerTaxProfile,
   updatePartnerTaxProfile,
   deletePartnerTaxProfile,
-  
+
   // Tax Return Templates
   listTaxReturnTemplates,
   getTaxReturnTemplate,
   createTaxReturnTemplate,
   updateTaxReturnTemplate,
   deleteTaxReturnTemplate,
-  
+
   // Tax Returns
   listTaxReturns,
   getTaxReturn,
@@ -2083,11 +3063,11 @@ module.exports = {
   submitTaxReturn,
   getTaxReturnConfig,
   updateTaxReturnConfig,
-  
+
   // E-invoicing
   getEinvoicingSettings,
   updateEinvoicingSettings,
-  
+
   // Filing Adapters
   listFilingAdapters,
   getFilingAdapter,
@@ -2095,11 +3075,11 @@ module.exports = {
   updateFilingAdapter,
   deleteFilingAdapter,
   testFilingAdapter,
-  
+
   // Country Packs
   listCountryPacks,
   installCountryPack,
-  
+
   // Automation Rules
   listAutomationRules,
   upsertAutomationRule,
@@ -2117,6 +3097,7 @@ module.exports = {
   postWithholdingRemittance,
   voidWithholdingRemittance,
   createWithholdingCertificate,
+  getOpenWithholdingItems,
   listWithholdingCertificates,
   getWithholdingCertificate,
   updateWithholdingCertificate,

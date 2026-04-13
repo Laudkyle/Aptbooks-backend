@@ -879,5 +879,271 @@ router.post("/filing-adapters/:id/test", requirePermission("tax.manage"), async 
     res.json({ data: result });
   } catch (e) { next(e); }
 });
+// ==================== WITHHOLDING REMITTANCES ====================
+router.get("/withholding/remittances", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listWithholdingRemittances({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+// ==================== WITHHOLDING OPEN ITEMS ====================
+router.get("/withholding/open-items", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const direction = req.query.direction || 'payable';
+    const data = await svc.getOpenWithholdingItems({ orgId, direction, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+router.get("/withholding/remittances/:id", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getWithholdingRemittance({ orgId, remittanceId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/remittances", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createWithholdingRemittanceSchema, req.body);
+    const created = await svc.createWithholdingRemittance({ orgId, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.remittance.created",
+      entityType: "withholding_remittances",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+    
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.patch("/withholding/remittances/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateWithholdingRemittanceSchema, req.body);
+    const updated = await svc.updateWithholdingRemittance({ orgId, remittanceId: req.params.id, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.remittance.updated",
+      entityType: "withholding_remittances",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/remittances/:id/submit", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.submitWithholdingRemittanceForApproval({ orgId, remittanceId: req.params.id, actorUserId: req.user.id });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/remittances/:id/approve", requirePermission("tax.approve"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.approveWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, comment: req.body.comment });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/remittances/:id/reject", requirePermission("tax.approve"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.rejectWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, reason: req.body.reason });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/remittances/:id/post", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(postWithholdingRemittanceSchema, req.body);
+    const result = await svc.postWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.remittance.posted",
+      entityType: "withholding_remittances",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/remittances/:id/void", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(voidWithholdingWorkflowSchema, req.body);
+    const result = await svc.voidWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, reason: payload.reason });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.remittance.voided",
+      entityType: "withholding_remittances",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+// ==================== WITHHOLDING CERTIFICATES ====================
+router.get("/withholding/certificates", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.listWithholdingCertificates({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.get("/withholding/certificates/:id", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getWithholdingCertificate({ orgId, certificateId: req.params.id });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/certificates", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createWithholdingCertificateSchema, req.body);
+    const created = await svc.createWithholdingCertificate({ orgId, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.certificate.created",
+      entityType: "withholding_certificates",
+      entityId: created.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: created
+    });
+    
+    res.status(201).json({ data: created });
+  } catch (e) { next(e); }
+});
+
+router.patch("/withholding/certificates/:id", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(updateWithholdingCertificateSchema, req.body);
+    const updated = await svc.updateWithholdingCertificate({ orgId, certificateId: req.params.id, payload, actorUserId: req.user.id });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.certificate.updated",
+      entityType: "withholding_certificates",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: updated
+    });
+    
+    res.json({ data: updated });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/certificates/:id/submit", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.submitWithholdingCertificateForApproval({ orgId, certificateId: req.params.id, actorUserId: req.user.id });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/certificates/:id/approve", requirePermission("tax.approve"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.approveWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, comment: req.body.comment });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/certificates/:id/reject", requirePermission("tax.approve"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const result = await svc.rejectWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, reason: req.body.reason });
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/certificates/:id/post", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(postWithholdingCertificateSchema, req.body);
+    const result = await svc.postWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, payload });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.certificate.posted",
+      entityType: "withholding_certificates",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+router.post("/withholding/certificates/:id/void", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(voidWithholdingWorkflowSchema, req.body);
+    const result = await svc.voidWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, reason: payload.reason });
+    
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId: req.user.id,
+      action: "tax.withholding.certificate.voided",
+      entityType: "withholding_certificates",
+      entityId: req.params.id,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      after: result
+    });
+    
+    res.json({ data: result });
+  } catch (e) { next(e); }
+});
+
+// ==================== WITHHOLDING DASHBOARD ====================
+router.get("/withholding/dashboard", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const data = await svc.getWithholdingDashboard({ orgId, query: req.query });
+    res.json({ data });
+  } catch (e) { next(e); }
+});
 
 module.exports = router;

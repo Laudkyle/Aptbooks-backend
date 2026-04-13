@@ -68,7 +68,7 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
     const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
     subtotalCents += BigInt(Math.round(taxableAmount * 100));
     taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
-    withholdingTotal += Number(resolvedTaxSummary.withholdingTaxAmount || 0);
+    withholdingTotal += Number(resolvedTaxSummary.withholdingTax || 0);
     computed.push({
       ...l,
       quantity: qty,

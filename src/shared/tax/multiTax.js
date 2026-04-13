@@ -136,6 +136,7 @@ function summarizeResolvedTaxes(components = []) {
   };
 
   for (const component of components || []) {
+    console.log({ component });
     const amount = round2(component.taxAmount || 0);
     const taxType = component.taxType || component.tax_type || null;
     const calculationMethod = component.calculationMethod || component.calculation_method || 'standard';
@@ -153,6 +154,7 @@ function summarizeResolvedTaxes(components = []) {
       summary.exclusiveNonWithholdingTax = round2(summary.exclusiveNonWithholdingTax + amount);
     }
   }
+  console.log({ summary });
 
   return summary;
 }
