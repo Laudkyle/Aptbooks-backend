@@ -67,61 +67,80 @@ function normalizeRecoverablePercent({ line = {}, partnerProfile = null }) {
   return null;
 }
 
+function normalizeWithholdingRate({ line = {}, partnerProfile = null }) {
+  if (line.withholdingRateOverride != null) return Number(line.withholdingRateOverride);
+  if (partnerProfile?.withholding_rate_override != null) {
+    const partnerRate = Number(partnerProfile.withholding_rate_override);
+    if (Number.isFinite(partnerRate)) {
+      return partnerRate > 1 ? partnerRate / 100 : partnerRate;
+    }
+  }
+  return null;
+}
+
 async function determineTaxSelections({ client, orgId, line = {}, context = {} }) {
   if (Array.isArray(line.taxes) && line.taxes.length) return line.taxes.map((t) => ({ ...t }));
-  if (line.taxCodeId) {
-    return [{
-      taxCodeId: line.taxCodeId,
-      taxAmount: line.taxAmount,
-      taxableAmount: line.taxableAmount,
-      recoverablePercent: line.recoverablePercentOverride ?? null,
-      reverseCharge: line.reverseCharge === true,
-      exemptionReasonCode: line.exemptionReasonCode || null,
-      exemptionReason: line.exemptionReason || null,
-      metadata: { explicit: true, itemTaxCategory: line.itemTaxCategory || null }
-    }];
-  }
 
   const settings = await getTaxSettings({ client, orgId });
   const partnerProfile = await getPartnerTaxProfile({ client, orgId, partnerId: context.partnerId || null });
   const recoverablePercent = normalizeRecoverablePercent({ line, partnerProfile });
-
-  if (partnerProfile?.is_tax_exempt || partnerProfile?.partner_tax_exempt || line.taxTreatment === 'exempt') {
-    return [];
-  }
-
-  const rule = await findMatchingRule({ client, orgId, context, partnerProfile, docDate: context.documentDate || null });
+  const withholdingRateOverride = normalizeWithholdingRate({ line, partnerProfile });
 
   const selections = [];
-  const defaultTaxCodeId = rule?.tax_code_id || (
-    context.transactionScope === 'sales'
-      ? (line.salesTaxCodeId || partnerProfile?.sales_tax_code_id || partnerProfile?.default_tax_code_id || settings?.default_tax_code_id)
-      : (line.purchaseTaxCodeId || partnerProfile?.purchase_tax_code_id || partnerProfile?.default_tax_code_id || settings?.default_tax_code_id)
-  );
 
-  if (!defaultTaxCodeId) {
-    if (settings?.enforce_partner_tax_profile) {
-      throw new AppError(409, 'Tax profile is required to determine the applicable tax code for this partner/document');
-    }
-  } else {
+  if (line.taxCodeId) {
     selections.push({
-      taxCodeId: defaultTaxCodeId,
-      sourceRuleId: rule?.id || null,
-      recoverablePercent,
-      exemptionReasonCode: line.exemptionReasonCode || partnerProfile?.exemption_reason_code || null,
-      exemptionReason: line.exemptionReason || partnerProfile?.exemption_reason || null,
-      reverseCharge: line.reverseCharge === true || partnerProfile?.reverse_charge_applicable === true,
-      metadata: {
-        partnerTaxProfileId: partnerProfile?.id || null,
-        itemTaxCategory: line.itemTaxCategory || null,
-        placeOfSupply: line.placeOfSupply || context.placeOfSupply || partnerProfile?.place_of_supply || null
-      }
+      taxCodeId: line.taxCodeId,
+      taxAmount: line.taxAmount,
+      taxableAmount: line.taxableAmount,
+      recoverablePercent: line.recoverablePercentOverride ?? recoverablePercent,
+      reverseCharge: line.reverseCharge === true,
+      exemptionReasonCode: line.exemptionReasonCode || null,
+      exemptionReason: line.exemptionReason || null,
+      metadata: { explicit: true, itemTaxCategory: line.itemTaxCategory || null }
     });
+  } else {
+    if (partnerProfile?.is_tax_exempt || partnerProfile?.partner_tax_exempt || line.taxTreatment === 'exempt') {
+      return [];
+    }
+
+    const rule = await findMatchingRule({ client, orgId, context, partnerProfile, docDate: context.documentDate || null });
+
+    const defaultTaxCodeId = rule?.tax_code_id || (
+      context.transactionScope === 'sales'
+        ? (line.salesTaxCodeId || partnerProfile?.sales_tax_code_id || partnerProfile?.default_tax_code_id || settings?.default_tax_code_id)
+        : (line.purchaseTaxCodeId || partnerProfile?.purchase_tax_code_id || partnerProfile?.default_tax_code_id || settings?.default_tax_code_id)
+    );
+
+    if (!defaultTaxCodeId) {
+      if (settings?.enforce_partner_tax_profile) {
+        throw new AppError(409, 'Tax profile is required to determine the applicable tax code for this partner/document');
+      }
+    } else {
+      selections.push({
+        taxCodeId: defaultTaxCodeId,
+        sourceRuleId: rule?.id || null,
+        recoverablePercent,
+        exemptionReasonCode: line.exemptionReasonCode || partnerProfile?.exemption_reason_code || null,
+        exemptionReason: line.exemptionReason || partnerProfile?.exemption_reason || null,
+        reverseCharge: line.reverseCharge === true || partnerProfile?.reverse_charge_applicable === true,
+        metadata: {
+          partnerTaxProfileId: partnerProfile?.id || null,
+          itemTaxCategory: line.itemTaxCategory || null,
+          placeOfSupply: line.placeOfSupply || context.placeOfSupply || partnerProfile?.place_of_supply || null
+        }
+      });
+    }
   }
 
   const shouldApplyWithholding =
-    context.transactionScope === 'purchases' &&
-    (line.withholdingApplicable === true || partnerProfile?.withholding_applicable === true) &&
+    (context.transactionScope === 'purchases' || context.transactionScope === 'sales') &&
+    (
+      line.withholdingApplicable === true ||
+      !!line.withholdingTaxCodeId ||
+      partnerProfile?.withholding_applicable === true ||
+      !!partnerProfile?.withholding_tax_code_id
+    ) &&
     (line.withholdingTaxCodeId || partnerProfile?.withholding_tax_code_id);
 
   if (shouldApplyWithholding) {
@@ -129,6 +148,7 @@ async function determineTaxSelections({ client, orgId, line = {}, context = {} }
       taxCodeId: line.withholdingTaxCodeId || partnerProfile?.withholding_tax_code_id,
       sourceRuleId: null,
       recoverablePercent: 0,
+      rateOverride: withholdingRateOverride,
       isWithholdingOverlay: true,
       metadata: {
         overlay: 'withholding',

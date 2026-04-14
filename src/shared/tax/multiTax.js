@@ -72,7 +72,7 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
   });
 
   if (!bundle.code.is_compound || !bundle.components.length) {
-    const rate = Number(bundle.code.rate || 0);
+    const rate = selection.rateOverride == null ? Number(bundle.code.rate || 0) : Number(selection.rateOverride || 0);
     const component = shape(bundle.code, rate);
     component.taxAmount = computeTaxAmount({ taxableAmount, rate, calculationMethod: bundle.code.calculation_method, explicitTaxAmount: selection.taxAmount });
     component.calculationMethod = bundle.code.calculation_method;
@@ -84,7 +84,8 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
   }
 
   return bundle.components.map((componentTax) => {
-    const rate = Number(componentTax.rate_override == null ? componentTax.rate : componentTax.rate_override) || 0;
+    const componentBaseRate = Number(componentTax.rate_override == null ? componentTax.rate : componentTax.rate_override) || 0;
+    const rate = selection.rateOverride == null ? componentBaseRate : Number(selection.rateOverride || 0);
     const component = shape(componentTax, rate);
     component.taxAmount = computeTaxAmount({ taxableAmount, rate, calculationMethod: componentTax.calculation_method });
     component.calculationMethod = componentTax.calculation_method;
@@ -136,7 +137,6 @@ function summarizeResolvedTaxes(components = []) {
   };
 
   for (const component of components || []) {
-    console.log({ component });
     const amount = round2(component.taxAmount || 0);
     const taxType = component.taxType || component.tax_type || null;
     const calculationMethod = component.calculationMethod || component.calculation_method || 'standard';
@@ -154,7 +154,6 @@ function summarizeResolvedTaxes(components = []) {
       summary.exclusiveNonWithholdingTax = round2(summary.exclusiveNonWithholdingTax + amount);
     }
   }
-  console.log({ summary });
 
   return summary;
 }

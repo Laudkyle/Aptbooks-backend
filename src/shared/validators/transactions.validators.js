@@ -18,6 +18,14 @@ const createBillLineSchema = z.object({
   expenseAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxAmount: z.number().nonnegative().optional(),
+  taxableAmount: z.number().nonnegative().optional(),
+  withholdingApplicable: z.coerce.boolean().optional(),
+  withholdingTaxCodeId: z.string().uuid().optional().nullable(),
+  withholdingRateOverride: z.coerce.number().min(0).max(1).optional(),
+  recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
+  exemptionReasonCode: z.string().max(60).optional().nullable(),
+  reverseCharge: z.coerce.boolean().optional(),
+  lineTotal: z.number().nonnegative().optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
@@ -30,6 +38,13 @@ const createBillSchema = z.object({
   billDate: z.string().min(8), // YYYY-MM-DD
   dueDate: z.string().min(8),  // YYYY-MM-DD
   memo: z.string().optional().nullable(),
+  currencyCode: z.string().length(3).optional(),
+  taxDate: z.string().min(8).optional(),
+  pricingMode: z.enum(['exclusive', 'inclusive']).optional(),
+  supplyType: z.enum(['goods', 'services', 'mixed', 'import', 'export']).optional(),
+  placeOfSupplyCountryCode: z.string().length(2).optional(),
+  supplierReference: z.string().max(255).optional().nullable(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
   lines: z.array(createBillLineSchema).min(1)
 });
 
@@ -112,6 +127,14 @@ const creditNoteLineSchema = z.object({
   revenueAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxAmount: z.number().nonnegative().optional(),
+  taxableAmount: z.number().nonnegative().optional(),
+  withholdingApplicable: z.coerce.boolean().optional(),
+  withholdingTaxCodeId: z.string().uuid().optional().nullable(),
+  withholdingRateOverride: z.coerce.number().min(0).max(1).optional(),
+  recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
+  exemptionReasonCode: z.string().max(60).optional().nullable(),
+  reverseCharge: z.coerce.boolean().optional(),
+  lineTotal: z.number().nonnegative().optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
@@ -142,6 +165,14 @@ const debitNoteLineSchema = z.object({
   expenseAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxAmount: z.number().nonnegative().optional(),
+  taxableAmount: z.number().nonnegative().optional(),
+  withholdingApplicable: z.coerce.boolean().optional(),
+  withholdingTaxCodeId: z.string().uuid().optional().nullable(),
+  withholdingRateOverride: z.coerce.number().min(0).max(1).optional(),
+  recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
+  exemptionReasonCode: z.string().max(60).optional().nullable(),
+  reverseCharge: z.coerce.boolean().optional(),
+  lineTotal: z.number().nonnegative().optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {

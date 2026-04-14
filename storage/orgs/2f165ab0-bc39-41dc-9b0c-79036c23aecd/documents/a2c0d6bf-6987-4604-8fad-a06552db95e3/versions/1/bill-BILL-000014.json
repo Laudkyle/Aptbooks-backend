@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "7d59e35f-a75d-47fc-b35e-1f49220d433a",
+  "snapshot_at": "2026-04-14T11:03:51.731Z",
+  "header": {
+    "id": "7d59e35f-a75d-47fc-b35e-1f49220d433a",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "vendor_id": "97120ae5-b32d-4a0a-9ede-9a0156d274ae",
+    "bill_no": "BILL-000014",
+    "bill_date": "2026-04-14T00:00:00.000Z",
+    "due_date": "2026-04-14T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "gfdhkhhdsjjaf",
+    "subtotal": "9968022036.00",
+    "total": "11164184680.32",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "36fdc786-9c9d-48c8-8205-668c2942c2d4",
+    "created_at": "2026-04-14T11:03:33.036Z",
+    "updated_at": "2026-04-14T11:03:33.036Z",
+    "tax_total": "1196162644.32",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "1196162644.32",
+    "net_settlement_total": "9968022036.00"
+  },
+  "lines": [
+    {
+      "id": "4e95b847-29b1-4240-9a19-e298f0252206",
+      "bill_id": "7d59e35f-a75d-47fc-b35e-1f49220d433a",
+      "line_no": 1,
+      "description": "fdsal;j",
+      "quantity": "1323423.0000",
+      "unit_price": "7532.00",
+      "line_total": "9968022036.00",
+      "expense_account_id": "e53912dd-d332-453c-a481-6a46e34ac8aa",
+      "created_at": "2026-04-14T11:03:33.036Z",
+      "tax_code_id": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+      "tax_amount": "1196162644.32",
+      "taxable_amount": "9968022036.00",
+      "tax_snapshot_json": {
+        "context": {
+          "partnerId": "97120ae5-b32d-4a0a-9ede-9a0156d274ae",
+          "partnerType": "vendor",
+          "documentDate": "2026-04-14",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "a303c28f-e2b1-4b3f-9fca-4411634d6432",
+          "transactionScope": "purchases"
+        },
+        "taxAmount": 1196162644.32,
+        "components": [
+          {
+            "rate": 12,
+            "boxCode": null,
+            "taxCode": "CAT 1",
+            "taxType": "GST",
+            "metadata": {
+              "explicit": true,
+              "itemTaxCategory": null
+            },
+            "taxScope": "taxable",
+            "direction": "both",
+            "taxAmount": 1196162644.32,
+            "taxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+            "taxCodeName": "STANDARD CODE ONE",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": true,
+            "taxableAmount": 9968022036,
+            "exemptionReason": null,
+            "sourceTaxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+            "recoverablePercent": 0.09,
+            "exemptionReasonCode": "dfssdafsd"
+          },
+          {
+            "rate": 0.12,
+            "boxCode": null,
+            "taxCode": "WITH",
+            "taxType": "WITHHOLDING",
+            "metadata": {
+              "overlay": "withholding",
+              "partnerTaxProfileId": "1743320b-23ec-4162-a8ad-ff03b28ccfa3"
+            },
+            "taxScope": "withholding",
+            "direction": "withholding",
+            "taxAmount": 1196162644.32,
+            "taxCodeId": "aeb69452-4fab-4587-9562-5328373891d8",
+            "taxCodeName": "WITHONE",
+            "categoryCode": "withholding",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": 9968022036,
+            "exemptionReason": null,
+            "sourceTaxCodeId": "aeb69452-4fab-4587-9562-5328373891d8",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "aeb69452-4fab-4587-9562-5328373891d8",
+            "recoverablePercent": 0,
+            "exemptionReasonCode": null
+          }
+        ],
+        "taxableAmount": 9968022036,
+        "selectedTaxCodeId": "cfc69bcb-0e97-4695-8883-644ae1bbdfe1",
+        "withholdingTaxAmount": 1196162644.32,
+        "grossComputedTaxAmount": 2392325288.64
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "9968022036.00",
+    "tax_total": "1196162644.32",
+    "total": "11164184680.32"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

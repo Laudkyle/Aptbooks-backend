@@ -15,6 +15,14 @@ const lineSchema = z.object({
   revenueAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxAmount: z.coerce.number().nonnegative().optional(),
+  taxableAmount: z.coerce.number().nonnegative().optional(),
+  withholdingApplicable: z.coerce.boolean().optional(),
+  withholdingTaxCodeId: z.string().uuid().optional().nullable(),
+  withholdingRateOverride: z.coerce.number().min(0).max(1).optional(),
+  recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
+  exemptionReasonCode: z.string().max(60).optional().nullable(),
+  reverseCharge: z.coerce.boolean().optional(),
+  lineTotal: z.coerce.number().nonnegative().optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
@@ -27,6 +35,13 @@ const createInvoiceSchema = z.object({
   invoiceDate: isoDate,
   dueDate: isoDate,
   memo: z.string().max(2000).optional(),
+  currencyCode: z.string().length(3).optional(),
+  taxDate: isoDate.optional(),
+  pricingMode: z.enum(['exclusive', 'inclusive']).optional(),
+  supplyType: z.enum(['goods', 'services', 'mixed', 'export', 'import']).optional(),
+  placeOfSupplyCountryCode: z.string().length(2).optional(),
+  buyerReference: z.string().max(255).optional(),
+  jurisdictionId: z.string().uuid().optional().nullable(),
   lines: z.array(lineSchema).min(1)
 }).superRefine((val, ctx) => {
   // Lexicographic compare works for YYYY-MM-DD
