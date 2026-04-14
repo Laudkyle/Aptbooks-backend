@@ -673,6 +673,7 @@ async function initializeOrganizationDefaults({
 
     // Transaction-level tax control (Wave 1)
     ["tax.apply", "Apply tax to transactions"],
+    ["tax.approve", "Approve tax calculations and overrides"],
     ["tax.override", "Override transaction tax results"],
     ["tax.adjust", "Apply tax adjustments"],
     ["tax.view.breakdown", "View detailed tax breakdowns"],
