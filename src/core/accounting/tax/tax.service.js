@@ -4,6 +4,7 @@ const journalIF = require("../../../interfaces/journalPosting.interface");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const { withTransaction } = require("../../../db/tx");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
+const { propagateDocumentWorkflowToJournal } = require("../../../modules/transactions/_shared/workflowJournalAudit.service");
 
 async function assertAccountBelongsToOrg({ orgId, accountId, fieldName }) {
   if (!accountId) return;
@@ -2315,6 +2316,22 @@ async function postWithholdingRemittance({
         ],
       },
     });
+
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        workflowDocumentId: remittance.workflow_document_id || null,
+        createdBy: remittance.created_by || actorUserId || null,
+        submittedAt: remittance.submitted_at || null,
+        submittedBy: remittance.submitted_by || null,
+        approvedAt: remittance.approved_at || null,
+        approvedBy: remittance.approved_by || null,
+        updatedBy: actorUserId || null,
+      },
+    });
+
     const posted = await journalIF.postDraftJournal({
       orgId,
       journalId: draft.journalId,
