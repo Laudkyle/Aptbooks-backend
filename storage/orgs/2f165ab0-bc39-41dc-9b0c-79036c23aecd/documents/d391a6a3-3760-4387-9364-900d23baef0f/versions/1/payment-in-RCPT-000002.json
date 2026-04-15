@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "entity_type": "payment_in",
+  "entity_id": "916a2c5d-6d7c-4caf-856e-8d7ff34abec4",
+  "snapshot_at": "2026-04-15T11:51:45.317Z",
+  "header": {
+    "id": "916a2c5d-6d7c-4caf-856e-8d7ff34abec4",
+    "organization_id": "2f165ab0-bc39-41dc-9b0c-79036c23aecd",
+    "customer_id": "fe53aefc-3f83-4990-9e6e-5b54cf54cec2",
+    "receipt_no": "RCPT-000002",
+    "receipt_date": "2026-04-15T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "payment_method_id": "7ed58357-bf46-4bfc-aef9-f3f6f992f1c9",
+    "cash_account_id": "f13b6971-6b3b-4ec2-b7c5-7358850d189e",
+    "amount_total": "134698171548549.28",
+    "status": "draft",
+    "memo": "h sjskj",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-04-15T11:51:35.957Z",
+    "updated_at": "2026-04-15T11:51:35.957Z",
+    "unapplied_amount": "0.00",
+    "discount_total": "0.00",
+    "settlement_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null
+  },
+  "allocations": [
+    {
+      "id": "a88191f1-8293-49fe-91bf-eaf38a79e465",
+      "customer_receipt_id": "916a2c5d-6d7c-4caf-856e-8d7ff34abec4",
+      "invoice_id": "0447319b-009f-4784-aa50-773648df924b",
+      "amount_applied": "134698171548549.28",
+      "created_at": "2026-04-15T11:51:35.957Z",
+      "discount_taken": "0.00"
+    }
+  ],
+  "totals": {
+    "amount_total": "134698171548549.28",
+    "unapplied_amount": "0.00",
+    "settlement_amount": null,
+    "discount_amount": null
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}
