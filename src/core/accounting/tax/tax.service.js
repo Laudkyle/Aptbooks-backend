@@ -6,6 +6,66 @@ const { withTransaction } = require("../../../db/tx");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 const { propagateDocumentWorkflowToJournal } = require("../../../modules/transactions/_shared/workflowJournalAudit.service");
 
+function normalizeTaxCodeRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    taxType: row.tax_type ?? row.taxType ?? null,
+    taxScope: row.tax_scope ?? row.taxScope ?? null,
+    categoryCode: row.category_code ?? row.categoryCode ?? null,
+    taxCategory: row.category_code ?? row.taxCategory ?? null,
+    jurisdictionCode: row.jurisdiction_code ?? row.jurisdictionCode ?? null
+  };
+}
+
+function normalizeTaxReturnConfigRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    status: row.status ?? (row.is_enabled === false ? "inactive" : "active")
+  };
+}
+
+function normalizeEinvoicingSettingsRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    defaultScheme: row.defaultScheme ?? row.provider ?? null,
+    sellerEndpointId: row.sellerEndpointId ?? row.api_endpoint ?? null,
+    sellerSchemeId: row.sellerSchemeId ?? row.provider ?? null,
+    transportProfile: row.transportProfile ?? (row.sandbox_mode ? "sandbox" : "production"),
+    realtimeFilingEnabled: row.realtimeFilingEnabled ?? row.enabled ?? false
+  };
+}
+
+function normalizeFilingAdapterRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    adapterCode: row.adapter_code ?? row.adapterCode ?? null,
+    jurisdictionCode: row.jurisdiction_code ?? row.country_code ?? row.jurisdictionCode ?? null,
+    status: row.status ?? (row.is_active ? "active" : "inactive")
+  };
+}
+
+function normalizeCountryPackRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    jurisdictionCode: row.jurisdictionCode ?? row.country_code ?? null,
+    status: row.status ?? (row.is_active ? "active" : "inactive")
+  };
+}
+
+function normalizeAutomationRuleRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    triggerType: row.triggerType ?? row.trigger_code ?? null,
+    status: row.status ?? (row.is_enabled ? "active" : "inactive")
+  };
+}
+
 async function assertAccountBelongsToOrg({ orgId, accountId, fieldName }) {
   if (!accountId) return;
   const { rows } = await pool.query(
@@ -84,7 +144,7 @@ async function updateJurisdiction({ orgId, jurisdictionId, payload }) {
     countryCode: "country_code",
   };
   for (const [k, col] of Object.entries(map)) {
-    if (payload[k] !== undefined) {
+    if (normalizedPayload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
       params.push(payload[k] === "" ? null : payload[k]);
     }
@@ -455,7 +515,7 @@ async function listTaxCodes({ orgId, query }) {
      ORDER BY code`,
     params,
   );
-  return rows;
+  return rows.map(normalizeTaxCodeRow);
 }
 
 async function createTaxCode({ orgId, payload }) {
@@ -514,7 +574,7 @@ async function createTaxCode({ orgId, payload }) {
       payload.status || null,
     ],
   );
-  return rows[0];
+  return normalizeTaxCodeRow(rows[0]);
 }
 
 async function updateTaxCode({ orgId, taxCodeId, payload }) {
@@ -585,7 +645,7 @@ async function updateTaxCode({ orgId, taxCodeId, payload }) {
     params,
   );
 
-  return { before, after: rows[0] };
+  return { before, after: normalizeTaxCodeRow(rows[0]) };
 }
 
 async function deleteTaxCode({ orgId, taxCodeId }) {
@@ -1512,9 +1572,9 @@ async function getTaxReturnConfig({ orgId }) {
       `INSERT INTO tax_return_config(organization_id) VALUES ($1) RETURNING *`,
       [orgId],
     );
-    return inserted[0];
+    return normalizeTaxReturnConfigRow(inserted[0]);
   }
-  return rows[0];
+  return normalizeTaxReturnConfigRow(rows[0]);
 }
 
 async function updateTaxReturnConfig({ orgId, payload, actorUserId }) {
@@ -1548,7 +1608,7 @@ async function updateTaxReturnConfig({ orgId, payload, actorUserId }) {
      RETURNING *`,
     params,
   );
-  return rows[0];
+  return normalizeTaxReturnConfigRow(rows[0]);
 }
 
 // ==================== E-INVOICING ====================
@@ -1563,13 +1623,21 @@ async function getEinvoicingSettings({ orgId }) {
       `INSERT INTO einvoicing_settings(organization_id) VALUES ($1) RETURNING *`,
       [orgId],
     );
-    return inserted[0];
+    return normalizeEinvoicingSettingsRow(inserted[0]);
   }
-  return rows[0];
+  return normalizeEinvoicingSettingsRow(rows[0]);
 }
 
 async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
   await getEinvoicingSettings({ orgId });
+
+  const normalizedPayload = {
+    ...payload,
+    provider: payload.provider ?? payload.defaultScheme,
+    apiEndpoint: payload.apiEndpoint ?? payload.sellerEndpointId,
+    sandboxMode: payload.sandboxMode ?? (payload.transportProfile ? payload.transportProfile === "sandbox" : undefined),
+    enabled: payload.enabled ?? payload.realtimeFilingEnabled
+  };
 
   const columns = [];
   const params = [orgId];
@@ -1585,10 +1653,10 @@ async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
   };
 
   for (const [k, col] of Object.entries(map)) {
-    if (payload[k] !== undefined) {
+    if (normalizedPayload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
-      if (k === "documentTypes") params.push(JSON.stringify(payload[k] || []));
-      else params.push(payload[k] === "" ? null : payload[k]);
+      if (k === "documentTypes") params.push(JSON.stringify(normalizedPayload[k] || []));
+      else params.push(normalizedPayload[k] === "" ? null : normalizedPayload[k]);
     }
   }
 
@@ -1603,7 +1671,7 @@ async function updateEinvoicingSettings({ orgId, payload, actorUserId }) {
      RETURNING *`,
     params,
   );
-  return rows[0];
+  return normalizeEinvoicingSettingsRow(rows[0]);
 }
 
 // ==================== FILING ADAPTERS ====================
@@ -1632,7 +1700,7 @@ async function listFilingAdapters({ orgId, query = {} }) {
      ORDER BY organization_id NULLS FIRST, country_code, adapter_code`,
     params,
   );
-  return rows;
+  return rows.map(normalizeFilingAdapterRow);
 }
 
 async function getFilingAdapter({ orgId, adapterId }) {
@@ -1642,7 +1710,7 @@ async function getFilingAdapter({ orgId, adapterId }) {
     [orgId, adapterId],
   );
   if (!rows.length) throw new AppError(404, "Filing adapter not found");
-  return rows[0];
+  return normalizeFilingAdapterRow(rows[0]);
 }
 
 async function createFilingAdapter({ orgId, actorUserId, payload }) {
@@ -1712,7 +1780,7 @@ async function updateFilingAdapter({ orgId, adapterId, payload, actorUserId }) {
   );
 
   if (!rows.length) throw new AppError(404, "Filing adapter not found");
-  return rows[0];
+  return normalizeFilingAdapterRow(rows[0]);
 }
 
 async function deleteFilingAdapter({ orgId, adapterId }) {
@@ -1741,7 +1809,7 @@ async function listCountryPacks({ orgId }) {
     `SELECT * FROM tax_country_packs WHERE organization_id=$1 OR organization_id IS NULL ORDER BY is_active DESC, country_code`,
     [orgId],
   );
-  return rows;
+  return rows.map(normalizeCountryPackRow);
 }
 
 async function installCountryPack({ orgId, actorUserId, payload }) {
@@ -1803,7 +1871,7 @@ async function listAutomationRules({ orgId }) {
     `SELECT * FROM tax_automation_rules WHERE organization_id=$1 ORDER BY created_at DESC`,
     [orgId],
   );
-  return rows;
+  return rows.map(normalizeAutomationRuleRow);
 }
 
 async function upsertAutomationRule({ orgId, actorUserId, payload }) {
@@ -2706,6 +2774,21 @@ async function postWithholdingCertificate({
         ],
       },
     });
+    await propagateDocumentWorkflowToJournal({
+      client,
+      journalId: draft.journalId,
+      source: {
+        orgId,
+        workflowDocumentId: cert.workflow_document_id || null,
+        createdBy: cert.created_by || actorUserId || null,
+        submittedAt: cert.submitted_at || null,
+        submittedBy: cert.submitted_by || null,
+        approvedAt: cert.approved_at || null,
+        approvedBy: cert.approved_by || null,
+        updatedBy: actorUserId || null,
+      },
+    });
+
     const posted = await journalIF.postDraftJournal({
       orgId,
       journalId: draft.journalId,

@@ -547,7 +547,8 @@ async function finalizeReturn({ orgId, actorUserId, returnId }) {
 
 async function listReturns({ orgId, taxType, fromDate, toDate }) {
   const t = taxType || "VAT";
-  if (!['VAT','GST','SALES'].includes(t)) throw new AppError(400, "taxType must be VAT, GST, or SALES");
+  const allowedTaxTypes = ['VAT','GST','SALES','WITHHOLDING','IMPORT','OTHER'];
+  if (!allowedTaxTypes.includes(t)) throw new AppError(400, `taxType must be one of ${allowedTaxTypes.join(', ')}`);
 
   const params = [orgId, t];
   let where = "";
@@ -569,12 +570,12 @@ async function jurisdictionReturn({ orgId, userId, fromDate, toDate, templateCod
   const params = [orgId];
   let sql = `SELECT * FROM tax_return_jurisdiction_templates WHERE organization_id=$1`;
   if (templateCode) {
-    params.append(templateCode);
-    sql += ` AND code=$${len(params)}`;
+    params.push(templateCode);
+    sql += ` AND code=$${params.length}`;
   }
   if (jurisdictionId) {
-    params.append(jurisdictionId);
-    sql += ` AND jurisdiction_id=$${len(params)}`;
+    params.push(jurisdictionId);
+    sql += ` AND jurisdiction_id=$${params.length}`;
   }
   sql += ' ORDER BY updated_at DESC LIMIT 1';
   const tplRows = await pool.query(sql, params);

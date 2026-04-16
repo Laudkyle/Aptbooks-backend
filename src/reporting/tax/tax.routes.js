@@ -60,6 +60,67 @@ router.get('/filing-runs', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+
+router.get('/withholding-summary', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    const data = await svc.taxTransactions({ orgId, fromDate: from, toDate: to, taxType: 'WITHHOLDING' });
+    const summary = data.reduce((acc, row) => {
+      acc.totalTax += Number(row.signed_tax_amount || 0);
+      acc.totalTaxable += Number(row.signed_taxable_amount || 0);
+      return acc;
+    }, { totalTax: 0, totalTaxable: 0, count: data.length, from, to, taxType: 'WITHHOLDING' });
+    summary.totalTax = Number(summary.totalTax.toFixed(2));
+    summary.totalTaxable = Number(summary.totalTaxable.toFixed(2));
+    res.json({ data: summary });
+  } catch (err) { next(err); }
+});
+
+router.get('/recoverability', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    const data = await svc.taxTransactions({ orgId, fromDate: from, toDate: to, taxType: req.query.taxType || 'VAT' });
+    const rows = data.map((row) => ({
+      ...row,
+      recoverable_percent: row.recoverable_percent ?? 1,
+      recoverable_tax_amount: Number((Number(row.signed_tax_amount || 0) * Number(row.recoverable_percent ?? 1)).toFixed(2)),
+      non_recoverable_tax_amount: Number((Number(row.signed_tax_amount || 0) * (1 - Number(row.recoverable_percent ?? 1))).toFixed(2))
+    }));
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+router.get('/einvoicing', async (req, res, next) => {
+  try {
+    res.json({ data: [] });
+  } catch (err) { next(err); }
+});
+
+router.get('/jurisdiction-returns', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to, templateCode, jurisdictionId } = req.query;
+    res.json({ data: await svc.jurisdictionReturn({ orgId, userId: req.user.id, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/realtime-filings', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    res.json({ data: await svc.listFilingRuns({ orgId, status: req.query.status || null }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/country-pack-readiness', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const packs = await svc.listCountryPacks({ orgId });
+    res.json({ data: packs.map((row) => ({ ...row, readiness: row.is_active ? 'ready' : 'not_ready' })) });
+  } catch (err) { next(err); }
+});
+
 router.get("/transactions", async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
