@@ -176,41 +176,25 @@ async function bulkInsertLines({ orgId, templateId, lines }) {
 }
 
 async function bulkInsertLineAccounts({ mappings }) {
-  if (!mappings.length) {
-    console.log("No mappings to insert");
-    return;
-  }
-
-  console.log(`Inserting ${mappings.length} account mappings`);
+  if (!mappings.length) return [];
 
   const values = [];
   const params = [];
   let i = 1;
 
   for (const m of mappings) {
-    if (!m.line_id) {
-      console.error("Invalid mapping - missing line_id:", m);
-      continue;
-    }
-
-    if (!m.account_id) {
-      console.error("Invalid mapping - missing account_id:", m);
-      continue;
-    }
+    if (!m.line_id || !m.account_id) continue;
 
     params.push(
-      m.line_id,                 // $i: line_id
-      m.account_id,              // $i+1: account_id
-      m.weight ?? 1,             // $i+2: weight
-      m.sign_override || null    // $i+3: sign_override
+      m.line_id,
+      m.account_id,
+      m.weight ?? 1,
+      m.sign_override || null
     );
     values.push(`($${i++},$${i++},$${i++},$${i++})`);
   }
 
-  if (values.length === 0) {
-    console.log("No valid mappings to insert");
-    return;
-  }
+  if (values.length === 0) return [];
 
   const query = `
     INSERT INTO statement_line_accounts(line_id, account_id, weight, sign_override)
@@ -221,14 +205,8 @@ async function bulkInsertLineAccounts({ mappings }) {
     RETURNING line_id, account_id
   `;
 
-  try {
-    const { rows } = await pool.query(query, params);
-    console.log(`Successfully inserted ${rows.length} account mappings`);
-    return rows;
-  } catch (error) {
-    console.error("Error in bulkInsertLineAccounts:", error);
-    throw error;
-  }
+  const { rows } = await pool.query(query, params);
+  return rows;
 }
 async function getTemplateGraph({ orgId, templateId }) {
   // Explicitly select columns - don't use SELECT *

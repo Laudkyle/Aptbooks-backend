@@ -98,21 +98,6 @@ function buildTree(lines) {
   return roots;
 }
 
-
-async function resetTemplateGraph({ orgId, templateId }) {
-  await pool.query(
-    `DELETE FROM statement_line_accounts
-      WHERE line_id IN (
-        SELECT id FROM statement_lines WHERE organization_id=$1 AND template_id=$2
-      )`,
-    [orgId, templateId]
-  );
-  await pool.query(
-    `DELETE FROM statement_lines WHERE organization_id=$1 AND template_id=$2`,
-    [orgId, templateId]
-  );
-}
-
 function safeEvalFormula(expression, context) {
   // Minimal DSL: allow identifiers that match line_no (e.g. L10), and + - * / ( )
   // We map identifiers to numeric values from context.
@@ -184,23 +169,49 @@ function rollupTree(node, childResults, ctx) {
   };
 }
 
+
+function normalizeCategoryName(name, fallback) {
+  const raw = String(name || "").trim();
+  if (!raw) return fallback;
+  const lc = raw.toLowerCase();
+  if (fallback === "Current Assets" || fallback === "Non-Current Assets") {
+    if (lc.includes("current") && !lc.includes("non")) return "Current Assets";
+    if (lc.includes("non") || lc.includes("fixed") || lc.includes("long")) return "Non-Current Assets";
+  }
+  if (fallback === "Current Liabilities" || fallback === "Non-Current Liabilities") {
+    if (lc.includes("current") && !lc.includes("non")) return "Current Liabilities";
+    if (lc.includes("non") || lc.includes("long")) return "Non-Current Liabilities";
+  }
+  if (fallback === "Equity") return "Equity";
+  return raw;
+}
+
+function shouldRebuildDetailedBalanceSheet(lines) {
+  if (!lines.length) return true;
+  const rootAssets = lines.find((l) => l.section_code === "ASSETS" && l.parent_line_id === null);
+  const rootLiabs = lines.find((l) => l.section_code === "LIABILITIES" && l.parent_line_id === null);
+  const hasNestedAssets = lines.some((l) => l.parent_line_id && l.section_code === "ASSETS");
+  const hasNestedLiabs = lines.some((l) => l.parent_line_id && l.section_code === "LIABILITIES");
+  const hasDetailSections = lines.some((l) => ["Current Assets", "Non-Current Assets", "Current Liabilities", "Non-Current Liabilities"].includes(l.label));
+  return !(rootAssets && rootLiabs && hasNestedAssets && hasNestedLiabs && hasDetailSections);
+}
+
 async function ensureDefaultTemplate({ orgId, statementType }) {
-  const existing = await repo.getDefaultTemplate({ orgId, statementType });
+  let existing = await repo.getDefaultTemplate({ orgId, statementType });
 
-  const requiresMappings = ["income_statement", "balance_sheet"].includes(statementType);
-
-  if (existing) {
+  if (existing && statementType === "balance_sheet") {
     const graph = await repo.getTemplateGraph({ orgId, templateId: existing.id });
-    const hasLines = (graph.lines || []).length > 0;
-    const hasMappings = (graph.mappings || []).length > 0;
-
-    if (hasLines && (!requiresMappings || hasMappings)) return existing;
-
-    // Template exists but is blank or partially built; rebuild it in place.
-    await resetTemplateGraph({ orgId, templateId: existing.id });
+    if (shouldRebuildDetailedBalanceSheet(graph.lines)) {
+      await pool.query(`DELETE FROM statement_line_accounts WHERE line_id IN (SELECT id FROM statement_lines WHERE template_id=$1)`, [existing.id]);
+      await pool.query(`DELETE FROM statement_lines WHERE template_id=$1`, [existing.id]);
+      await pool.query(`DELETE FROM statement_templates WHERE id=$1`, [existing.id]);
+      existing = null;
+    }
   }
 
-  const tpl = existing || await repo.createTemplate({
+  if (existing) return existing;
+
+  const tpl = await repo.createTemplate({
     orgId,
     statementType,
     name: `Default ${statementType.replace(/_/g, " ")}`,
@@ -213,33 +224,27 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
       coa.id,
       coa.code,
       coa.name,
+      coa.parent_account_id,
+      coa.is_postable,
       at.code AS account_type,
-      at.normal_balance
+      at.normal_balance,
+      ac.name AS category_name
     FROM chart_of_accounts coa
     JOIN account_types at ON at.id = coa.account_type_id
-    WHERE coa.organization_id=$1 AND coa.status='active'
+    LEFT JOIN account_categories ac ON ac.id = coa.category_id
+    WHERE coa.organization_id=$1 AND coa.status='active' AND coa.archived_at IS NULL
     ORDER BY coa.code
     `,
     [orgId]
   );
 
-  if (!accounts.length) {
-    return tpl;
-  }
+  if (!accounts.length) return tpl;
 
   let lineNo = 10;
   const lines = [];
   const mappings = [];
 
-  const createLine = ({
-    key,
-    label,
-    type,
-    parentKey = null,
-    sectionCode = null,
-    expression = null,
-    drCrNormal = "auto"
-  }) => {
+  const createLine = ({ key, label, type, parentKey = null, sectionCode = null, expression = null, drCrNormal = "auto" }) => {
     const line = {
       key,
       line_no: lineNo,
@@ -257,105 +262,98 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     return line;
   };
 
-  const createAccountLine = ({
-    key,
-    label,
-    parentKey,
-    sectionCode,
-    filterFn,
-    normalOverride
-  }) => {
-    const line = createLine({
-      key,
-      label,
-      type: "account",
-      parentKey,
-      sectionCode,
-      drCrNormal: normalOverride
-    });
+  const addLeafMappingLine = ({ key, label, parentKey, sectionCode, accountId, normalOverride }) => {
+    createLine({ key, label, type: "account", parentKey, sectionCode, drCrNormal: normalOverride || "auto" });
+    mappings.push({ key, account_id: accountId, weight: 1, sign_override: normalOverride || null });
+  };
 
-    const matched = accounts.filter(filterFn);
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
+  const childrenByParent = new Map();
+  for (const acc of accounts) {
+    const k = acc.parent_account_id || "ROOT";
+    if (!childrenByParent.has(k)) childrenByParent.set(k, []);
+    childrenByParent.get(k).push(acc);
+  }
+  for (const arr of childrenByParent.values()) arr.sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
 
-    for (const acc of matched) {
-      mappings.push({
-        key,
-        account_id: acc.id,
-        weight: 1,
-        sign_override: normalOverride || null
-      });
+  const renderAccountTree = ({ parentAccountId, parentKey, sectionCode, normalOverride }) => {
+    const children = childrenByParent.get(parentAccountId || "ROOT") || [];
+    for (const acc of children) {
+      const childKey = `ACC_${acc.id}`;
+      const descendants = childrenByParent.get(acc.id) || [];
+      if (descendants.length) {
+        createLine({ key: childKey, label: acc.name, type: "section", parentKey, sectionCode, drCrNormal: normalOverride || acc.normal_balance || "auto" });
+        renderAccountTree({ parentAccountId: acc.id, parentKey: childKey, sectionCode, normalOverride: normalOverride || acc.normal_balance || null });
+      } else {
+        addLeafMappingLine({ key: childKey, label: acc.name, parentKey, sectionCode, accountId: acc.id, normalOverride: normalOverride || acc.normal_balance || null });
+      }
     }
-
-    return line;
   };
 
   if (statementType === "income_statement") {
     createLine({ key: "REV_SEC", label: "Revenue", type: "section", sectionCode: "REVENUE" });
-    createAccountLine({
-      key: "REV_TOTAL",
-      label: "Total Revenue",
-      parentKey: "REV_SEC",
-      sectionCode: "REVENUE",
-      filterFn: (a) => a.account_type === "REVENUE",
-      normalOverride: "credit"
-    });
-
+    createLine({ key: "REV_TOTAL", label: "Total Revenue", type: "account", parentKey: "REV_SEC", sectionCode: "REVENUE", drCrNormal: "credit" });
     createLine({ key: "EXP_SEC", label: "Expenses", type: "section", sectionCode: "EXPENSES" });
-    createAccountLine({
-      key: "EXP_TOTAL",
-      label: "Total Expenses",
-      parentKey: "EXP_SEC",
-      sectionCode: "EXPENSES",
-      filterFn: (a) => a.account_type === "EXPENSE",
-      normalOverride: "debit"
-    });
-
-    createLine({
-      key: "NET_INC",
-      label: "Net Income",
-      type: "formula",
-      expression: "L20 - L40",
-      sectionCode: "NET_INCOME"
-    });
+    createLine({ key: "EXP_TOTAL", label: "Total Expenses", type: "account", parentKey: "EXP_SEC", sectionCode: "EXPENSES", drCrNormal: "debit" });
+    for (const acc of accounts.filter((a) => a.account_type === "REVENUE")) mappings.push({ key: "REV_TOTAL", account_id: acc.id, weight: 1, sign_override: "credit" });
+    for (const acc of accounts.filter((a) => a.account_type === "EXPENSE")) mappings.push({ key: "EXP_TOTAL", account_id: acc.id, weight: 1, sign_override: "debit" });
+    createLine({ key: "NET_INC", label: "Net Income", type: "formula", expression: "L20 - L40", sectionCode: "NET_INCOME" });
   }
 
   if (statementType === "balance_sheet") {
     createLine({ key: "AST_SEC", label: "Assets", type: "section", sectionCode: "ASSETS" });
-    createAccountLine({
-      key: "AST_TOTAL",
-      label: "Total Assets",
-      parentKey: "AST_SEC",
-      sectionCode: "ASSETS",
-      filterFn: (a) => a.account_type === "ASSET",
-      normalOverride: "debit"
-    });
+    createLine({ key: "AST_CUR", label: "Current Assets", type: "section", parentKey: "AST_SEC", sectionCode: "ASSETS" });
+    createLine({ key: "AST_NCUR", label: "Non-Current Assets", type: "section", parentKey: "AST_SEC", sectionCode: "ASSETS" });
 
     createLine({ key: "LIA_SEC", label: "Liabilities", type: "section", sectionCode: "LIABILITIES" });
-    createAccountLine({
-      key: "LIA_TOTAL",
-      label: "Total Liabilities",
-      parentKey: "LIA_SEC",
-      sectionCode: "LIABILITIES",
-      filterFn: (a) => a.account_type === "LIABILITY",
-      normalOverride: "credit"
-    });
+    createLine({ key: "LIA_CUR", label: "Current Liabilities", type: "section", parentKey: "LIA_SEC", sectionCode: "LIABILITIES" });
+    createLine({ key: "LIA_NCUR", label: "Non-Current Liabilities", type: "section", parentKey: "LIA_SEC", sectionCode: "LIABILITIES" });
 
     createLine({ key: "EQ_SEC", label: "Equity", type: "section", sectionCode: "EQUITY" });
-    createAccountLine({
-      key: "EQ_TOTAL",
-      label: "Total Equity",
-      parentKey: "EQ_SEC",
-      sectionCode: "EQUITY",
-      filterFn: (a) => a.account_type === "EQUITY",
-      normalOverride: "credit"
-    });
 
-    createLine({
-      key: "BS_CHECK",
-      label: "Check (Assets - Liabilities - Equity)",
-      type: "formula",
-      expression: "L20 - L40 - L60",
-      sectionCode: "CHECK"
-    });
+    const rootAssetAccounts = accounts.filter((a) => a.account_type === "ASSET" && !a.parent_account_id);
+    const rootLiabilityAccounts = accounts.filter((a) => a.account_type === "LIABILITY" && !a.parent_account_id);
+    const rootEquityAccounts = accounts.filter((a) => a.account_type === "EQUITY" && !a.parent_account_id);
+
+    for (const acc of rootAssetAccounts) {
+      const groupKey = normalizeCategoryName(acc.category_name, "Current Assets") === "Non-Current Assets" ? "AST_NCUR" : "AST_CUR";
+      const descendants = childrenByParent.get(acc.id) || [];
+      if (descendants.length) {
+        const key = `ACC_${acc.id}`;
+        createLine({ key, label: acc.name, type: "section", parentKey: groupKey, sectionCode: "ASSETS", drCrNormal: "debit" });
+        renderAccountTree({ parentAccountId: acc.id, parentKey: key, sectionCode: "ASSETS", normalOverride: "debit" });
+      } else {
+        addLeafMappingLine({ key: `ACC_${acc.id}`, label: acc.name, parentKey: groupKey, sectionCode: "ASSETS", accountId: acc.id, normalOverride: "debit" });
+      }
+    }
+
+    for (const acc of rootLiabilityAccounts) {
+      const groupKey = normalizeCategoryName(acc.category_name, "Current Liabilities") === "Non-Current Liabilities" ? "LIA_NCUR" : "LIA_CUR";
+      const descendants = childrenByParent.get(acc.id) || [];
+      if (descendants.length) {
+        const key = `ACC_${acc.id}`;
+        createLine({ key, label: acc.name, type: "section", parentKey: groupKey, sectionCode: "LIABILITIES", drCrNormal: "credit" });
+        renderAccountTree({ parentAccountId: acc.id, parentKey: key, sectionCode: "LIABILITIES", normalOverride: "credit" });
+      } else {
+        addLeafMappingLine({ key: `ACC_${acc.id}`, label: acc.name, parentKey: groupKey, sectionCode: "LIABILITIES", accountId: acc.id, normalOverride: "credit" });
+      }
+    }
+
+    for (const acc of rootEquityAccounts) {
+      const descendants = childrenByParent.get(acc.id) || [];
+      if (descendants.length) {
+        const key = `ACC_${acc.id}`;
+        createLine({ key, label: acc.name, type: "section", parentKey: "EQ_SEC", sectionCode: "EQUITY", drCrNormal: "credit" });
+        renderAccountTree({ parentAccountId: acc.id, parentKey: key, sectionCode: "EQUITY", normalOverride: "credit" });
+      } else {
+        addLeafMappingLine({ key: `ACC_${acc.id}`, label: acc.name, parentKey: "EQ_SEC", sectionCode: "EQUITY", accountId: acc.id, normalOverride: "credit" });
+      }
+    }
+
+    createLine({ key: "AST_TOTAL", label: "Total Assets", type: "total", parentKey: "AST_SEC", sectionCode: "ASSETS", drCrNormal: "debit" });
+    createLine({ key: "LIA_TOTAL", label: "Total Liabilities", type: "total", parentKey: "LIA_SEC", sectionCode: "LIABILITIES", drCrNormal: "credit" });
+    createLine({ key: "EQ_TOTAL", label: "Total Equity", type: "total", parentKey: "EQ_SEC", sectionCode: "EQUITY", drCrNormal: "credit" });
+    createLine({ key: "BS_CHECK", label: "Check (Assets - Liabilities - Equity)", type: "formula", expression: `L${lineNo - 30} - L${lineNo - 20} - L${lineNo - 10}`, sectionCode: "CHECK" });
   }
 
   if (statementType === "cash_flow") {
@@ -369,7 +367,7 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
   const inserted = await repo.bulkInsertLines({
     orgId,
     templateId: tpl.id,
-    lines: lines.map(l => ({
+    lines: lines.map((l) => ({
       line_no: l.line_no,
       label: l.label,
       line_type: l.line_type,
@@ -391,12 +389,9 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     }
   }
 
-  const finalMappings = mappings.map(m => ({
-  line_id: keyToId.get(m.key),
-  account_id: m.account_id,
-  weight: m.weight,
-  sign_override: m.sign_override
-}));
+  const finalMappings = mappings
+    .map((m) => ({ line_id: keyToId.get(m.key), account_id: m.account_id, weight: m.weight, sign_override: m.sign_override }))
+    .filter((m) => m.line_id && m.account_id);
 
   if (finalMappings.length) await repo.bulkInsertLineAccounts({ mappings: finalMappings });
 
