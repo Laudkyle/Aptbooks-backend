@@ -177,57 +177,56 @@ async function bulkInsertLines({ orgId, templateId, lines }) {
 
 async function bulkInsertLineAccounts({ mappings }) {
   if (!mappings.length) {
-    console.log('No mappings to insert');
+    console.log("No mappings to insert");
     return;
   }
-  
+
   console.log(`Inserting ${mappings.length} account mappings`);
-  
+
   const values = [];
   const params = [];
   let i = 1;
-  
+
   for (const m of mappings) {
-    // Validate that line_id is a valid UUID
-    if (!m.organization_id) {
-      console.error('Invalid mapping - missing organzation_id:', m);
-      continue;
-    }
     if (!m.line_id) {
-      console.error('Invalid mapping - missing line_id:', m);
+      console.error("Invalid mapping - missing line_id:", m);
       continue;
     }
-    
+
+    if (!m.account_id) {
+      console.error("Invalid mapping - missing account_id:", m);
+      continue;
+    }
+
     params.push(
-      m.organization_id,
-      m.line_id,           // $i: line_id
-      m.account_id,        // $i+1: account_id
-      m.weight ?? 1,       // $i+2: weight
-      m.sign_override || null  // $i+3: sign_override
+      m.line_id,                 // $i: line_id
+      m.account_id,              // $i+1: account_id
+      m.weight ?? 1,             // $i+2: weight
+      m.sign_override || null    // $i+3: sign_override
     );
-    values.push(`($${i++},$${i++},$${i++},$${i++},$${i++})`);
+    values.push(`($${i++},$${i++},$${i++},$${i++})`);
   }
-  
+
   if (values.length === 0) {
-    console.log('No valid mappings to insert');
+    console.log("No valid mappings to insert");
     return;
   }
-  
+
   const query = `
-    INSERT INTO statement_line_accounts( organization_id,line_id, account_id, weight, sign_override)
+    INSERT INTO statement_line_accounts(line_id, account_id, weight, sign_override)
     VALUES ${values.join(",")}
     ON CONFLICT (line_id, account_id) DO UPDATE
-      SET weight = EXCLUDED.weight, 
+      SET weight = EXCLUDED.weight,
           sign_override = EXCLUDED.sign_override
     RETURNING line_id, account_id
   `;
-  
+
   try {
     const { rows } = await pool.query(query, params);
     console.log(`Successfully inserted ${rows.length} account mappings`);
     return rows;
   } catch (error) {
-    console.error('Error in bulkInsertLineAccounts:', error);
+    console.error("Error in bulkInsertLineAccounts:", error);
     throw error;
   }
 }

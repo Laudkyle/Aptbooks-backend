@@ -392,12 +392,11 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
   }
 
   const finalMappings = mappings.map(m => ({
-    organization_id: orgId,
-    line_id: keyToId.get(m.key),
-    account_id: m.account_id,
-    weight: m.weight,
-    sign_override: m.sign_override
-  }));
+  line_id: keyToId.get(m.key),
+  account_id: m.account_id,
+  weight: m.weight,
+  sign_override: m.sign_override
+}));
 
   if (finalMappings.length) await repo.bulkInsertLineAccounts({ mappings: finalMappings });
 
