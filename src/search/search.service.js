@@ -163,15 +163,19 @@ async function globalSearch({ orgId, q, limitPerType = 10 }) {
     })
   );
 
-  results.assets = await section(
-    `SELECT id, asset_no, name, status, acquisition_date
-       FROM fixed_assets
-      WHERE organization_id=$1
-        AND (asset_no ILIKE $2 OR name ILIKE $2 OR COALESCE(serial_no,'') ILIKE $2)
-      ORDER BY acquisition_date DESC NULLS LAST, created_at DESC
-      LIMIT ${lim}`,
-    (r) => item('asset', r.id, `${r.asset_no} - ${r.name}`, { status: r.status, acquisitionDate: r.acquisition_date })
-  );
+results.assets = await section(
+  `SELECT id, code, name, status, acquisition_date
+     FROM fixed_assets
+    WHERE organization_id=$1
+      AND (code ILIKE $2 OR name ILIKE $2)
+    ORDER BY acquisition_date DESC NULLS LAST, created_at DESC
+    LIMIT ${lim}`,
+  (r) => item('asset', r.id, `${r.code} - ${r.name}`, {
+    code: r.code,
+    status: r.status,
+    acquisitionDate: r.acquisition_date
+  })
+);
 
   results.inventoryItems = await section(
     `SELECT id, sku, name, is_active
