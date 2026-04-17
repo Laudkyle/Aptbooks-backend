@@ -45,7 +45,7 @@ async function resolveEffectiveRateOrThrow(client, orgId, rateSetId, periodEndDa
 async function listAuthorities({ orgId }) {
   const { rows } = await pool.query(
     `
-    SELECT id, code, name, country_code, status, created_at, updated_at
+    SELECT id, code, name, country_code, country_code AS country, status, created_at, updated_at
     FROM ias12_tax_authorities
     WHERE organization_id=$1
     ORDER BY code ASC
@@ -63,7 +63,7 @@ async function createAuthority({ orgId, actorUserId, payload }) {
         organization_id, code, name, country_code, status, created_by
       )
       VALUES ($1,$2,$3,$4,$5,$6)
-      RETURNING id, code, name, country_code, status, created_at, updated_at
+      RETURNING id, code, name, country_code, country_code AS country, status, created_at, updated_at
       `,
       [
         orgId,
@@ -101,7 +101,7 @@ async function updateAuthority({ orgId, actorUserId, authorityId, payload }) {
       updated_at = NOW(),
       updated_by = $6
     WHERE organization_id=$1 AND id=$2
-    RETURNING id, code, name, country_code, status, created_at, updated_at
+    RETURNING id, code, name, country_code, country_code AS country, status, created_at, updated_at
     `,
     [
       orgId,
@@ -1182,6 +1182,7 @@ async function listDeferredTaxRuns({ orgId, periodId }) {
     `
     SELECT id AS run_id, period_id, rate_set_id, effective_rate,
            COALESCE(run_status, status) AS run_status,
+           COALESCE(run_status, status) AS status,
            run_type, created_at, created_by, finalized_at, posted_at
     FROM ias12_deferred_tax_runs
     WHERE ${where}
