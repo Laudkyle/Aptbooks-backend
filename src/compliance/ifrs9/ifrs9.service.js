@@ -52,6 +52,13 @@ function normalizeSettingsPayload(payload = {}) {
   normalized.stage3_threshold_days = numberOrNull(payload.stage3_threshold_days ?? payload.stage3_days_past_due ?? payload.stage3DaysPastDue);
   normalized.default_lgd = numberOrNull(payload.default_lgd ?? payload.defaultLgd);
   normalized.annual_discount_rate = numberOrNull(payload.annual_discount_rate ?? payload.annualDiscountRate);
+  if (
+    normalized.stage2_threshold_days !== null &&
+    normalized.stage3_threshold_days !== null &&
+    normalized.stage3_threshold_days < normalized.stage2_threshold_days
+  ) {
+    throw new AppError(400, "stage3_threshold_days must be greater than or equal to stage2_threshold_days");
+  }
   return normalized;
 }
 
@@ -75,13 +82,13 @@ async function safeWriteAudit(payload) {
 
 async function getPeriodOrThrow(client, orgId, periodId) {
   const { rows } = await client.query(
-    `SELECT id, code, name, status, start_date, end_date
+    `SELECT id, code, status, start_date, end_date
      FROM accounting_periods
      WHERE organization_id=$1 AND id=$2`,
     [orgId, periodId]
   );
   if (!rows.length) throw new AppError(400, "Invalid period_id");
-  return rows[0];
+  return { ...rows[0], period_label: getPeriodLabel(rows[0]) };
 }
 
 async function getSettings(client, orgId) {
@@ -118,6 +125,65 @@ function parseAsOfDate(period, asOfDate) {
     return asOfDate;
   }
   return period.end_date;
+}
+
+
+function getPeriodLabel(period) {
+  if (!period) return null;
+  return period.code || `${period.start_date} to ${period.end_date}`;
+}
+
+function buildModelSnapshot(model, buckets = [], params = []) {
+  return {
+    id: model.id,
+    code: model.code,
+    name: model.name,
+    model_type: model.model_type,
+    status: model.status,
+    bucket_count: buckets.length,
+    parameter_count: params.length,
+    buckets: buckets.map((b) => ({
+      id: b.id,
+      label: b.label,
+      days_past_due_from: Number(b.days_past_due_from),
+      days_past_due_to: b.days_past_due_to === null || b.days_past_due_to === undefined ? null : Number(b.days_past_due_to),
+      loss_rate: b.loss_rate === null || b.loss_rate === undefined ? null : Number(b.loss_rate)
+    })),
+    parameters: params.map((x) => ({
+      id: x.id,
+      stage: Number(x.stage),
+      label: x.label,
+      days_past_due_from: Number(x.days_past_due_from),
+      days_past_due_to: x.days_past_due_to === null || x.days_past_due_to === undefined ? null : Number(x.days_past_due_to),
+      pd_12m: Number(x.pd_12m),
+      pd_lifetime: Number(x.pd_lifetime),
+      lgd: x.lgd === null || x.lgd === undefined ? null : Number(x.lgd)
+    }))
+  };
+}
+
+function buildCoverageSummary(exposureRows = [], computedLines = []) {
+  const invoiceExposureCount = exposureRows.filter((r) => r.source_type === "INVOICE").length;
+  const contractAssetExposureCount = exposureRows.filter((r) => r.source_type === "CONTRACT_ASSET").length;
+  const totalExposureCount = exposureRows.length;
+  const stagedExposureCount = computedLines.reduce((sum, line) => sum + Number(line.invoice_count || 0) + Number(line.contract_asset_count || 0), 0);
+  const unmatchedExposureCount = Math.max(0, totalExposureCount - stagedExposureCount);
+  return {
+    total_exposure_records: totalExposureCount,
+    invoice_exposure_records: invoiceExposureCount,
+    contract_asset_exposure_records: contractAssetExposureCount,
+    staged_exposure_records: stagedExposureCount,
+    unmatched_exposure_records: unmatchedExposureCount,
+    unmatched_ratio: totalExposureCount ? Number((unmatchedExposureCount / totalExposureCount).toFixed(6)) : 0,
+    line_count: computedLines.length
+  };
+}
+
+function hashRunContent(runRow, lines) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ run: runRow, lines }))
+    .digest("hex");
 }
 
 function daysBetween(dateA, dateB) {
@@ -223,12 +289,13 @@ function buildRunSummary(run) {
     period_id: run.period_id,
     model_id: run.model_id,
     period_code: run.period_code,
-    period_name: run.period_name,
+    period_label: run.period_label || getPeriodLabel(run),
     model_code: run.model_code,
     model_name: run.model_name,
     as_of_date: run.as_of_date,
     approach: run.approach,
     status: run.status,
+    validation_status: run.validation_status || "passed",
     total_exposure: Number(run.total_exposure || 0),
     total_ecl: Number(run.total_ecl || 0),
     prior_posted_ecl: Number(run.prior_posted_ecl || 0),
@@ -239,7 +306,11 @@ function buildRunSummary(run) {
     posted_at: run.posted_at,
     journal_entry_id: run.journal_entry_id,
     reversal_journal_entry_id: run.reversal_journal_entry_id,
-    reversed_at: run.reversed_at
+    reversed_at: run.reversed_at,
+    run_hash: run.run_hash || null,
+    settings_snapshot: run.settings_snapshot || null,
+    model_snapshot: run.model_snapshot || null,
+    coverage_summary: run.coverage_summary || null
   };
 }
 
@@ -597,6 +668,25 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
     }
 
     const asOfDate = parseAsOfDate(period, payload.as_of_date);
+    if (new Date(asOfDate) < new Date(period.start_date) || new Date(asOfDate) > new Date(period.end_date)) {
+      throw new AppError(400, "as_of_date must fall within the selected accounting period");
+    }
+
+    const { rows: existingRuns } = await client.query(
+      `SELECT id, status
+       FROM ifrs9_ecl_runs
+       WHERE organization_id=$1
+         AND period_id=$2
+         AND model_id=$3
+         AND as_of_date=$4::date
+         AND status IN ('computed','finalized','posted')
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [orgId, payload.period_id, model.id, asOfDate]
+    );
+    if (existingRuns.length) {
+      throw new AppError(409, `An IFRS 9 run already exists for this period, model and as-of date (${existingRuns[0].status})`);
+    }
 
     const { rows: invRows } = await client.query(
       `SELECT
@@ -650,7 +740,14 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
     const exposureRows = [...invRows, ...caRows];
     const rounding = settings.rounding_decimals ?? 2;
     const lines = new Map();
-    const stageCache = new Map();
+    const customerMaxDaysPastDue = new Map();
+
+    for (const ex of exposureRows) {
+      if (!ex.customer_id) continue;
+      const exposureDaysPastDue = Math.max(0, daysBetween(ex.due_date, asOfDate));
+      const current = customerMaxDaysPastDue.get(ex.customer_id) || 0;
+      if (exposureDaysPastDue > current) customerMaxDaysPastDue.set(ex.customer_id, exposureDaysPastDue);
+    }
 
     for (const ex of exposureRows) {
       if (!ex.customer_id) continue;
@@ -682,11 +779,8 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
         if (ex.source_type === "CONTRACT_ASSET") agg.contract_asset_count += 1;
         agg.exposure = agg.exposure.plus(new Decimal(ex.amount || 0));
       } else {
-        let stage = stageCache.get(ex.customer_id);
-        if (!stage) {
-          stage = await getCounterpartyStage(client, orgId, ex.customer_id, daysPastDue, settings);
-          stageCache.set(ex.customer_id, stage);
-        }
+        const customerDaysPastDue = customerMaxDaysPastDue.get(ex.customer_id) || daysPastDue;
+        const stage = await getCounterpartyStage(client, orgId, ex.customer_id, customerDaysPastDue, settings);
         const p = pickParameter(params, stage, daysPastDue);
         if (!p) continue;
         const key = `${ex.customer_id}:${p.id}:${stage}`;
@@ -747,21 +841,41 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
         ecl_amount: ecl,
         pd_used: pdUsed,
         lgd_used: lgdUsed,
-        ead_amount: ead
+        ead_amount: ead,
+        stage_reason: approach === "GENERAL"
+          ? `Stage ${Number(l.stage)} based on worst customer delinquency and configured thresholds/override`
+          : "Simplified approach loss-rate bucket",
+        source_mix: {
+          invoices: Number(l.invoice_count || 0),
+          contract_assets: Number(l.contract_asset_count || 0)
+        }
       };
     });
 
     totalExposure = roundMoney(totalExposure, rounding);
     totalEcl = roundMoney(totalEcl, rounding);
     const deltaAllowance = roundMoney(totalEcl.minus(priorEcl), rounding);
+    const coverageSummary = buildCoverageSummary(exposureRows, computedLines);
+    const settingsSnapshot = {
+      rounding_decimals: Number(settings.rounding_decimals ?? 2),
+      stage2_threshold_days: Number(settings.stage2_threshold_days ?? 30),
+      stage3_threshold_days: Number(settings.stage3_threshold_days ?? 90),
+      default_lgd: Number(settings.default_lgd ?? 0.45),
+      annual_discount_rate: Number(settings.annual_discount_rate ?? 0.10),
+      impairment_expense_account_id: settings.impairment_expense_account_id || null,
+      loss_allowance_account_id: settings.loss_allowance_account_id || null
+    };
+    const modelSnapshot = buildModelSnapshot(model, buckets, params);
+    const validationStatus = coverageSummary.unmatched_exposure_records > 0 ? "warning" : "passed";
 
     await client.query(
       `INSERT INTO ifrs9_ecl_runs(
         id, organization_id, period_id, model_id, as_of_date, status,
         approach,
         total_exposure, total_ecl, prior_posted_ecl, delta_allowance,
-        memo, created_by, created_at, updated_at
-      ) VALUES ($1,$2,$3,$4,$5,'computed',$6,$7,$8,$9,$10,$11,$12,NOW(),NOW())`,
+        memo, created_by, created_at, updated_at,
+        validation_status, settings_snapshot, model_snapshot, coverage_summary
+      ) VALUES ($1,$2,$3,$4,$5,'computed',$6,$7,$8,$9,$10,$11,$12,NOW(),NOW(),$13,$14::jsonb,$15::jsonb,$16::jsonb)`,
       [
         runId,
         orgId,
@@ -774,7 +888,11 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
         priorEcl.toNumber(),
         deltaAllowance.toNumber(),
         payload.memo || null,
-        actorUserId
+        actorUserId,
+        validationStatus,
+        JSON.stringify(settingsSnapshot),
+        JSON.stringify(modelSnapshot),
+        JSON.stringify(coverageSummary)
       ]
     );
 
@@ -784,8 +902,8 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
           run_id, customer_id, bucket_id, bucket_label,
           days_past_due_from, days_past_due_to, loss_rate,
           invoice_count, contract_asset_count, exposure_amount, ecl_amount,
-          stage, pd_used, lgd_used, ead_amount
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+          stage, pd_used, lgd_used, ead_amount, stage_reason, source_mix
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`,
         [
           runId,
           l.customer_id,
@@ -801,10 +919,44 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
           l.stage,
           l.pd_used,
           l.lgd_used,
-          l.ead_amount
+          l.ead_amount,
+          l.stage_reason,
+          JSON.stringify(l.source_mix || null)
         ]
       );
     }
+
+    const runHash = hashRunContent(
+      {
+        id: runId,
+        organization_id: orgId,
+        period_id: payload.period_id,
+        model_id: model.id,
+        as_of_date: asOfDate,
+        approach,
+        total_exposure: totalExposure.toNumber(),
+        total_ecl: totalEcl.toNumber(),
+        prior_posted_ecl: priorEcl.toNumber(),
+        delta_allowance: deltaAllowance.toNumber(),
+        validation_status: validationStatus,
+        coverage_summary: coverageSummary
+      },
+      computedLines.map((l) => ({
+        customer_id: l.customer_id,
+        bucket_id: l.bucket_id,
+        param_id: l.param_id,
+        stage: l.stage,
+        exposure_amount: l.exposure_amount.toNumber(),
+        ecl_amount: l.ecl_amount.toNumber(),
+        stage_reason: l.stage_reason,
+        source_mix: l.source_mix
+      }))
+    );
+
+    await client.query(
+      `UPDATE ifrs9_ecl_runs SET run_hash=$3 WHERE organization_id=$1 AND id=$2`,
+      [orgId, runId, runHash]
+    );
 
     await client.query("COMMIT");
     const out = await getRunDetails({ orgId, runId });
@@ -829,7 +981,7 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
 
 async function getRunDetails({ orgId, runId }) {
   const { rows } = await pool.query(
-    `SELECT r.*, p.code AS period_code, p.name AS period_name, m.code AS model_code, m.name AS model_name
+    `SELECT r.*, p.code AS period_code, p.start_date, p.end_date, m.code AS model_code, m.name AS model_name
      FROM ifrs9_ecl_runs r
      LEFT JOIN accounting_periods p ON p.id = r.period_id
      LEFT JOIN ifrs9_ecl_models m ON m.id = r.model_id
@@ -854,7 +1006,9 @@ async function getRunDetails({ orgId, runId }) {
       total_lines: lines.length,
       total_exposure: run.total_exposure,
       total_ecl: run.total_ecl,
-      delta_allowance: run.delta_allowance
+      delta_allowance: run.delta_allowance,
+      validation_status: run.validation_status,
+      coverage_summary: run.coverage_summary || null
     },
     lines: lines.map((l) => ({
       ...l,
@@ -863,7 +1017,9 @@ async function getRunDetails({ orgId, runId }) {
       loss_rate: l.loss_rate === null || l.loss_rate === undefined ? null : Number(l.loss_rate),
       pd_used: l.pd_used === null || l.pd_used === undefined ? null : Number(l.pd_used),
       lgd_used: l.lgd_used === null || l.lgd_used === undefined ? null : Number(l.lgd_used),
-      ead_amount: l.ead_amount === null || l.ead_amount === undefined ? null : Number(l.ead_amount)
+      ead_amount: l.ead_amount === null || l.ead_amount === undefined ? null : Number(l.ead_amount),
+      source_mix: l.source_mix || null,
+      stage_reason: l.stage_reason || null
     }))
   };
 }
@@ -876,7 +1032,7 @@ async function listRuns({ orgId, periodId }) {
     where += ` AND r.period_id=$${params.length}`;
   }
   const { rows } = await pool.query(
-    `SELECT r.*, p.code AS period_code, p.name AS period_name, m.code AS model_code, m.name AS model_name
+    `SELECT r.*, p.code AS period_code, p.start_date, p.end_date, m.code AS model_code, m.name AS model_name
      FROM ifrs9_ecl_runs r
      LEFT JOIN accounting_periods p ON p.id = r.period_id
      LEFT JOIN ifrs9_ecl_models m ON m.id = r.model_id
@@ -903,6 +1059,18 @@ async function finalizeRun({ orgId, actorUserId, runId, audit = {} }) {
        WHERE organization_id=$1 AND id=$2 RETURNING *`,
       [orgId, runId, actorUserId]
     );
+    if (!upd[0].run_hash) {
+      const { rows: lineRows } = await client.query(
+        `SELECT customer_id, bucket_id, bucket_label, stage, exposure_amount, ecl_amount, stage_reason, source_mix
+         FROM ifrs9_ecl_run_lines WHERE run_id=$1 ORDER BY id ASC`,
+        [runId]
+      );
+      const frozenHash = hashRunContent(upd[0], lineRows);
+      await client.query(
+        `UPDATE ifrs9_ecl_runs SET run_hash=$3 WHERE organization_id=$1 AND id=$2`,
+        [orgId, runId, frozenHash]
+      );
+    }
     await client.query("COMMIT");
     const out = await getRunDetails({ orgId, runId });
     await safeWriteAudit({
@@ -1141,7 +1309,7 @@ async function getAllowanceMovementReport({ orgId, periodId }) {
       period: {
         id: period.id,
         code: period.code,
-        name: period.name,
+        label: period.period_label || getPeriodLabel(period),
         start_date: period.start_date,
         end_date: period.end_date,
         status: period.status
@@ -1173,7 +1341,7 @@ async function getDisclosuresReport({ orgId, runId }) {
   const client = await pool.connect();
   try {
     const { rows: runRows } = await client.query(
-      `SELECT r.*, p.code AS period_code, p.name AS period_name, m.code AS model_code, m.name AS model_name
+      `SELECT r.*, p.code AS period_code, p.start_date, p.end_date, m.code AS model_code, m.name AS model_name
        FROM ifrs9_ecl_runs r
        LEFT JOIN accounting_periods p ON p.id = r.period_id
        LEFT JOIN ifrs9_ecl_models m ON m.id = r.model_id
@@ -1227,8 +1395,23 @@ async function getDisclosuresReport({ orgId, runId }) {
       [runId]
     );
 
+    const { rows: bySourceMix } = await client.query(
+      `SELECT
+          COALESCE(SUM(COALESCE(invoice_count,0)),0)::INT AS invoice_count,
+          COALESCE(SUM(COALESCE(contract_asset_count,0)),0)::INT AS contract_asset_count,
+          COALESCE(SUM(exposure_amount),0) AS exposure_amount,
+          COALESCE(SUM(ecl_amount),0) AS ecl_amount
+       FROM ifrs9_ecl_run_lines
+       WHERE run_id=$1`,
+      [runId]
+    );
+
     return {
       run,
+      validation: {
+        status: run.validation_status,
+        coverage_summary: run.coverage_summary || null
+      },
       breakdown: {
         by_stage: byStage.map((r) => ({
           stage: Number(r.stage),
@@ -1252,7 +1435,18 @@ async function getDisclosuresReport({ orgId, runId }) {
           ecl_amount: Number(r.ecl_amount),
           invoice_count: Number(r.invoice_count),
           contract_asset_count: Number(r.contract_asset_count)
-        }))
+        })),
+        by_source_mix: bySourceMix.map((r) => ({
+          invoice_count: Number(r.invoice_count),
+          contract_asset_count: Number(r.contract_asset_count),
+          exposure_amount: Number(r.exposure_amount),
+          ecl_amount: Number(r.ecl_amount)
+        }))[0] || {
+          invoice_count: 0,
+          contract_asset_count: 0,
+          exposure_amount: 0,
+          ecl_amount: 0
+        }
       }
     };
   } finally {
