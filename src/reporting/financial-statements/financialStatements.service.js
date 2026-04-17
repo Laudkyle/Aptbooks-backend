@@ -98,6 +98,21 @@ function buildTree(lines) {
   return roots;
 }
 
+
+async function resetTemplateGraph({ orgId, templateId }) {
+  await pool.query(
+    `DELETE FROM statement_line_accounts
+      WHERE line_id IN (
+        SELECT id FROM statement_lines WHERE organization_id=$1 AND template_id=$2
+      )`,
+    [orgId, templateId]
+  );
+  await pool.query(
+    `DELETE FROM statement_lines WHERE organization_id=$1 AND template_id=$2`,
+    [orgId, templateId]
+  );
+}
+
 function safeEvalFormula(expression, context) {
   // Minimal DSL: allow identifiers that match line_no (e.g. L10), and + - * / ( )
   // We map identifiers to numeric values from context.
@@ -171,9 +186,21 @@ function rollupTree(node, childResults, ctx) {
 
 async function ensureDefaultTemplate({ orgId, statementType }) {
   const existing = await repo.getDefaultTemplate({ orgId, statementType });
-  if (existing) return existing;
 
-  const tpl = await repo.createTemplate({
+  const requiresMappings = ["income_statement", "balance_sheet"].includes(statementType);
+
+  if (existing) {
+    const graph = await repo.getTemplateGraph({ orgId, templateId: existing.id });
+    const hasLines = (graph.lines || []).length > 0;
+    const hasMappings = (graph.mappings || []).length > 0;
+
+    if (hasLines && (!requiresMappings || hasMappings)) return existing;
+
+    // Template exists but is blank or partially built; rebuild it in place.
+    await resetTemplateGraph({ orgId, templateId: existing.id });
+  }
+
+  const tpl = existing || await repo.createTemplate({
     orgId,
     statementType,
     name: `Default ${statementType.replace(/_/g, " ")}`,
@@ -197,7 +224,6 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
   );
 
   if (!accounts.length) {
-    console.log("No active accounts found.");
     return tpl;
   }
 
@@ -258,14 +284,12 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
         sign_override: normalOverride || null
       });
     }
+
+    return line;
   };
 
-  /* =============================
-     INCOME STATEMENT
-  ============================== */
   if (statementType === "income_statement") {
     createLine({ key: "REV_SEC", label: "Revenue", type: "section", sectionCode: "REVENUE" });
-
     createAccountLine({
       key: "REV_TOTAL",
       label: "Total Revenue",
@@ -276,7 +300,6 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     });
 
     createLine({ key: "EXP_SEC", label: "Expenses", type: "section", sectionCode: "EXPENSES" });
-
     createAccountLine({
       key: "EXP_TOTAL",
       label: "Total Expenses",
@@ -295,12 +318,8 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     });
   }
 
-  /* =============================
-     BALANCE SHEET
-  ============================== */
   if (statementType === "balance_sheet") {
     createLine({ key: "AST_SEC", label: "Assets", type: "section", sectionCode: "ASSETS" });
-
     createAccountLine({
       key: "AST_TOTAL",
       label: "Total Assets",
@@ -311,7 +330,6 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     });
 
     createLine({ key: "LIA_SEC", label: "Liabilities", type: "section", sectionCode: "LIABILITIES" });
-
     createAccountLine({
       key: "LIA_TOTAL",
       label: "Total Liabilities",
@@ -322,7 +340,6 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     });
 
     createLine({ key: "EQ_SEC", label: "Equity", type: "section", sectionCode: "EQUITY" });
-
     createAccountLine({
       key: "EQ_TOTAL",
       label: "Total Equity",
@@ -341,9 +358,6 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
     });
   }
 
-  /* =============================
-     CASH FLOW TEMPLATE (Optional)
-  ============================== */
   if (statementType === "cash_flow") {
     createLine({ key: "CF_OP", label: "Operating Activities", type: "section", sectionCode: "OPERATING" });
     createLine({ key: "CF_INV", label: "Investing Activities", type: "section", sectionCode: "INVESTING" });
@@ -351,10 +365,6 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
   }
 
   if (!lines.length) return tpl;
-
-  /* =============================
-     INSERT LINES
-  ============================== */
 
   const inserted = await repo.bulkInsertLines({
     orgId,
@@ -365,7 +375,7 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
       line_type: l.line_type,
       expression: l.expression,
       sort_order: l.sort_order,
-      parent_line_id: null, // set later
+      parent_line_id: null,
       is_visible: true,
       dr_cr_normal: l.dr_cr_normal,
       section_code: l.section_code
@@ -373,38 +383,23 @@ async function ensureDefaultTemplate({ orgId, statementType }) {
   });
 
   const keyToId = new Map();
-  for (let i = 0; i < lines.length; i++) {
-    keyToId.set(lines[i].key, inserted[i].id);
-  }
-
-  /* =============================
-     FIX PARENTS
-  ============================== */
+  for (let i = 0; i < lines.length; i++) keyToId.set(lines[i].key, inserted[i].id);
 
   for (const l of lines) {
     if (l.parentKey) {
-      await pool.query(
-        `UPDATE statement_lines SET parent_line_id=$1 WHERE id=$2`,
-        [keyToId.get(l.parentKey), keyToId.get(l.key)]
-      );
+      await pool.query(`UPDATE statement_lines SET parent_line_id=$1 WHERE id=$2`, [keyToId.get(l.parentKey), keyToId.get(l.key)]);
     }
   }
 
-  /* =============================
-     INSERT ACCOUNT MAPPINGS
-  ============================== */
+  const finalMappings = mappings.map(m => ({
+    organization_id: orgId,
+    line_id: keyToId.get(m.key),
+    account_id: m.account_id,
+    weight: m.weight,
+    sign_override: m.sign_override
+  }));
 
-const finalMappings = mappings.map(m => ({
-  organization_id: orgId,        
-  line_id: keyToId.get(m.key),
-  account_id: m.account_id,
-  weight: m.weight,
-  sign_override: m.sign_override
-}));
-
-  if (finalMappings.length) {
-    await repo.bulkInsertLineAccounts({ mappings: finalMappings });
-  }
+  if (finalMappings.length) await repo.bulkInsertLineAccounts({ mappings: finalMappings });
 
   return tpl;
 }
@@ -432,7 +427,6 @@ async function buildTemplateStatement({ orgId, statementType, periodId, compareP
     const r = computeLineAmounts({ line, lineAccounts, tbMap, ctx });
     childResults.set(line.id, { ...r, id: line.id, amount: r.amount });
   }
-  console.log(childResults)
 
   const roll = (node) => {
     for (const c of node.children || []) roll(c);
