@@ -479,6 +479,9 @@ async function initializeOrganizationDefaults({
     ["accounting.exports.run", "Run accounting exports"],
     ["accounting.imports.run", "Run accounting imports"],
     ["accounting.reconcile.run", "Run accounting reconciliations"],
+      ["accounting.reconcile.export", "Export accounting reconciliation results"],
+      ["accounting.reconcile.resolve", "Resolve accounting reconciliation exceptions"],
+      ["accounting.reconcile.policy", "Manage accounting reconciliation policies"],
     ["accounting.fx.read", "Read FX rates"],
     ["accounting.fx.manage", "Manage FX rates"],
 
