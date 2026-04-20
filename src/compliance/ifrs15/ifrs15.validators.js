@@ -18,6 +18,29 @@ const upsertSettings = z.object({
   rounding_decimals: z.number().int().min(0).max(6).optional().default(2),
 });
 
+
+const listContractsQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  status: z.enum(["draft", "active", "completed", "cancelled"]).optional(),
+  business_partner_id: uuid.optional(),
+  currency_code: z.string().min(1).max(10).optional(),
+  billing_policy: z.enum(["UPFRONT", "AS_RECOGNIZED", "NONE"]).optional(),
+  approval_status: z.enum(["pending", "approved", "missing"]).optional(),
+  has_financing: z.coerce.boolean().optional(),
+  has_variable_consideration: z.coerce.boolean().optional(),
+  has_unposted_schedule: z.coerce.boolean().optional(),
+  q: z.string().max(100).optional(),
+  contract_date_from: z.coerce.date().optional(),
+  contract_date_to: z.coerce.date().optional(),
+});
+
+const lifecycleAction = z.object({
+  action: z.enum(["complete", "cancel"]),
+  entry_date: z.coerce.date().optional(),
+  memo: z.string().max(500).optional(),
+});
+
 const createContract = z.object({
   code: z.string().min(1).max(50),
   // Core domain uses business_partners (type='customer').
@@ -190,6 +213,8 @@ const judgementsReport = z.object({
 
 module.exports = {
   contractIdParam,
+  listContractsQuery,
+  lifecycleAction,
   upsertSettings,
   createContract,
   addObligation,

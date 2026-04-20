@@ -84,7 +84,8 @@ router.get(
   requirePermission("compliance.ifrs15.read"),
   async (req, res, next) => {
     try {
-      const data = await svc.listContracts({ orgId: req.user.organization_id, query: req.query });
+      const query = validate(v.listContractsQuery, req.query);
+      const data = await svc.listContracts({ orgId: req.user.organization_id, query });
       res.json(data);
     } catch (e) {
       next(e);
@@ -117,6 +118,26 @@ router.get(
     try {
       const params = validate(v.contractIdParam, req.params);
       const data = await svc.getContract({ orgId: req.user.organization_id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+router.post(
+  "/contracts/:contractId/lifecycle",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const payload = validate(v.lifecycleAction, req.body);
+      const data = await svc.updateContractLifecycle({
+        orgId: req.user.organization_id,
+        actorUserId: req.user.id,
+        contractId: params.contractId,
+        payload,
+      });
       res.json(data);
     } catch (e) {
       next(e);
@@ -263,6 +284,18 @@ router.post(
   }
 );
 
+router.get(
+  "/contracts/:contractId/modifications",
+  requirePermission("compliance.ifrs15.read"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.listModifications({ orgId: req.user.organization_id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
 router.post(
   "/contracts/:contractId/variable-consideration",
   requirePermission("compliance.ifrs15.manage"),
@@ -344,6 +377,18 @@ router.post(
     }
   }
 );
+
+router.get(
+  "/contracts/:contractId/variable-consideration",
+  requirePermission("compliance.ifrs15.read"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.listVariableConsideration({ orgId: req.user.organization_id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
 router.put(
   "/contracts/:contractId/financing-terms",
   requirePermission("compliance.ifrs15.manage"),
@@ -361,6 +406,18 @@ router.put(
     } catch (e) {
       next(e);
     }
+  }
+);
+
+router.get(
+  "/contracts/:contractId/financing-terms",
+  requirePermission("compliance.ifrs15.read"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.listFinancingTerms({ orgId: req.user.organization_id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
   }
 );
 
@@ -436,6 +493,42 @@ router.post(
     } catch (e) {
       next(e);
     }
+  }
+);
+
+router.get(
+  "/contracts/:contractId/costs/:costId/schedule",
+  requirePermission("compliance.ifrs15.read"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.costIdParam, req.params);
+      const data = await svc.getCostSchedule({ orgId: req.user.organization_id, contractId: params.contractId, costId: params.costId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.get(
+  "/contracts/:contractId/posting-ledger",
+  requirePermission("compliance.ifrs15.read"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.getPostingLedger({ orgId: req.user.organization_id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.get(
+  "/contracts/:contractId/events",
+  requirePermission("compliance.ifrs15.read"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.getContractEvents({ orgId: req.user.organization_id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
   }
 );
 

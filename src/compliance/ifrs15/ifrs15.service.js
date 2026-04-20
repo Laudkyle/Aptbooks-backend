@@ -98,6 +98,85 @@ async function recordEvent(client, { orgId, contractId, actorUserId, eventType, 
   );
 }
 
+
+async function listModificationsInternal(client, orgId, contractId) {
+  const { rows } = await client.query(
+    `SELECT *
+     FROM ifrs15_contract_modifications
+     WHERE organization_id=$1 AND contract_id=$2
+     ORDER BY modification_date ASC, created_at ASC`,
+    [orgId, contractId]
+  );
+  return rows;
+}
+
+async function listVariableConsiderationInternal(client, orgId, contractId) {
+  const { rows } = await client.query(
+    `SELECT *
+     FROM ifrs15_variable_consideration
+     WHERE organization_id=$1 AND contract_id=$2
+     ORDER BY effective_date DESC, created_at DESC`,
+    [orgId, contractId]
+  );
+  return rows;
+}
+
+async function listFinancingTermsInternal(client, orgId, contractId) {
+  const { rows } = await client.query(
+    `SELECT *
+     FROM ifrs15_financing_terms
+     WHERE organization_id=$1 AND contract_id=$2
+     ORDER BY effective_from DESC, created_at DESC`,
+    [orgId, contractId]
+  );
+  return rows;
+}
+
+async function listContractEventsInternal(client, orgId, contractId, limit = 250) {
+  const { rows } = await client.query(
+    `SELECT id, event_type, actor_user_id, occurred_at, meta
+     FROM ifrs15_contract_events
+     WHERE organization_id=$1 AND contract_id=$2
+     ORDER BY occurred_at DESC
+     LIMIT 250`,
+    [orgId, contractId]
+  );
+  return rows;
+}
+
+async function listPostingLedgerInternal(client, orgId, contractId) {
+  const { rows } = await client.query(
+    `SELECT id, period_id, event_type, idempotency_key, journal_id, posted_at, actor_user_id, meta
+     FROM ifrs15_posting_ledger
+     WHERE organization_id=$1 AND contract_id=$2
+     ORDER BY posted_at DESC, id DESC`,
+    [orgId, contractId]
+  );
+  return rows;
+}
+
+async function listContractChildrenInternal(client, orgId, contractId) {
+  const { rows } = await client.query(
+    `SELECT id, code, status, contract_date, transaction_price, created_at
+     FROM ifrs15_contracts
+     WHERE organization_id=$1 AND parent_contract_id=$2
+     ORDER BY created_at ASC`,
+    [orgId, contractId]
+  );
+  return rows;
+}
+
+async function getCostScheduleInternal(client, orgId, contractId, costId) {
+  const { rows } = await client.query(
+    `SELECT id, period_id, recognition_date, scheduled_amount, status, posted_journal_id, posted_at
+     FROM ifrs15_cost_amort_schedule_lines
+     WHERE organization_id=$1 AND contract_id=$2 AND cost_id=$3
+     ORDER BY recognition_date ASC`,
+    [orgId, contractId, costId]
+  );
+  return rows;
+}
+
 // -------------------------
 // IFRS 15 Contract Modification Decision Engine (IFRS 15.20-21)
 // -------------------------
@@ -272,24 +351,83 @@ async function upsertSettings({ orgId, actorUserId, payload }) {
 async function listContracts({ orgId, query }) {
   const limit = Math.min(Number(query.limit || 50), 200);
   const offset = Math.max(Number(query.offset || 0), 0);
-  const status = query.status;
 
   const params = [orgId];
-  let where = "WHERE organization_id=$1";
-  if (status) {
-    params.push(status);
-    where += ` AND status=$${params.length}`;
+  const where = ["c.organization_id=$1"];
+
+  if (query.status) {
+    params.push(query.status);
+    where.push(`c.status=$${params.length}`);
+  }
+  if (query.business_partner_id) {
+    params.push(query.business_partner_id);
+    where.push(`c.business_partner_id=$${params.length}`);
+  }
+  if (query.currency_code) {
+    params.push(query.currency_code);
+    where.push(`c.currency_code=$${params.length}`);
+  }
+  if (query.billing_policy) {
+    params.push(query.billing_policy);
+    where.push(`c.billing_policy=$${params.length}`);
+  }
+  if (query.contract_date_from) {
+    params.push(asDateOnly(query.contract_date_from));
+    where.push(`c.contract_date >= $${params.length}`);
+  }
+  if (query.contract_date_to) {
+    params.push(asDateOnly(query.contract_date_to));
+    where.push(`c.contract_date <= $${params.length}`);
+  }
+  if (query.q) {
+    params.push(`%${query.q}%`);
+    where.push(`(c.code ILIKE $${params.length} OR COALESCE(bp.legal_name, bp.display_name, bp.name, '') ILIKE $${params.length})`);
+  }
+  if (query.approval_status === 'pending') {
+    where.push(`c.workflow_document_id IS NOT NULL`);
+  } else if (query.approval_status === 'missing') {
+    where.push(`c.workflow_document_id IS NULL`);
+  } else if (query.approval_status === 'approved') {
+    where.push(`c.workflow_document_id IS NOT NULL AND c.status <> 'draft'`);
+  }
+  if (query.has_financing != null) {
+    where.push(`COALESCE(c.financing_enabled, FALSE) IS ${query.has_financing ? 'TRUE' : 'FALSE'}`);
+  }
+  if (query.has_variable_consideration != null) {
+    where.push(`COALESCE(c.variable_consideration_included, FALSE) IS ${query.has_variable_consideration ? 'TRUE' : 'FALSE'}`);
+  }
+  if (query.has_unposted_schedule != null) {
+    where.push(`${query.has_unposted_schedule ? 'EXISTS' : 'NOT EXISTS'} (
+      SELECT 1 FROM ifrs15_recognition_schedule_lines l
+      WHERE l.organization_id=c.organization_id AND l.contract_id=c.id AND l.status IN ('scheduled','open')
+    )`);
   }
 
-  const { rows } = await pool.query(
-    `SELECT id, business_partner_id, code, contract_date, currency_code, transaction_price,
-            billing_policy, billing_account_id, status, start_date, end_date, created_at, updated_at
-     FROM ifrs15_contracts
-     ${where}
-     ORDER BY created_at DESC
-     LIMIT ${limit} OFFSET ${offset}`,
-    params
-  );
+  const sql = `
+    SELECT c.id, c.business_partner_id, c.code, c.contract_date, c.currency_code, c.transaction_price,
+           c.base_transaction_price, c.billing_policy, c.billing_account_id, c.status, c.start_date, c.end_date,
+           c.created_at, c.updated_at, c.workflow_document_id,
+           c.financing_enabled, c.financing_annual_rate,
+           c.variable_consideration_included, c.variable_consideration_included_amount,
+           COALESCE(bp.legal_name, bp.display_name, bp.name) AS business_partner_name,
+           COALESCE(sch.total_scheduled,0)::numeric(18,6) AS scheduled_total,
+           COALESCE(sch.total_recognized,0)::numeric(18,6) AS recognized_total,
+           COALESCE(sch.open_lines,0)::int AS open_schedule_lines
+    FROM ifrs15_contracts c
+    LEFT JOIN business_partners bp ON bp.id = c.business_partner_id
+    LEFT JOIN (
+      SELECT organization_id, contract_id,
+             SUM(scheduled_amount) AS total_scheduled,
+             SUM(recognized_amount) AS total_recognized,
+             COUNT(*) FILTER (WHERE status IN ('scheduled','open')) AS open_lines
+      FROM ifrs15_recognition_schedule_lines
+      GROUP BY organization_id, contract_id
+    ) sch ON sch.organization_id=c.organization_id AND sch.contract_id=c.id
+    WHERE ${where.join(' AND ')}
+    ORDER BY c.created_at DESC
+    LIMIT ${limit} OFFSET ${offset}`;
+
+  const { rows } = await pool.query(sql, params);
   return rows;
 }
 
@@ -349,18 +487,111 @@ async function getContract({ orgId, contractId }) {
   try {
     const contract = await getContractOrThrow(client, orgId, contractId);
     const obligations = await listObligations(client, orgId, contractId);
+    const modifications = await listModificationsInternal(client, orgId, contractId);
+    const variableConsideration = await listVariableConsiderationInternal(client, orgId, contractId);
+    const financingTerms = await listFinancingTermsInternal(client, orgId, contractId);
+    const costs = (await listCosts({ orgId, contractId })).costs;
+    const postingLedger = await listPostingLedgerInternal(client, orgId, contractId);
+    const events = await listContractEventsInternal(client, orgId, contractId);
+    const childContracts = await listContractChildrenInternal(client, orgId, contractId);
 
-    // Simple derived balances (from schedule)
     const { rows: bal } = await client.query(
       `SELECT
          COALESCE(SUM(scheduled_amount),0)::numeric(18,6) AS scheduled_total,
-         COALESCE(SUM(recognized_amount),0)::numeric(18,6) AS recognized_total
+         COALESCE(SUM(recognized_amount),0)::numeric(18,6) AS recognized_total,
+         COALESCE(SUM(scheduled_amount-recognized_amount) FILTER (WHERE status IN ('scheduled','open')),0)::numeric(18,6) AS remaining_to_recognize,
+         COUNT(*) FILTER (WHERE status IN ('scheduled','open'))::int AS open_schedule_lines,
+         COUNT(*) FILTER (WHERE status='posted')::int AS posted_schedule_lines
        FROM ifrs15_recognition_schedule_lines
        WHERE organization_id=$1 AND contract_id=$2`,
       [orgId, contractId]
     );
 
-    return { contract, obligations, balances: bal[0] };
+    const { rows: costBalRows } = await client.query(
+      `SELECT
+         COALESCE(SUM(c.amount),0)::numeric(18,6) AS total_cost_capitalised,
+         COALESCE(SUM(s.scheduled_amount) FILTER (WHERE s.status='posted'),0)::numeric(18,6) AS total_cost_amortised,
+         COALESCE(SUM(s.scheduled_amount) FILTER (WHERE s.status IN ('scheduled','open')),0)::numeric(18,6) AS remaining_cost_to_amortise
+       FROM ifrs15_capitalised_costs c
+       LEFT JOIN ifrs15_cost_amort_schedule_lines s
+         ON s.organization_id=c.organization_id AND s.cost_id=c.id
+       WHERE c.organization_id=$1 AND c.contract_id=$2`,
+      [orgId, contractId]
+    );
+
+    const balances = {
+      ...bal[0],
+      ...costBalRows[0],
+      deferred_revenue_balance: new Decimal(bal[0]?.scheduled_total || 0).minus(bal[0]?.recognized_total || 0).toFixed(6),
+    };
+
+    const summary = {
+      obligations_count: obligations.length,
+      modifications_count: modifications.length,
+      variable_consideration_count: variableConsideration.length,
+      financing_terms_count: financingTerms.length,
+      costs_count: costs.length,
+      posting_events_count: postingLedger.length,
+      child_contracts_count: childContracts.length,
+      latest_event_at: events[0]?.occurred_at || null,
+    };
+
+    return { contract, obligations, balances, summary, modifications, variable_consideration: variableConsideration, financing_terms: financingTerms, costs, posting_ledger: postingLedger, events, child_contracts: childContracts };
+  } finally {
+    client.release();
+  }
+}
+
+
+async function updateContractLifecycle({ orgId, actorUserId, contractId, payload }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    const action = payload.action;
+
+    if (action === 'cancel') {
+      if (contract.status !== 'draft') throw new AppError(409, 'Only draft contracts can be cancelled');
+      await client.query(
+        `UPDATE ifrs15_contracts SET status='cancelled', updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+        [orgId, contractId]
+      );
+      await recordEvent(client, { orgId, contractId, actorUserId, eventType: 'CONTRACT_CANCELLED', meta: { memo: payload.memo || null } });
+      await client.query('COMMIT');
+      return { ok: true, status: 'cancelled' };
+    }
+
+    if (contract.status !== 'active') throw new AppError(409, 'Only active contracts can be completed');
+    const { rows } = await client.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status IN ('scheduled','open'))::int AS open_schedule_lines,
+         COALESCE(SUM(scheduled_amount-recognized_amount) FILTER (WHERE status IN ('scheduled','open')),0)::numeric(18,6) AS remaining_to_recognize
+       FROM ifrs15_recognition_schedule_lines
+       WHERE organization_id=$1 AND contract_id=$2`,
+      [orgId, contractId]
+    );
+    const openLines = Number(rows[0]?.open_schedule_lines || 0);
+    const remaining = new Decimal(rows[0]?.remaining_to_recognize || 0);
+    if (openLines > 0 || !remaining.eq(0)) {
+      throw new AppError(409, 'Contract still has unposted revenue schedule lines');
+    }
+
+    await client.query(
+      `UPDATE ifrs15_contracts SET status='completed', updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+      [orgId, contractId]
+    );
+    await recordEvent(client, {
+      orgId,
+      contractId,
+      actorUserId,
+      eventType: 'CONTRACT_COMPLETED',
+      meta: { entry_date: payload.entry_date ? asDateOnly(payload.entry_date) : null, memo: payload.memo || null },
+    });
+    await client.query('COMMIT');
+    return { ok: true, status: 'completed' };
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
   } finally {
     client.release();
   }
@@ -1535,6 +1766,72 @@ async function listCosts({ orgId, contractId }) {
   return { costs: rows };
 }
 
+async function listModifications({ orgId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await getContractOrThrow(client, orgId, contractId);
+    return { modifications: await listModificationsInternal(client, orgId, contractId) };
+  } finally {
+    client.release();
+  }
+}
+
+async function listVariableConsideration({ orgId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await getContractOrThrow(client, orgId, contractId);
+    return { variable_consideration: await listVariableConsiderationInternal(client, orgId, contractId) };
+  } finally {
+    client.release();
+  }
+}
+
+async function listFinancingTerms({ orgId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await getContractOrThrow(client, orgId, contractId);
+    return { financing_terms: await listFinancingTermsInternal(client, orgId, contractId) };
+  } finally {
+    client.release();
+  }
+}
+
+async function getPostingLedger({ orgId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await getContractOrThrow(client, orgId, contractId);
+    return { posting_ledger: await listPostingLedgerInternal(client, orgId, contractId) };
+  } finally {
+    client.release();
+  }
+}
+
+async function getContractEvents({ orgId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await getContractOrThrow(client, orgId, contractId);
+    return { events: await listContractEventsInternal(client, orgId, contractId) };
+  } finally {
+    client.release();
+  }
+}
+
+async function getCostSchedule({ orgId, contractId, costId }) {
+  const client = await pool.connect();
+  try {
+    const { rows: costRows } = await client.query(
+      `SELECT id, cost_type, description, amount, status, amort_start_date, amort_end_date
+       FROM ifrs15_capitalised_costs WHERE organization_id=$1 AND contract_id=$2 AND id=$3`,
+      [orgId, contractId, costId]
+    );
+    if (!costRows.length) throw new AppError(404, 'Cost not found');
+    return { cost: costRows[0], lines: await getCostScheduleInternal(client, orgId, contractId, costId) };
+  } finally {
+    client.release();
+  }
+}
+
+
 async function generateCostSchedule({ orgId, actorUserId, contractId, costId, payload }) {
   const client = await pool.connect();
   try {
@@ -1893,6 +2190,9 @@ module.exports = {
   approveContractWorkflow,
   rejectContractWorkflow,
   getContract,
+  updateContractLifecycle,
+  getPostingLedger,
+  getContractEvents,
   addObligation,
   activateContract,
   generateSchedule,
@@ -1900,17 +2200,21 @@ module.exports = {
   postRevenueForPeriod,
   // Stage 2
   createModification,
+  listModifications,
   applyModification,
   // Stage 2B
   createVariableConsideration,
+  listVariableConsideration,
   reviewVariableConsideration,
   approveVariableConsideration,
   applyVariableConsideration,
   // Stage 2: financing & costs
   setFinancingTerms,
+  listFinancingTerms,
   postFinancingForPeriod,
   createCost,
   listCosts,
+  getCostSchedule,
   generateCostSchedule,
   postCostAmortForPeriod,
   // Stage 2C: disclosures
