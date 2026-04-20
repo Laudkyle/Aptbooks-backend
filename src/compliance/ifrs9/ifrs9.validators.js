@@ -48,8 +48,8 @@ const createModelSchema = z.object({
   model_type: z.enum(["SIMPLIFIED", "GENERAL"]).optional(),
   method: z.enum(["SIMPLIFIED", "GENERAL", "simplified", "general"]).optional(),
   status: z.enum(["active", "inactive"]).optional(),
-  config_json: z.record(z.any()).optional(),
-  configJson: z.record(z.any()).optional()
+  config_json: z.record(z.string(), z.unknown()).optional(),
+  configJson: z.record(z.string(), z.unknown()).optional()
 });
 
 const addBucketSchema = z.object({
@@ -114,7 +114,7 @@ const createScenarioSchema = z.object({
   status: z.enum(["active", "inactive"]).optional(),
   effective_from: z.string().optional(),
   effective_to: z.string().optional(),
-  variable_set: z.record(z.any()).optional()
+  variable_set: z.record(z.string(), z.unknown()).optional()
 });
 
 const upsertScenarioOverlaySchema = z.object({
@@ -144,7 +144,7 @@ const upsertSicrTriggerSchema = z.object({
   valid_to: z.string().optional(),
   source: z.string().max(255).optional(),
   notes: z.string().max(1000).optional(),
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 const behavioralAnalyticsSchema = z.object({
@@ -159,7 +159,7 @@ const createModelChangeRequestSchema = z.object({
   change_type: z.enum(["SETTINGS_UPSERT", "MODEL_CREATE", "BUCKET_ADD", "PARAMETER_ADD", "SCENARIO_CREATE", "SCENARIO_OVERLAY_UPSERT", "SICR_TRIGGER_UPSERT"]),
   title: z.string().min(1).max(255),
   reason: z.string().max(2000).optional(),
-  payload: z.record(z.any())
+  payload: z.record(z.string(), z.unknown())
 });
 
 const approvalCommentSchema = z.object({

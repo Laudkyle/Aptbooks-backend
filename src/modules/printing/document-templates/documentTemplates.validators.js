@@ -2,7 +2,7 @@
 const { z } = require("../../../shared/validators/common.validators");
 const { SUPPORTED_TRANSACTION_ENTITY_TYPES } = require("./constants");
 
-const jsonObj = z.record(z.any()).default({});
+const jsonObj = z.record(z.string(), z.unknown()).default({});
 
 const createTemplateSchema = z.object({
   code: z.string().min(2).max(50),

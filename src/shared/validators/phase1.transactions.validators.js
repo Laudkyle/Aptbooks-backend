@@ -18,7 +18,7 @@ const lineSchema = z.object({
   itemId: z.string().uuid().optional().nullable(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxes: z.array(taxSelectionSchema).optional(),
-  meta: z.record(z.any()).optional().nullable()
+  meta: z.record(z.string(), z.unknown()).optional().nullable()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['taxes'], message: 'Use either taxCodeId or taxes, not both' });
@@ -45,7 +45,7 @@ const baseCreateSchema = z.object({
   memo: z.string().optional().nullable(),
   amountTotal: z.number().nonnegative().optional(),
   currencyCode: z.string().min(3).max(3).optional().nullable(),
-  meta: z.record(z.any()).optional().nullable(),
+  meta: z.record(z.string(), z.unknown()).optional().nullable(),
   lines: z.array(lineSchema).optional().default([])
 });
 

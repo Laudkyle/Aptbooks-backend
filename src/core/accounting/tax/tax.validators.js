@@ -10,7 +10,7 @@ const createJurisdictionSchema = z.object({
 const updateJurisdictionSchema = createJurisdictionSchema.partial();
 
 
-const taxRuleConditionsSchema = z.record(z.any()).optional();
+const taxRuleConditionsSchema = z.record(z.string(), z.unknown()).optional();
 
 const createTaxRuleSchema = z.object({
   code: z.string().min(1).max(80).optional().nullable(),
@@ -81,7 +81,7 @@ const createTaxRegistrationSchema = z.object({
   effectiveFrom: isoDate.optional(),
   effectiveTo: isoDate.optional().nullable(),
   isPrimary: z.coerce.boolean().optional(),
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 }).superRefine((val, ctx) => {
   if (val.effectiveFrom && val.effectiveTo && val.effectiveTo < val.effectiveFrom) {
     ctx.addIssue({ code: "custom", path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
@@ -142,8 +142,8 @@ const upsertTaxAutomationRuleSchema = z.object({
   name: z.string().min(2).max(120),
   triggerCode: z.enum(["return_due", "invoice_issued", "bill_issued", "einvoice_generated", "reconciliation_exception"]),
   scheduleCode: z.enum(["manual", "hourly", "daily", "weekly"]).optional(),
-  scope: z.record(z.any()).optional(),
-  action: z.record(z.any()).optional(),
+  scope: z.record(z.string(), z.unknown()).optional(),
+  action: z.record(z.string(), z.unknown()).optional(),
   isEnabled: z.coerce.boolean().optional()
 });
 const createPartnerTaxProfileSchema = z.object({
@@ -176,7 +176,7 @@ const createPartnerTaxProfileSchema = z.object({
   registrationStatus: z.enum(["registered", "unregistered", "pending", "suspended"]).optional().nullable(),
   eInvoiceNetwork: z.string().max(100).optional().nullable(),
   eInvoiceEndpoint: z.string().max(255).optional().nullable(),
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 const updatePartnerTaxProfileSchema = createPartnerTaxProfileSchema.partial();
@@ -216,7 +216,7 @@ const createTaxReturnSchema = z.object({
 });
 
 const submitTaxReturnSchema = z.object({
-  filingData: z.record(z.any()),
+  filingData: z.record(z.string(), z.unknown()),
   filingAdapterCode: z.string().max(80).optional().nullable()
 });
 
@@ -244,7 +244,7 @@ const createFilingAdapterSchema = z.object({
   supportedTaxTypes: z.array(z.enum(["VAT", "GST", "SALES", "WITHHOLDING", "IMPORT", "OTHER"])).min(1).optional(),
   supportedCountries: z.array(z.string().length(2)).optional(),
   countryCode: z.string().length(2),
-  configJson: z.record(z.any()).optional(),
+  configJson: z.record(z.string(), z.unknown()).optional(),
   isRealtime: z.coerce.boolean().optional(),
   isActive: z.coerce.boolean().optional()
 });

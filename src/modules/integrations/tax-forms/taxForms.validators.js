@@ -11,7 +11,7 @@ const upsertVendorTaxProfileSchema = z.object({
   countryCode: z.string().optional(),
   classification: z.string().optional(),
   isReportable: z.boolean().optional(),
-  metadata: z.record(z.any()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional()
 });
 
 const createTaxFormRunSchema = z.object({
