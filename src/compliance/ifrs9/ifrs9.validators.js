@@ -36,7 +36,9 @@ const upsertSettingsSchema = z.object({
   default_lgd: coerceNumber(z.number().min(0).max(1)).optional(),
   defaultLgd: coerceNumber(z.number().min(0).max(1)).optional(),
   annual_discount_rate: coerceNumber(z.number().min(0).max(1)).optional(),
-  annualDiscountRate: coerceNumber(z.number().min(0).max(1)).optional()
+  annualDiscountRate: coerceNumber(z.number().min(0).max(1)).optional(),
+  model_change_approval_required: z.coerce.boolean().optional(),
+  modelChangeApprovalRequired: z.coerce.boolean().optional()
 });
 
 const createModelSchema = z.object({
@@ -45,7 +47,9 @@ const createModelSchema = z.object({
   description: z.string().max(2000).optional(),
   model_type: z.enum(["SIMPLIFIED", "GENERAL"]).optional(),
   method: z.enum(["SIMPLIFIED", "GENERAL", "simplified", "general"]).optional(),
-  status: z.enum(["active", "inactive"]).optional()
+  status: z.enum(["active", "inactive"]).optional(),
+  config_json: z.record(z.any()).optional(),
+  configJson: z.record(z.any()).optional()
 });
 
 const addBucketSchema = z.object({
@@ -61,7 +65,10 @@ const computeEclSchema = z.object({
   model_id: z.string().uuid().optional(),
   approach: z.enum(["SIMPLIFIED", "GENERAL"]).optional(),
   as_of_date: z.string().optional(),
-  memo: z.string().max(500).optional()
+  memo: z.string().max(500).optional(),
+  scenario_ids: z.array(z.string().uuid()).optional(),
+  use_behavioral_metrics: z.coerce.boolean().optional(),
+  behavioral_snapshot_id: z.string().uuid().optional()
 });
 
 const upsertCounterpartyProfileSchema = z.object({
@@ -97,6 +104,68 @@ const reverseEclSchema = z.object({
   reason: z.string().min(1).max(500)
 });
 
+
+const createScenarioSchema = z.object({
+  code: z.string().min(1).max(64).optional(),
+  name: z.string().min(1).max(255),
+  description: z.string().max(2000).optional(),
+  scenario_type: z.enum(["BASE", "UPSIDE", "DOWNSIDE", "CUSTOM"]).optional(),
+  probability_weight: coerceNumber(z.number().min(0).max(1)).optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+  effective_from: z.string().optional(),
+  effective_to: z.string().optional(),
+  variable_set: z.record(z.any()).optional()
+});
+
+const upsertScenarioOverlaySchema = z.object({
+  model_id: z.string().uuid().nullable().optional(),
+  segment: z.string().max(255).optional(),
+  stage: coerceNullableNumber(nullableIntSchema.refine((v) => v === null || [1, 2, 3].includes(v), "stage must be 1, 2 or 3")).optional(),
+  days_past_due_from: coerceNullableNumber(nullableIntSchema).optional(),
+  days_past_due_to: coerceNullableNumber(nullableIntSchema).optional(),
+  pd_multiplier: coerceNumber(z.number().min(0)).optional(),
+  lgd_multiplier: coerceNumber(z.number().min(0)).optional(),
+  loss_rate_multiplier: coerceNumber(z.number().min(0)).optional(),
+  ecl_multiplier: coerceNumber(z.number().min(0)).optional(),
+  notes: z.string().max(1000).optional()
+});
+
+const upsertSicrTriggerSchema = z.object({
+  business_partner_id: z.string().uuid().optional(),
+  segment: z.string().max(255).optional(),
+  trigger_code: z.string().min(1).max(64),
+  trigger_name: z.string().min(1).max(255),
+  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+  force_stage_min: coerceNullableNumber(nullableIntSchema.refine((v) => v === null || [1, 2, 3].includes(v), "force_stage_min must be 1, 2 or 3")).optional(),
+  pd_multiplier: coerceNumber(z.number().min(0)).optional(),
+  lgd_multiplier: coerceNumber(z.number().min(0)).optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+  valid_from: z.string().optional(),
+  valid_to: z.string().optional(),
+  source: z.string().max(255).optional(),
+  notes: z.string().max(1000).optional(),
+  metadata: z.record(z.any()).optional()
+});
+
+const behavioralAnalyticsSchema = z.object({
+  as_of_date: z.string(),
+  horizon_months: coerceInt(z.number().int().min(1).max(120)).optional(),
+  transition_window_days: coerceInt(z.number().int().min(1).max(365)).optional(),
+  persist_snapshot: z.coerce.boolean().optional()
+});
+
+const createModelChangeRequestSchema = z.object({
+  model_id: z.string().uuid().optional(),
+  change_type: z.enum(["SETTINGS_UPSERT", "MODEL_CREATE", "BUCKET_ADD", "PARAMETER_ADD", "SCENARIO_CREATE", "SCENARIO_OVERLAY_UPSERT", "SICR_TRIGGER_UPSERT"]),
+  title: z.string().min(1).max(255),
+  reason: z.string().max(2000).optional(),
+  payload: z.record(z.any())
+});
+
+const approvalCommentSchema = z.object({
+  comment: z.string().max(1000).optional()
+});
+
 module.exports = {
   upsertSettingsSchema,
   createModelSchema,
@@ -105,5 +174,11 @@ module.exports = {
   addParameterSchema,
   computeEclSchema,
   postEclSchema,
-  reverseEclSchema
+  reverseEclSchema,
+  createScenarioSchema,
+  upsertScenarioOverlaySchema,
+  upsertSicrTriggerSchema,
+  behavioralAnalyticsSchema,
+  createModelChangeRequestSchema,
+  approvalCommentSchema
 };

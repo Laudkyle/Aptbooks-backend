@@ -338,6 +338,16 @@ const registry = {
     title: (entity) => `Withholding Certificate ${entity.certificate_no || entity.id}`,
     description: (entity) => entity.memo || null,
     versionFilename: (entity) => `withholding-certificate-${entity.certificate_no || entity.id}.json`
+  },
+  ifrs9_model_change: {
+    entityType: "ifrs9_model_change",
+    documentTypeCode: "IFRS9_MODEL_CHANGE",
+    documentTypeName: "IFRS9 Model Change",
+    noun: "IFRS9 model change",
+    blockedActionLabel: "apply",
+    title: (entity) => `IFRS9 Model Change ${entity.code || entity.id}`,
+    description: (entity) => entity.memo || null,
+    versionFilename: (entity) => `ifrs9-model-change-${entity.id}.json`
   }
 };
 

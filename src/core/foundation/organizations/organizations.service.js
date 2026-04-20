@@ -578,6 +578,7 @@ async function initializeOrganizationDefaults({
     ["compliance.ifrs9.read", "Read IFRS9 ECL models, runs, and reports"],
     ["compliance.ifrs9.manage", "Manage IFRS9 ECL models, buckets, and runs"],
     ["compliance.ifrs9.post", "Post IFRS9 impairment journals"],
+    ["compliance.ifrs9.approve", "Approve IFRS9 model changes and governance actions"],
     ["compliance.ias12.read", "Read IAS12 tax authorities, rates, and settings"],
     ["compliance.ias12.manage", "Manage IAS12 tax authorities, rates, and settings"],
     ["compliance.ias12.post", "Post IAS12 tax journals"],

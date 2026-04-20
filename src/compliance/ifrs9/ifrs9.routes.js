@@ -164,6 +164,147 @@ router.post("/ecl/reverse", requirePermission("compliance.ifrs9.post"), async (r
   } catch (e) { next(e); }
 });
 
+
+router.get("/macro-scenarios", requirePermission("compliance.ifrs9.read"), async (req, res, next) => {
+  try {
+    const out = await svc.listMacroScenarios({ orgId: req.user.organization_id });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/macro-scenarios", requirePermission("compliance.ifrs9.manage"), async (req, res, next) => {
+  try {
+    const payload = validate(v.createScenarioSchema, req.body);
+    const out = await svc.createMacroScenario({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      payload,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.status(201).json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/macro-scenarios/:scenarioId/overlays", requirePermission("compliance.ifrs9.manage"), async (req, res, next) => {
+  try {
+    const payload = validate(v.upsertScenarioOverlaySchema, req.body);
+    const out = await svc.upsertMacroScenarioOverlay({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      scenarioId: req.params.scenarioId,
+      payload,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.status(201).json(out);
+  } catch (e) { next(e); }
+});
+
+router.get("/sicr-triggers", requirePermission("compliance.ifrs9.read"), async (req, res, next) => {
+  try {
+    const out = await svc.listSicrTriggers({ orgId: req.user.organization_id });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/sicr-triggers", requirePermission("compliance.ifrs9.manage"), async (req, res, next) => {
+  try {
+    const payload = validate(v.upsertSicrTriggerSchema, req.body);
+    const out = await svc.upsertSicrTrigger({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      payload,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.status(201).json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/analytics/behavioral", requirePermission("compliance.ifrs9.read"), async (req, res, next) => {
+  try {
+    const payload = validate(v.behavioralAnalyticsSchema, req.body);
+    const out = await svc.getBehavioralAnalytics({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      payload
+    });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.get("/model-changes", requirePermission("compliance.ifrs9.read"), async (req, res, next) => {
+  try {
+    const out = await svc.listModelChangeRequests({ orgId: req.user.organization_id, status: req.query.status || null });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/model-changes", requirePermission("compliance.ifrs9.manage"), async (req, res, next) => {
+  try {
+    const payload = validate(v.createModelChangeRequestSchema, req.body);
+    const out = await svc.createModelChangeRequest({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      payload,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.status(201).json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/model-changes/:changeId/submit", requirePermission("compliance.ifrs9.manage"), async (req, res, next) => {
+  try {
+    const payload = validate(v.approvalCommentSchema, req.body || {});
+    const out = await svc.submitModelChangeRequest({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      changeId: req.params.changeId,
+      comment: payload.comment,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/model-changes/:changeId/approve", requirePermission("compliance.ifrs9.approve"), async (req, res, next) => {
+  try {
+    const payload = validate(v.approvalCommentSchema, req.body || {});
+    const out = await svc.approveModelChangeRequest({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      changeId: req.params.changeId,
+      comment: payload.comment,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/model-changes/:changeId/reject", requirePermission("compliance.ifrs9.approve"), async (req, res, next) => {
+  try {
+    const payload = validate(v.approvalCommentSchema, req.body || {});
+    const out = await svc.rejectModelChangeRequest({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      changeId: req.params.changeId,
+      comment: payload.comment,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
+router.post("/model-changes/:changeId/apply", requirePermission("compliance.ifrs9.approve"), async (req, res, next) => {
+  try {
+    const out = await svc.applyModelChangeRequest({
+      orgId: req.user.organization_id,
+      actorUserId: req.user.id,
+      changeId: req.params.changeId,
+      audit: { ip: req.audit?.ip, userAgent: req.audit?.userAgent }
+    });
+    res.json(out);
+  } catch (e) { next(e); }
+});
+
 router.get("/reports/allowance-movement", requirePermission("compliance.ifrs9.read"), async (req, res, next) => {
   try {
     const out = await svc.getAllowanceMovementReport({ orgId: req.user.organization_id, periodId: req.query.period_id });
