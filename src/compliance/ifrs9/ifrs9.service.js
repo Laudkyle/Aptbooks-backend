@@ -1476,7 +1476,23 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
       ]
     };
 
-    const posted = await journalPosting.postJournal({ orgId, actorUserId, payload: journalPayload });
+    const draft = await journalPosting.createDraftJournal({ orgId, actorUserId, payload: journalPayload, client });
+    let posted;
+    try {
+      posted = await journalPosting.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    } catch (err) {
+      const msg = String(err?.message || "");
+      const needsWorkflow =
+        msg.includes("missing workflow document") ||
+        msg.includes("requires approval before post");
+      if (!needsWorkflow) throw err;
+
+      // Journal workflow is enabled for this organization. Create and route the
+      // generated journal through the normal journal approval lifecycle before posting.
+      await journalPosting.submitDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
+      await journalPosting.approveSubmittedJournal({ orgId, journalId: draft.journalId, actorUserId: String(actorUserId) });
+      posted = await journalPosting.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId: String(actorUserId), client });
+    }
 
     await client.query(
       `INSERT INTO ifrs9_posting_ledger(
