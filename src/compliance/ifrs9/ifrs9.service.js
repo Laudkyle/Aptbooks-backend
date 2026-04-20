@@ -1454,6 +1454,9 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
     const entryDate = payload.entry_date || payload.posting_date || period.end_date;
     const idempotencyKey = `IFRS9:ECL:RUN:${run.id}:PERIOD:${payload.period_id}:POST`;
 
+    await client.query("COMMIT");
+    client.release();
+
     const journalPayload = {
       periodId: payload.period_id,
       entryDate,
@@ -1476,57 +1479,70 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
       ]
     };
 
-    const draft = await journalPosting.createDraftJournal({ orgId, actorUserId, payload: journalPayload, client });
-    let posted;
+    const draft = await journalPosting.createDraftJournal({ orgId, actorUserId, payload: journalPayload });
+    let journalId = draft.journalId;
+
     try {
-      posted = await journalPosting.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+      const posted = await journalPosting.postDraftJournal({ orgId, journalId, actorUserId });
+      journalId = posted.journalId || journalId;
     } catch (err) {
-      const msg = String(err?.message || "");
+      const message = String(err?.message || "");
       const needsWorkflow =
-        msg.includes("missing workflow document") ||
-        msg.includes("requires approval before post");
+        err?.status === 409 || err?.code === "conflict"
+          ? /requires approval before post|missing workflow document|workflow document not found|current state not approved/i.test(message)
+          : false;
+
       if (!needsWorkflow) throw err;
 
-      // Journal workflow is enabled for this organization. Create and route the
-      // generated journal through the normal journal approval lifecycle before posting.
-      await journalPosting.submitDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
-      await journalPosting.approveSubmittedJournal({ orgId, journalId: draft.journalId, actorUserId: String(actorUserId) });
-      posted = await journalPosting.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId: String(actorUserId), client });
+      await journalPosting.submitDraftJournal({ orgId, journalId, actorUserId });
+      await journalPosting.approveSubmittedJournal({ orgId, journalId, actorUserId });
+      const posted = await journalPosting.postDraftJournal({ orgId, journalId, actorUserId });
+      journalId = posted.journalId || journalId;
     }
 
-    await client.query(
-      `INSERT INTO ifrs9_posting_ledger(
-        organization_id, run_id, period_id, journal_entry_id, idempotency_key, posted_by, posted_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,NOW())
-      ON CONFLICT (organization_id, idempotency_key) DO NOTHING`,
-      [orgId, run.id, payload.period_id, posted.journalId, idempotencyKey, actorUserId]
-    );
+    const client2 = await pool.connect();
+    try {
+      await client2.query("BEGIN");
 
-    const { rows: upd } = await client.query(
-      `UPDATE ifrs9_ecl_runs
-       SET status='posted', journal_entry_id=$3, posted_by=$4, posted_at=NOW(), updated_at=NOW()
-       WHERE organization_id=$1 AND id=$2
-       RETURNING *`,
-      [orgId, run.id, posted.journalId, actorUserId]
-    );
+      await client2.query(
+        `INSERT INTO ifrs9_posting_ledger(
+          organization_id, run_id, period_id, journal_entry_id, idempotency_key, posted_by, posted_at
+        ) VALUES ($1,$2,$3,$4,$5,$6,NOW())
+        ON CONFLICT (organization_id, idempotency_key) DO NOTHING`,
+        [orgId, run.id, payload.period_id, journalId, idempotencyKey, actorUserId]
+      );
 
-    await client.query("COMMIT");
-    await safeWriteAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "ifrs9.run.post",
-      entityType: "ifrs9_ecl_run",
-      entityId: run.id,
-      ip: audit.ip,
-      userAgent: audit.userAgent,
-      after: { run_id: upd[0].id, journal_id: upd[0].journal_entry_id }
-    });
-    return { run_id: upd[0].id, journal_id: upd[0].journal_entry_id, already_posted: false };
+      const { rows: upd } = await client2.query(
+        `UPDATE ifrs9_ecl_runs
+         SET status='posted', journal_entry_id=$3, posted_by=$4, posted_at=NOW(), updated_at=NOW()
+         WHERE organization_id=$1 AND id=$2
+         RETURNING *`,
+        [orgId, run.id, journalId, actorUserId]
+      );
+
+      await client2.query("COMMIT");
+      await safeWriteAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: "ifrs9.run.post",
+        entityType: "ifrs9_ecl_run",
+        entityId: run.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        after: { run_id: upd[0].id, journal_id: upd[0].journal_entry_id }
+      });
+      return { run_id: upd[0].id, journal_id: upd[0].journal_entry_id, already_posted: false };
+    } catch (e) {
+      await client2.query("ROLLBACK");
+      throw e;
+    } finally {
+      client2.release();
+    }
   } catch (e) {
-    await client.query("ROLLBACK");
+    try { await client.query("ROLLBACK"); } catch (_) {}
     throw e;
   } finally {
-    client.release();
+    try { client.release(); } catch (_) {}
   }
 }
 
