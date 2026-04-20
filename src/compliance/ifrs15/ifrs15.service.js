@@ -381,7 +381,7 @@ async function listContracts({ orgId, query }) {
   }
   if (query.q) {
     params.push(`%${query.q}%`);
-    where.push(`(c.code ILIKE $${params.length} OR COALESCE(bp.legal_name, bp.display_name, bp.name, '') ILIKE $${params.length})`);
+    where.push(`(c.code ILIKE $${params.length} OR COALESCE(bp.name, bp.name, bp.name, '') ILIKE $${params.length})`);
   }
   if (query.approval_status === 'pending') {
     where.push(`c.workflow_document_id IS NOT NULL`);
@@ -409,7 +409,7 @@ async function listContracts({ orgId, query }) {
            c.created_at, c.updated_at, c.workflow_document_id,
            c.financing_enabled, c.financing_annual_rate,
            c.variable_consideration_included, c.variable_consideration_included_amount,
-           COALESCE(bp.legal_name, bp.display_name, bp.name) AS business_partner_name,
+           COALESCE(bp.name, bp.name, bp.name) AS business_partner_name,
            COALESCE(sch.total_scheduled,0)::numeric(18,6) AS scheduled_total,
            COALESCE(sch.total_recognized,0)::numeric(18,6) AS recognized_total,
            COALESCE(sch.open_lines,0)::int AS open_schedule_lines
