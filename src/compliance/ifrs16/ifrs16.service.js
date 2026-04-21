@@ -74,6 +74,99 @@ async function getLeaseSnapshot({ orgId, leaseId, client = pool }) {
   return { lease, contract: contractRows.rows[0] || null, assets: assetRows.rows, payments: paymentRows.rows, modifications: modRows.rows, schedule: schedRows.rows };
 }
 
+
+async function getSettings({ orgId, client = pool }) {
+  const { rows } = await client.query(
+    `SELECT organization_id, default_term_months, default_payments_per_year, default_annual_discount_rate, default_payment_timing,
+            rou_asset_account_id, lease_liability_account_id, interest_expense_account_id, depreciation_expense_account_id,
+            accumulated_depreciation_account_id, cash_account_id, default_notes_template, created_at, updated_at
+       FROM ifrs16_settings
+      WHERE organization_id=$1`,
+    [orgId]
+  );
+  return rows[0] || {
+    organization_id: orgId,
+    default_term_months: null,
+    default_payments_per_year: null,
+    default_annual_discount_rate: null,
+    default_payment_timing: 'arrears',
+    rou_asset_account_id: null,
+    lease_liability_account_id: null,
+    interest_expense_account_id: null,
+    depreciation_expense_account_id: null,
+    accumulated_depreciation_account_id: null,
+    cash_account_id: null,
+    default_notes_template: '',
+    created_at: null,
+    updated_at: null,
+  };
+}
+
+async function upsertSettings({ orgId, actorUserId, payload }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const accountChecks = [
+      ['rou_asset_account_id', 'ROU asset account'],
+      ['lease_liability_account_id', 'Lease liability account'],
+      ['interest_expense_account_id', 'Interest expense account'],
+      ['depreciation_expense_account_id', 'Depreciation expense account'],
+      ['accumulated_depreciation_account_id', 'Accumulated depreciation account'],
+      ['cash_account_id', 'Cash account'],
+    ];
+    for (const [field, label] of accountChecks) {
+      if (payload[field]) await assertPostableAccount({ orgId, accountId: payload[field], label, client });
+    }
+
+    const { rows } = await client.query(
+      `INSERT INTO ifrs16_settings(
+          organization_id, default_term_months, default_payments_per_year, default_annual_discount_rate, default_payment_timing,
+          rou_asset_account_id, lease_liability_account_id, interest_expense_account_id, depreciation_expense_account_id,
+          accumulated_depreciation_account_id, cash_account_id, default_notes_template, created_by, updated_by
+       ) VALUES ($1,$2,$3,$4,COALESCE($5,'arrears'),$6,$7,$8,$9,$10,$11,$12,$13,$13)
+       ON CONFLICT (organization_id) DO UPDATE SET
+          default_term_months = EXCLUDED.default_term_months,
+          default_payments_per_year = EXCLUDED.default_payments_per_year,
+          default_annual_discount_rate = EXCLUDED.default_annual_discount_rate,
+          default_payment_timing = EXCLUDED.default_payment_timing,
+          rou_asset_account_id = EXCLUDED.rou_asset_account_id,
+          lease_liability_account_id = EXCLUDED.lease_liability_account_id,
+          interest_expense_account_id = EXCLUDED.interest_expense_account_id,
+          depreciation_expense_account_id = EXCLUDED.depreciation_expense_account_id,
+          accumulated_depreciation_account_id = EXCLUDED.accumulated_depreciation_account_id,
+          cash_account_id = EXCLUDED.cash_account_id,
+          default_notes_template = EXCLUDED.default_notes_template,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = NOW()
+       RETURNING organization_id, default_term_months, default_payments_per_year, default_annual_discount_rate, default_payment_timing,
+                 rou_asset_account_id, lease_liability_account_id, interest_expense_account_id, depreciation_expense_account_id,
+                 accumulated_depreciation_account_id, cash_account_id, default_notes_template, created_at, updated_at`,
+      [
+        orgId,
+        payload.default_term_months ?? null,
+        payload.default_payments_per_year ?? null,
+        payload.default_annual_discount_rate ?? null,
+        payload.default_payment_timing || 'arrears',
+        payload.rou_asset_account_id ?? null,
+        payload.lease_liability_account_id ?? null,
+        payload.interest_expense_account_id ?? null,
+        payload.depreciation_expense_account_id ?? null,
+        payload.accumulated_depreciation_account_id ?? null,
+        payload.cash_account_id ?? null,
+        payload.default_notes_template ?? '',
+        actorUserId,
+      ]
+    );
+    await client.query('COMMIT');
+    return rows[0];
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function listLeases({ orgId, query }) {
   const limit = Math.min(Number(query?.limit || 50), 200); const offset = Math.max(Number(query?.offset || 0), 0);
   const status = query?.status; const where = ['organization_id=$1']; const params = [orgId];
@@ -90,14 +183,35 @@ async function createLease({ orgId, actorUserId, payload }) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    for (const [field, label] of [
-      [payload.rou_asset_account_id,'rou_asset_account_id'], [payload.lease_liability_account_id,'lease_liability_account_id'],
-      [payload.interest_expense_account_id,'interest_expense_account_id'], [payload.depreciation_expense_account_id,'depreciation_expense_account_id'],
-      [payload.accumulated_depreciation_account_id,'accumulated_depreciation_account_id'], [payload.cash_account_id,'cash_account_id']
-    ]) await assertPostableAccount({ orgId, accountId: field, label, client });
+    const settings = await getSettings({ orgId, client });
+    const generatedCode = payload.code || `LEASE-${Date.now()}`;
+    payload = {
+      ...payload,
+      code: generatedCode,
+      payment_timing: payload.payment_timing || settings.default_payment_timing || 'arrears',
+      rou_asset_account_id: payload.rou_asset_account_id || settings.rou_asset_account_id,
+      lease_liability_account_id: payload.lease_liability_account_id || settings.lease_liability_account_id,
+      interest_expense_account_id: payload.interest_expense_account_id || settings.interest_expense_account_id,
+      depreciation_expense_account_id: payload.depreciation_expense_account_id || settings.depreciation_expense_account_id,
+      accumulated_depreciation_account_id: payload.accumulated_depreciation_account_id || settings.accumulated_depreciation_account_id,
+      cash_account_id: payload.cash_account_id || settings.cash_account_id,
+    };
 
     const { rows: existing } = await client.query(`SELECT 1 FROM leases WHERE organization_id=$1 AND code=$2 LIMIT 1`, [orgId, payload.code]);
     if (existing.length) throw new AppError(409, 'Lease code already exists');
+
+    const requiredAccounts = [
+      ['rou_asset_account_id', 'ROU asset account'],
+      ['lease_liability_account_id', 'Lease liability account'],
+      ['interest_expense_account_id', 'Interest expense account'],
+      ['depreciation_expense_account_id', 'Depreciation expense account'],
+      ['accumulated_depreciation_account_id', 'Accumulated depreciation account'],
+      ['cash_account_id', 'Cash account'],
+    ];
+    for (const [field, label] of requiredAccounts) {
+      if (!payload[field]) throw new AppError(409, `${label} is required on the lease or in IFRS16 settings`);
+      await assertPostableAccount({ orgId, accountId: payload[field], label, client });
+    }
 
     const paymentAmount = toDecimal(payload.payment_amount); const annualDiscountRate = toDecimal(payload.annual_discount_rate); const termMonths = toDecimal(payload.term_months);
     if (!paymentAmount.greaterThan(0)) throw new AppError(400, 'Payment amount must be greater than 0');
@@ -459,7 +573,7 @@ async function getDisclosureReport({ orgId, query }) {
 }
 
 module.exports = {
-  listLeases, createLease, getLease, updateLeaseStatus, generateSchedule, getSchedule, postLeasePeriod, postInitialRecognition,
+  getSettings, upsertSettings, listLeases, createLease, getLease, updateLeaseStatus, generateSchedule, getSchedule, postLeasePeriod, postInitialRecognition,
   upsertContract, listAssets, createAsset, updateAsset, deleteAsset, listPayments, createPayment,
   createLeaseModification, listLeaseModifications, getLeaseModification, applyLeaseModification,
   submitLeaseWorkflow, approveLease, rejectLease, submitLeaseModification, approveLeaseModification, rejectLeaseModification,

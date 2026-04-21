@@ -9,6 +9,9 @@ const v = require("./ifrs16.validators");
 const router = express.Router();
 router.use(authRequired);
 
+router.get("/settings", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { res.json(await svc.getSettings({ orgId:req.user.organization_id })); } catch(e){ next(e);} });
+router.put("/settings", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const payload = validate(v.upsertSettings, req.body); res.json(await svc.upsertSettings({ orgId:req.user.organization_id, actorUserId:req.user.id, payload })); } catch(e){ next(e);} });
+
 router.get("/leases", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { res.json(await svc.listLeases({ orgId:req.user.organization_id, query:req.query })); } catch(e){ next(e);} });
 router.post("/leases", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const payload = validate(v.createLease, req.body); res.status(201).json(await svc.createLease({ orgId:req.user.organization_id, actorUserId:req.user.id, payload })); } catch(e){ next(e);} });
 router.get("/leases/:leaseId", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.getLease({ orgId:req.user.organization_id, leaseId:params.leaseId })); } catch(e){ next(e);} });

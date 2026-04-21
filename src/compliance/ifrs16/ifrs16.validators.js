@@ -6,24 +6,39 @@ const nullableNum = z.union([z.number(), z.null()]).optional();
 const commentPayload = z.object({ comment: z.string().max(1000).optional() });
 
 const leaseIdParam = z.object({ leaseId: uuid });
+
+const upsertSettings = z.object({
+  default_term_months: z.number().int().positive().max(600).optional(),
+  default_payments_per_year: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(12)]).optional(),
+  default_annual_discount_rate: z.number().min(0).max(1).optional(),
+  default_payment_timing: z.enum(["arrears", "advance"]).optional(),
+  rou_asset_account_id: uuid.nullish(),
+  lease_liability_account_id: uuid.nullish(),
+  interest_expense_account_id: uuid.nullish(),
+  depreciation_expense_account_id: uuid.nullish(),
+  accumulated_depreciation_account_id: uuid.nullish(),
+  cash_account_id: uuid.nullish(),
+  default_notes_template: z.string().max(5000).optional(),
+});
+
 const assetIdParam = z.object({ leaseId: uuid, assetId: uuid });
 const modificationIdParam = z.object({ leaseId: uuid, modificationId: uuid });
 
 const createLease = z.object({
-  code: z.string().min(1).max(50),
+  code: z.string().min(1).max(50).optional(),
   name: z.string().min(1).max(200),
   commencement_date: dateOnly,
   term_months: z.number().int().positive().max(600),
   payment_amount: z.number().positive(),
-  payments_per_year: z.number().int().positive().max(12).default(12),
+  payments_per_year: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(12)]).default(12),
   annual_discount_rate: z.number().min(0).max(1),
   payment_timing: z.enum(["arrears", "advance"]).optional().default("arrears"),
-  rou_asset_account_id: uuid,
-  lease_liability_account_id: uuid,
-  interest_expense_account_id: uuid,
-  depreciation_expense_account_id: uuid,
-  accumulated_depreciation_account_id: uuid,
-  cash_account_id: uuid,
+  rou_asset_account_id: uuid.optional(),
+  lease_liability_account_id: uuid.optional(),
+  interest_expense_account_id: uuid.optional(),
+  depreciation_expense_account_id: uuid.optional(),
+  accumulated_depreciation_account_id: uuid.optional(),
+  cash_account_id: uuid.optional(),
   contract_reference: z.string().max(200).optional(),
   currency_code: z.string().length(3).optional(),
   asset_code: z.string().max(100).optional(),
@@ -80,7 +95,7 @@ const createModification = z.object({
   reason: z.string().max(1000).optional(),
   new_term_months: z.number().int().positive().max(600).optional(),
   new_payment_amount: z.number().positive().optional(),
-  new_payments_per_year: z.number().int().positive().max(12).optional(),
+  new_payments_per_year: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(12)]).optional(),
   new_annual_discount_rate: z.number().min(0).max(1).optional(),
   new_payment_timing: z.enum(["arrears","advance"]).optional(),
 }).refine((v) => v.new_term_months || v.new_payment_amount || v.new_payments_per_year || v.new_annual_discount_rate !== undefined || v.new_payment_timing, { message: 'At least one modification change is required' });
@@ -88,6 +103,6 @@ const createModification = z.object({
 const reportQuery = z.object({ as_of_date: dateOnly.optional(), limit: z.coerce.number().int().positive().max(500).optional() });
 
 module.exports = {
-  leaseIdParam, assetIdParam, modificationIdParam, createLease, upsertContract, createAsset, updateAsset, createPayment,
+  leaseIdParam, assetIdParam, modificationIdParam, upsertSettings, createLease, upsertContract, createAsset, updateAsset, createPayment,
   generateSchedule, postLease, postInitialRecognition, updateStatus, createModification, commentPayload, reportQuery,
 };
