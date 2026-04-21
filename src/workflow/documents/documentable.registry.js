@@ -170,6 +170,7 @@ const registry = {
     versionFilename: (entity) => `project-${entity.id}.json`
   },
 
+
   lease: {
     entityType: "lease",
     documentTypeCode: "LEASE",
