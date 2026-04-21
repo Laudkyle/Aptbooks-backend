@@ -445,7 +445,7 @@ async function getDisclosureReport({ orgId, query }) {
                         WHEN due_date <= $2::date + INTERVAL '5 years' THEN '1_to_5_years'
                         ELSE 'after_5_years'
                       END AS bucket,
-                      COALESCE(SUM(payment_amount),0)::numeric AS undiscounted_cash_flows
+                      COALESCE(SUM(lsl.payment_amount),0)::numeric AS undiscounted_cash_flows
                  FROM lease_schedule_lines lsl JOIN leases l ON l.id=lsl.lease_id
                 WHERE l.organization_id=$1 AND lsl.due_date > $2
                 GROUP BY 1 ORDER BY 1`, [orgId, asOfDate]),
