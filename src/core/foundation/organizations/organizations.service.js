@@ -55,35 +55,12 @@ async function initializeOrganizationDefaults({
     return rows[0].id;
   };
 
-  const ensureGlobalReferenceData = async () => {
-    await client.query(`
-      INSERT INTO account_types(code, name, normal_balance) VALUES
-      ('ASSET','Assets','debit'),
-      ('LIABILITY','Liabilities','credit'),
-      ('EQUITY','Equity','credit'),
-      ('REVENUE','Revenue','credit'),
-      ('EXPENSE','Expenses','debit')
-      ON CONFLICT (code) DO NOTHING
-    `);
-
-    await client.query(`
-      INSERT INTO journal_entry_types(code, name) VALUES
-      ('GENERAL','General Journal'),
-      ('ADJUSTMENT','Adjustment Journal'),
-      ('CLOSING','Closing Journal')
-      ON CONFLICT (code) DO NOTHING
-    `);
-  };
-
   const getAccountTypeMap = async () => {
     const { rows } = await client.query(`SELECT code, id FROM account_types`);
     return Object.fromEntries(rows.map((r) => [r.code, r.id]));
   };
 
   const createCoaAccount = async (orgId, code, name, accountTypeId) => {
-    if (!accountTypeId) {
-      throw new Error(`Missing account type id for COA account ${code} - ${name}`);
-    }
     await client.query(
       `
       INSERT INTO chart_of_accounts(organization_id, code, name, account_type_id, is_postable, status)
@@ -475,10 +452,7 @@ async function initializeOrganizationDefaults({
 
   // ========== ACTUAL INITIALIZATION STARTS HERE ==========
 
-  // 1) Ensure global reference data exists
-  await ensureGlobalReferenceData();
-
-  // 2) Ensure global permissions exist (these are organization-independent)
+  // 1) Ensure global permissions exist (these are organization-independent)
   const perms = [
     // Accounting kernel
     ["accounting.period.read", "Read periods"],

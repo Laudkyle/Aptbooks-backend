@@ -169,6 +169,28 @@ const registry = {
     description: (entity) => entity.description || null,
     versionFilename: (entity) => `project-${entity.id}.json`
   },
+
+  lease: {
+    entityType: "lease",
+    documentTypeCode: "LEASE",
+    documentTypeName: "Lease",
+    noun: "lease",
+    blockedActionLabel: "post",
+    title: (entity) => `Lease ${entity.code || entity.name || entity.id}`,
+    description: (entity) => entity.name || null,
+    versionFilename: (entity) => `lease-${entity.code || entity.id}.json`
+  },
+  lease_modification: {
+    entityType: "lease_modification",
+    documentTypeCode: "LEASE_MODIFICATION",
+    documentTypeName: "Lease Modification",
+    noun: "lease modification",
+    blockedActionLabel: "apply",
+    title: (entity) => `Lease Modification ${entity.id}`,
+    description: (entity) => entity.reason || null,
+    versionFilename: (entity) => `lease-modification-${entity.id}.json`
+  },
+
   contract: {
     entityType: "contract",
     documentTypeCode: "CONTRACT",

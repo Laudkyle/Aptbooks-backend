@@ -1,168 +1,48 @@
+
 const express = require("express");
 const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { validate } = require("../../shared/validators/validate");
-
 const svc = require("./ifrs16.service");
 const v = require("./ifrs16.validators");
 
 const router = express.Router();
-
-// All IFRS16 routes are authenticated.
 router.use(authRequired);
 
-/**
- * Leases
- */
+router.get("/leases", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { res.json(await svc.listLeases({ orgId:req.user.organization_id, query:req.query })); } catch(e){ next(e);} });
+router.post("/leases", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const payload = validate(v.createLease, req.body); res.status(201).json(await svc.createLease({ orgId:req.user.organization_id, actorUserId:req.user.id, payload })); } catch(e){ next(e);} });
+router.get("/leases/:leaseId", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.getLease({ orgId:req.user.organization_id, leaseId:params.leaseId })); } catch(e){ next(e);} });
+router.patch("/leases/:leaseId/status", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.updateStatus,{...req.body,...params}); res.json(await svc.updateLeaseStatus({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
 
-router.get(
-  "/leases",
-  requirePermission("compliance.ifrs16.read"),
-  async (req, res, next) => {
-    try {
-      const data = await svc.listLeases({
-        orgId: req.user.organization_id,
-        query: req.query,
-      });
-      res.json(data);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.post("/leases/:leaseId/submit", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.submitLeaseWorkflow({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/approve", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.commentPayload,req.body||{}); res.json(await svc.approveLease({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, comment:payload.comment })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/reject", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.commentPayload,req.body||{}); res.json(await svc.rejectLease({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, comment:payload.comment })); } catch(e){ next(e);} });
 
-router.post(
-  "/leases",
-  requirePermission("compliance.ifrs16.manage"),
-  async (req, res, next) => {
-    try {
-      const payload = validate(v.createLease, req.body);
-      const lease = await svc.createLease({
-        orgId: req.user.organization_id,
-        actorUserId: req.user.id,
-        payload,
-      });
-      res.status(201).json(lease);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.put("/leases/:leaseId/contract", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.upsertContract,req.body); res.json(await svc.upsertContract({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
+router.get("/leases/:leaseId/assets", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.listAssets({ orgId:req.user.organization_id, leaseId:params.leaseId })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/assets", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.createAsset,req.body); res.status(201).json(await svc.createAsset({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
+router.patch("/leases/:leaseId/assets/:assetId", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.assetIdParam,req.params); const payload=validate(v.updateAsset,req.body); res.json(await svc.updateAsset({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, assetId:params.assetId, payload })); } catch(e){ next(e);} });
+router.delete("/leases/:leaseId/assets/:assetId", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.assetIdParam,req.params); res.json(await svc.deleteAsset({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, assetId:params.assetId })); } catch(e){ next(e);} });
 
-router.get(
-  "/leases/:leaseId",
-  requirePermission("compliance.ifrs16.read"),
-  async (req, res, next) => {
-    try {
-      const params = validate(v.leaseIdParam, req.params);
-      const lease = await svc.getLease({
-        orgId: req.user.organization_id,
-        leaseId: params.leaseId,
-      });
-      res.json(lease);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.get("/leases/:leaseId/payments", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.listPayments({ orgId:req.user.organization_id, leaseId:params.leaseId, query:req.query })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/payments", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.createPayment,req.body); res.status(201).json(await svc.createPayment({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
 
-// Lifecycle: update lease status (draft/active/terminated/closed)
-router.patch(
-  "/leases/:leaseId/status",
-  requirePermission("compliance.ifrs16.manage"),
-  async (req, res, next) => {
-    try {
-      const params = validate(v.leaseIdParam, req.params);
-      const payload = validate(v.updateStatus, { ...req.body, ...params });
-      const result = await svc.updateLeaseStatus({
-        orgId: req.user.organization_id,
-        actorUserId: req.user.id,
-        leaseId: params.leaseId,
-        payload,
-      });
-      res.json(result);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.post("/leases/:leaseId/schedule/generate", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.generateSchedule,{...req.body,...params}); res.json(await svc.generateSchedule({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
+router.get("/leases/:leaseId/schedule", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.getSchedule({ orgId:req.user.organization_id, leaseId:params.leaseId })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/post", requirePermission("compliance.ifrs16.post"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.postLease,{...req.body,...params}); res.json(await svc.postLeasePeriod({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/initial-recognition/post", requirePermission("compliance.ifrs16.post"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.postInitialRecognition,{...req.body,...params}); res.json(await svc.postInitialRecognition({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
 
-router.post(
-  "/leases/:leaseId/schedule/generate",
-  requirePermission("compliance.ifrs16.manage"),
-  async (req, res, next) => {
-    try {
-      const params = validate(v.leaseIdParam, req.params);
-      const payload = validate(v.generateSchedule, { ...req.body, ...params });
-      const result = await svc.generateSchedule({
-        orgId: req.user.organization_id,
-        actorUserId: req.user.id,
-        leaseId: params.leaseId,
-        payload,
-      });
-      res.json(result);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.get("/leases/:leaseId/modifications", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.listLeaseModifications({ orgId:req.user.organization_id, leaseId:params.leaseId })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/modifications", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const payload=validate(v.createModification, req.body); res.status(201).json(await svc.createLeaseModification({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, payload })); } catch(e){ next(e);} });
+router.get("/leases/:leaseId/modifications/:modificationId", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.modificationIdParam,req.params); res.json(await svc.getLeaseModification({ orgId:req.user.organization_id, leaseId:params.leaseId, modificationId:params.modificationId })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/modifications/:modificationId/submit", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.modificationIdParam,req.params); res.json(await svc.submitLeaseModification({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, modificationId:params.modificationId })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/modifications/:modificationId/approve", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.modificationIdParam,req.params); const payload=validate(v.commentPayload,req.body||{}); res.json(await svc.approveLeaseModification({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, modificationId:params.modificationId, comment:payload.comment })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/modifications/:modificationId/reject", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const params=validate(v.modificationIdParam,req.params); const payload=validate(v.commentPayload,req.body||{}); res.json(await svc.rejectLeaseModification({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, modificationId:params.modificationId, comment:payload.comment })); } catch(e){ next(e);} });
+router.post("/leases/:leaseId/modifications/:modificationId/apply", requirePermission("compliance.ifrs16.post"), async (req,res,next)=>{ try { const params=validate(v.modificationIdParam,req.params); res.json(await svc.applyLeaseModification({ orgId:req.user.organization_id, actorUserId:req.user.id, leaseId:params.leaseId, modificationId:params.modificationId })); } catch(e){ next(e);} });
 
-router.get(
-  "/leases/:leaseId/schedule",
-  requirePermission("compliance.ifrs16.read"),
-  async (req, res, next) => {
-    try {
-      const params = validate(v.leaseIdParam, req.params);
-      const result = await svc.getSchedule({
-        orgId: req.user.organization_id,
-        leaseId: params.leaseId,
-      });
-      res.json(result);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-router.post(
-  "/leases/:leaseId/post",
-  requirePermission("compliance.ifrs16.post"),
-  async (req, res, next) => {
-    try {
-      const params = validate(v.leaseIdParam, req.params);
-      const payload = validate(v.postLease, { ...req.body, ...params });
-      const result = await svc.postLeasePeriod({
-        orgId: req.user.organization_id,
-        actorUserId: req.user.id,
-        leaseId: params.leaseId,
-        payload,
-      });
-      res.json(result);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// Initial recognition: Dr ROU asset / Cr Lease liability
-router.post(
-  "/leases/:leaseId/initial-recognition/post",
-  requirePermission("compliance.ifrs16.post"),
-  async (req, res, next) => {
-    try {
-      const params = validate(v.leaseIdParam, req.params);
-      const payload = validate(v.postInitialRecognition, { ...req.body, ...params });
-      const result = await svc.postInitialRecognition({
-        orgId: req.user.organization_id,
-        actorUserId: req.user.id,
-        leaseId: params.leaseId,
-        payload,
-      });
-      res.json(result);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.get("/leases/:leaseId/events", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); const query=validate(v.reportQuery,req.query); res.json(await svc.listLeaseEvents({ orgId:req.user.organization_id, leaseId:params.leaseId, query })); } catch(e){ next(e);} });
+router.get("/leases/:leaseId/posting-ledger", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const params=validate(v.leaseIdParam,req.params); res.json(await svc.listLeasePostingLedger({ orgId:req.user.organization_id, leaseId:params.leaseId })); } catch(e){ next(e);} });
+router.get("/reports/dashboard", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const query=validate(v.reportQuery,req.query); res.json(await svc.getLeaseDashboard({ orgId:req.user.organization_id, query })); } catch(e){ next(e);} });
+router.get("/reports/disclosures", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { const query=validate(v.reportQuery,req.query); res.json(await svc.getDisclosureReport({ orgId:req.user.organization_id, query })); } catch(e){ next(e);} });
 
 module.exports = router;
