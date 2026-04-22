@@ -43,6 +43,22 @@ async function assertPostableAccount({ orgId, accountId, label, client = pool })
   if (rows[0].status !== 'active') throw new AppError(400, `${label} must be an active account`);
   if (!rows[0].is_postable) throw new AppError(400, `${label} must be postable`);
 }
+
+async function getValidCurrencyCode({ requestedCode, client = pool }) {
+  const requested = String(requestedCode || '').trim().toUpperCase();
+  if (requested) {
+    const { rows } = await client.query(`SELECT code FROM currencies WHERE code=$1 LIMIT 1`, [requested]);
+    if (!rows.length) throw new AppError(400, `Invalid currency code '${requested}'`);
+    return rows[0].code;
+  }
+
+  const { rows: preferred } = await client.query(`SELECT code FROM currencies WHERE code IN ('GHS','USD') ORDER BY CASE code WHEN 'GHS' THEN 1 WHEN 'USD' THEN 2 ELSE 3 END LIMIT 1`);
+  if (preferred.length) return preferred[0].code;
+
+  const { rows } = await client.query(`SELECT code FROM currencies ORDER BY code LIMIT 1`);
+  if (!rows.length) throw new AppError(400, 'No currencies are configured in reference data');
+  return rows[0].code;
+}
 async function getLeaseBase({ orgId, leaseId, client = pool }) {
   const { rows } = await client.query(`SELECT l.*,
       coa_cash.name AS cash_account_name,
@@ -171,10 +187,13 @@ async function listLeases({ orgId, query }) {
   const limit = Math.min(Number(query?.limit || 50), 200); const offset = Math.max(Number(query?.offset || 0), 0);
   const status = query?.status; const where = ['organization_id=$1']; const params = [orgId];
   if (status) { params.push(status); where.push(`status=$${params.length}`); }
-  const { rows } = await pool.query(`SELECT id, code, name, status, commencement_date, term_months,payment_amount, payments_per_year, annual_discount_rate,payment_timing,
-      workflow_document_id, submitted_at, approved_at,
-      initial_recognition_date, initial_recognition_journal_id, created_at, updated_at
-    FROM leases WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+  const { rows } = await pool.query(`SELECT l.id, l.code, l.name, l.status, l.commencement_date, l.term_months, l.payment_amount, l.payments_per_year, l.annual_discount_rate, l.payment_timing,
+      l.workflow_document_id, l.submitted_at, l.approved_at, l.initial_recognition_date, l.initial_recognition_journal_id, l.created_at, l.updated_at,
+      c.currency_code, c.contract_reference
+    FROM leases l
+    LEFT JOIN lease_contracts c ON c.lease_id = l.id AND c.organization_id = l.organization_id
+    WHERE ${where.map((clause) => clause.replace(/\borganization_id\b/g, 'l.organization_id').replace(/\bstatus\b/g, 'l.status')).join(' AND ')}
+    ORDER BY l.created_at DESC LIMIT $${params.length+1} OFFSET $${params.length+2}`,
     [...params, limit, offset]);
   return { items: rows, limit, offset };
 }
@@ -196,6 +215,8 @@ async function createLease({ orgId, actorUserId, payload }) {
       accumulated_depreciation_account_id: payload.accumulated_depreciation_account_id || settings.accumulated_depreciation_account_id,
       cash_account_id: payload.cash_account_id || settings.cash_account_id,
     };
+
+    const currencyCode = await getValidCurrencyCode({ requestedCode: payload.currency_code, client });
 
     const { rows: existing } = await client.query(`SELECT 1 FROM leases WHERE organization_id=$1 AND code=$2 LIMIT 1`, [orgId, payload.code]);
     if (existing.length) throw new AppError(409, 'Lease code already exists');
@@ -228,7 +249,7 @@ async function createLease({ orgId, actorUserId, payload }) {
     await client.query(`INSERT INTO lease_contracts(lease_id,organization_id,contract_reference,currency_code,payment_timing,initial_direct_costs,lease_incentives,restoration_provision)
                         VALUES($1,$2,$3,COALESCE($4,'USD'),$5,$6,$7,$8)
                         ON CONFLICT (lease_id) DO UPDATE SET updated_at=NOW()`,
-      [lease.id, orgId, payload.contract_reference || payload.code, payload.currency_code || 'USD', payload.payment_timing, payload.initial_direct_costs || null, payload.lease_incentives || null, payload.restoration_provision || null]);
+      [lease.id, orgId, payload.contract_reference || payload.code, currencyCode, payload.payment_timing, payload.initial_direct_costs || null, payload.lease_incentives || null, payload.restoration_provision || null]);
     await client.query(`INSERT INTO lease_assets(lease_id,organization_id,asset_code,description,asset_class,useful_life_months,rou_cost,is_primary)
                         VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)`,
       [lease.id, orgId, payload.asset_code || payload.code, payload.asset_description || payload.name, payload.asset_class || null, payload.useful_life_months || termMonths.toNumber(), null]);
@@ -246,6 +267,7 @@ async function upsertContract({ orgId, actorUserId, leaseId, payload }) {
   try {
     await client.query('BEGIN');
     await getLeaseBase({ orgId, leaseId, client });
+    const currencyCode = await getValidCurrencyCode({ requestedCode: payload.currency_code, client });
     const { rows } = await client.query(`INSERT INTO lease_contracts(
         lease_id, organization_id, counterparty_partner_id, contract_reference, currency_code, payment_timing, indexation,
         has_purchase_option, has_extension_option, has_termination_option, residual_value_guarantee, initial_direct_costs, lease_incentives, restoration_provision)
@@ -256,7 +278,7 @@ async function upsertContract({ orgId, actorUserId, leaseId, payload }) {
         has_extension_option=EXCLUDED.has_extension_option, has_termination_option=EXCLUDED.has_termination_option, residual_value_guarantee=EXCLUDED.residual_value_guarantee,
         initial_direct_costs=EXCLUDED.initial_direct_costs, lease_incentives=EXCLUDED.lease_incentives, restoration_provision=EXCLUDED.restoration_provision,
         updated_at=NOW() RETURNING *`,
-      [leaseId, orgId, payload.counterparty_partner_id || null, payload.contract_reference || null, payload.currency_code || 'USD', payload.payment_timing || 'arrears', payload.indexation || null,
+      [leaseId, orgId, payload.counterparty_partner_id || null, payload.contract_reference || null, currencyCode, payload.payment_timing || 'arrears', payload.indexation || null,
        payload.has_purchase_option ?? false, payload.has_extension_option ?? false, payload.has_termination_option ?? false, payload.residual_value_guarantee || null,
        payload.initial_direct_costs || null, payload.lease_incentives || null, payload.restoration_provision || null]);
     await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType: 'CONTRACT_UPSERTED', payload: rows[0] });
