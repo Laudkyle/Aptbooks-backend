@@ -33,6 +33,12 @@ const createLease = z.object({
   payments_per_year: z.union([z.literal(1), z.literal(2), z.literal(4), z.literal(12)]).default(12),
   annual_discount_rate: z.number().min(0).max(1),
   payment_timing: z.enum(["arrears", "advance"]).optional().default("arrears"),
+  recognition_model: z.enum(["on_balance_sheet","short_term_exempt","low_value_exempt"]).optional(),
+  is_short_term_lease: z.boolean().optional(),
+  is_low_value_lease: z.boolean().optional(),
+  practical_expedient_non_lease_components: z.boolean().optional(),
+  ownership_transfers: z.boolean().optional(),
+  purchase_option_reasonably_certain: z.boolean().optional(),
   rou_asset_account_id: uuid.optional(),
   lease_liability_account_id: uuid.optional(),
   interest_expense_account_id: uuid.optional(),
@@ -48,6 +54,14 @@ const createLease = z.object({
   initial_direct_costs: z.number().nonnegative().optional(),
   lease_incentives: z.number().nonnegative().optional(),
   restoration_provision: z.number().nonnegative().optional(),
+  prepaid_lease_payments: z.number().nonnegative().optional(),
+  accrued_lease_payments: z.number().nonnegative().optional(),
+  residual_value_guarantee: z.number().nonnegative().optional(),
+  purchase_option_amount: z.number().nonnegative().optional(),
+  has_purchase_option: z.boolean().optional(),
+  has_extension_option: z.boolean().optional(),
+  has_termination_option: z.boolean().optional(),
+  indexation: z.string().max(100).optional(),
 });
 
 const upsertContract = z.object({
@@ -63,6 +77,9 @@ const upsertContract = z.object({
   initial_direct_costs: z.number().nonnegative().optional(),
   lease_incentives: z.number().nonnegative().optional(),
   restoration_provision: z.number().nonnegative().optional(),
+  prepaid_lease_payments: z.number().nonnegative().optional(),
+  accrued_lease_payments: z.number().nonnegative().optional(),
+  purchase_option_amount: z.number().nonnegative().optional(),
 });
 
 const createAsset = z.object({
@@ -77,7 +94,7 @@ const updateAsset = createAsset.partial();
 
 const createPayment = z.object({
   due_date: dateOnly,
-  amount: z.number(),
+  amount: z.number().positive(),
   payment_type: z.enum(["fixed","variable","fee","incentive","restoration","other"]).optional(),
   is_actual: z.boolean().optional(),
   paid_date: dateOnly.optional(),
