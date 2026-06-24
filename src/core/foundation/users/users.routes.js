@@ -717,6 +717,7 @@ router.post("/me/switch-organization", async (req, res, next) => {
       userId: user.id,
       tokenJti: refresh.jti,
       familyId: refresh.familyId,
+      token: refresh.token,
       expiresAt: refresh.expiresAt,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent

@@ -32,8 +32,7 @@ const MAX_ATTEMPTS = 10;
 const attempts = new Map();
 
 function rateLimitKey(req, email) {
-  const ip =
-    req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
   return `${ip}:${String(email || "").toLowerCase()}`;
 }
 

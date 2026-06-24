@@ -156,12 +156,17 @@ async function getActiveRefreshTokens({ organizationId, userId, limit = 100 }) {
 async function cleanupExpiredRefreshTokens(batchSize = 1000) {
   const { rowCount } = await pool.query(
     `DELETE FROM refresh_tokens
-     WHERE expires_at < now() - INTERVAL '7 days' -- Keep expired tokens for a week for audit
-        OR (revoked_at IS NOT NULL AND revoked_at < now() - INTERVAL '30 days') -- Clean up old revoked tokens
-     LIMIT $1`,
+     WHERE id IN (
+       SELECT id
+       FROM refresh_tokens
+       WHERE expires_at < now() - INTERVAL '7 days' -- Keep expired tokens for a week for audit
+          OR (revoked_at IS NOT NULL AND revoked_at < now() - INTERVAL '30 days') -- Clean up old revoked tokens
+       ORDER BY created_at ASC
+       LIMIT $1
+     )`,
     [batchSize]
   );
-  
+
   return rowCount;
 }
 

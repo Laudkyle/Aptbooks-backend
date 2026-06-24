@@ -87,15 +87,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
-// Public docs (recommended)
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
-app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
-app.use("/utilities/client-logs", require("./utilities/client-logs/clientLogs.routes"));
-app.use("/utilities/i18n", require("./utilities/i18n/i18n.routes"));
-app.use("/utilities/a11y", require("./utilities/a11y/a11y.routes"));
-app.use("/utilities/release", require("./utilities/release/release.routes"));
-app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
 
 app.use(helmet({
   // API-first backend; Swagger UI uses inline scripts/styles.
@@ -115,6 +106,19 @@ app.use(globalRateLimit);
 
 
 app.use(auditMiddleware);
+
+// Public docs and utility APIs are mounted after core security, parsing,
+// request-id, rate-limit, and audit middleware so they share the same
+// observability and baseline protection as application routes.
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
+app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
+app.use("/utilities/client-logs", require("./utilities/client-logs/clientLogs.routes"));
+app.use("/utilities/i18n", require("./utilities/i18n/i18n.routes"));
+app.use("/utilities/a11y", require("./utilities/a11y/a11y.routes"));
+app.use("/utilities/release", require("./utilities/release/release.routes"));
+app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
+
 // Liveness / readiness / comprehensive health report
 app.use("/", healthRouter);
 

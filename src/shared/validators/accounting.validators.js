@@ -1,4 +1,61 @@
 const { z, uuid, isoDate } = require("./common.validators");
+const { parseDecimalToBigInt } = require("../utils/money");
+
+
+const moneyAmount = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return value;
+    return String(value);
+  }
+  if (typeof value === "string") return value.trim();
+  return value;
+}, z.string().regex(/^\d+(?:\.\d{1,2})?$/, "Amount must be a non-negative decimal with at most 2 decimal places"));
+
+function amountToMinorUnits(value) {
+  return parseDecimalToBigInt(value || "0", 2);
+}
+
+function addLineBalanceIssues(lines, ctx) {
+  let debit = 0n;
+  let credit = 0n;
+
+  for (const [i, line] of lines.entries()) {
+    let d = 0n;
+    let c = 0n;
+
+    try {
+      d = amountToMinorUnits(line.debit);
+      c = amountToMinorUnits(line.credit);
+    } catch (_err) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Line ${i + 1} contains an invalid amount`,
+        path: ["lines", i]
+      });
+      continue;
+    }
+
+    if ((d > 0n && c > 0n) || (d === 0n && c === 0n)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Line ${i + 1} must have either debit or credit`,
+        path: ["lines", i]
+      });
+    }
+
+    debit += d;
+    credit += c;
+  }
+
+  if (debit !== credit) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Journal not balanced",
+      path: ["lines"]
+    });
+  }
+}
 
 const createPeriodSchema = z.object({
   code: z.string().min(1).max(50),
@@ -33,22 +90,11 @@ const journalCreateSchema = z.object({
   lines: z.array(z.object({
     accountId: uuid,
     description: z.string().max(300).optional(),
-    debit: z.number().nonnegative().optional(),
-    credit: z.number().nonnegative().optional()
+    debit: moneyAmount.optional(),
+    credit: moneyAmount.optional()
   })).min(2)
 }).superRefine((v, ctx) => {
-  let debit = 0, credit = 0;
-  for (const [i, l] of v.lines.entries()) {
-    const d = Number(l.debit || 0);
-    const c = Number(l.credit || 0);
-    if ((d > 0 && c > 0) || (d === 0 && c === 0)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Line ${i + 1} must have either debit or credit`, path: ["lines", i] });
-    }
-    debit += d; credit += c;
-  }
-  if (debit !== credit) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Journal not balanced", path: ["lines"] });
-  }
+  addLineBalanceIssues(v.lines, ctx);
 });
 
 const voidSchema = z.object({
@@ -70,8 +116,8 @@ const journalHeaderUpdateSchema = z
 const journalLineSchema = z.object({
   accountId: uuid,
   description: z.string().max(300).optional().nullable(),
-  debit: z.number().nonnegative().optional(),
-  credit: z.number().nonnegative().optional()
+  debit: moneyAmount.optional(),
+  credit: moneyAmount.optional()
 });
 
 const journalLinesReplaceSchema = z
@@ -79,28 +125,7 @@ const journalLinesReplaceSchema = z
     lines: z.array(journalLineSchema).min(2)
   })
   .superRefine((v, ctx) => {
-    let debit = 0,
-      credit = 0;
-    for (const [i, l] of v.lines.entries()) {
-      const d = Number(l.debit || 0);
-      const c = Number(l.credit || 0);
-      if ((d > 0 && c > 0) || (d === 0 && c === 0)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Line ${i + 1} must have either debit or credit`,
-          path: ["lines", i]
-        });
-      }
-      debit += d;
-      credit += c;
-    }
-    if (debit !== credit) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Journal not balanced",
-        path: ["lines"]
-      });
-    }
+    addLineBalanceIssues(v.lines, ctx);
   });
 
 const journalLineAddSchema = journalLineSchema;
@@ -109,23 +134,29 @@ const journalLineUpdateSchema = z
   .object({
     accountId: uuid.optional(),
     description: z.string().max(300).optional().nullable(),
-    debit: z.number().nonnegative().optional(),
-    credit: z.number().nonnegative().optional()
+    debit: moneyAmount.optional(),
+    credit: moneyAmount.optional()
   })
   .refine((v) => Object.keys(v).length > 0, "No fields provided")
   .superRefine((v, ctx) => {
-    const d = v.debit;
-    const c = v.credit;
-    if (typeof d === "number" || typeof c === "number") {
-      const dd = Number(d || 0);
-      const cc = Number(c || 0);
-      if ((dd > 0 && cc > 0) || (dd === 0 && cc === 0)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Line must have either debit or credit",
-          path: []
-        });
-      }
+    if (v.debit === undefined && v.credit === undefined) return;
+
+    let debit = 0n;
+    let credit = 0n;
+    try {
+      debit = amountToMinorUnits(v.debit);
+      credit = amountToMinorUnits(v.credit);
+    } catch (_err) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid amount", path: [] });
+      return;
+    }
+
+    if ((debit > 0n && credit > 0n) || (debit === 0n && credit === 0n)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Line must have either debit or credit",
+        path: []
+      });
     }
   });
 

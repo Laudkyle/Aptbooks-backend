@@ -1,6 +1,6 @@
 function auditMiddleware(req, _res, next) {
   req.audit = {
-    ip: req.headers["x-forwarded-for"] || req.socket.remoteAddress,
+    ip: req.ip || req.socket.remoteAddress || null,
     userAgent: req.headers["user-agent"] || null
   };
   next();

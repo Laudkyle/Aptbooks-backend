@@ -14,7 +14,7 @@ async function ingest(orgId, userId, req) {
     const correlationId = e.correlationId || e.correlation_id || req.headers["x-request-id"] || null;
     const context = e.context || e.meta || null;
     const userAgent = req.headers["user-agent"] || null;
-    const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.ip || null;
+    const ip = req.ip || req.socket.remoteAddress || null;
 
     const { rows } = await pool.query(
       `INSERT INTO client_logs(organization_id, user_id, correlation_id, level, message, context, user_agent, ip)

@@ -1,4 +1,4 @@
-import Decimal from 'decimal.js';
+const Decimal = require('decimal.js');
 
 // Configure Decimal.js for financial calculations
 Decimal.set({
@@ -11,7 +11,7 @@ Decimal.set({
 /**
  * Convert any value to Decimal safely
  */
-export function toDecimal(value, defaultValue = new Decimal(0)) {
+function toDecimal(value, defaultValue = new Decimal(0)) {
   if (value instanceof Decimal) return value;
   if (value === null || value === undefined || value === '') return defaultValue;
   
@@ -26,7 +26,7 @@ export function toDecimal(value, defaultValue = new Decimal(0)) {
 /**
  * Round to specified decimal places with banker's rounding
  */
-export function roundDecimal(value, decimals = 2) {
+function roundDecimal(value, decimals = 2) {
   const decimal = toDecimal(value);
   return decimal.toDecimalPlaces(decimals, Decimal.ROUND_HALF_EVEN);
 }
@@ -34,14 +34,14 @@ export function roundDecimal(value, decimals = 2) {
 /**
  * Convert Decimal to currency amount (2 decimal places)
  */
-export function toCurrencyAmount(value) {
+function toCurrencyAmount(value) {
   return roundDecimal(value, 2);
 }
 
 /**
  * Convert Decimal to number for database storage (with specified decimals)
  */
-export function toNumber(value, decimals = 6) {
+function toNumber(value, decimals = 6) {
   const decimal = toDecimal(value);
   return decimal.toDecimalPlaces(decimals, Decimal.ROUND_HALF_EVEN).toNumber();
 }
@@ -50,7 +50,7 @@ export function toNumber(value, decimals = 6) {
  * Present Value calculation for lease accounting
  * PV = PMT × [1 - (1 + r)^-n] / r
  */
-export function calculatePresentValue({
+function calculatePresentValue({
   payment,
   annualDiscountRate,
   termMonths,
@@ -84,7 +84,7 @@ export function calculatePresentValue({
 /**
  * Calculate lease liability amortization schedule
  */
-export function calculateAmortizationSchedule({
+function calculateAmortizationSchedule({
   payment,
   annualDiscountRate,
   termMonths,
@@ -122,7 +122,7 @@ export function calculateAmortizationSchedule({
 /**
  * Validate that amounts are positive and within reasonable bounds
  */
-export function validateFinancialAmount(value, min = 0, max = 999999999999) {
+function validateFinancialAmount(value, min = 0, max = 999999999999) {
   const amount = toDecimal(value);
   
   if (amount.lessThan(min)) {
@@ -135,3 +135,14 @@ export function validateFinancialAmount(value, min = 0, max = 999999999999) {
   
   return amount;
 }
+
+module.exports = {
+  Decimal,
+  toDecimal,
+  roundDecimal,
+  toCurrencyAmount,
+  toNumber,
+  calculatePresentValue,
+  calculateAmortizationSchedule,
+  validateFinancialAmount
+};

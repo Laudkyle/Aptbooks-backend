@@ -50,7 +50,7 @@ function createRateLimiter({ windowMs, max, keyFn, skipFn } = {}) {
       const now = Date.now();
       cleanup(now);
 
-      const key = keyFn ? keyFn(req) : (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown");
+      const key = keyFn ? keyFn(req) : (req.ip || req.socket.remoteAddress || "unknown");
 
       // Postgres mode (shared across instances)
       if (storeMode === "postgres") {
@@ -115,7 +115,7 @@ const globalRateLimit = createRateLimiter({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   max: env.RATE_LIMIT_MAX,
   keyFn: (req) => {
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
     return `ip:${ip}`;
   },
   // Skip Swagger assets if desired
@@ -127,7 +127,7 @@ const authRateLimit = createRateLimiter({
   windowMs: env.AUTH_RATE_LIMIT_WINDOW_MS,
   max: env.AUTH_RATE_LIMIT_MAX,
   keyFn: (req) => {
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
+    const ip = req.ip || req.socket.remoteAddress || "unknown";
     return `auth:${ip}`;
   }
 });
