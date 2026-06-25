@@ -125,6 +125,54 @@ router.get(
   }
 );
 
+router.put(
+  "/contracts/:contractId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const payload = validate(v.updateContract, req.body);
+      const data = await svc.updateContract({
+        orgId: req.user.organization_id,
+        actorUserId: req.user.id,
+        contractId: params.contractId,
+        payload,
+      });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.patch(
+  "/contracts/:contractId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const payload = validate(v.updateContract, req.body);
+      const data = await svc.updateContract({
+        orgId: req.user.organization_id,
+        actorUserId: req.user.id,
+        contractId: params.contractId,
+        payload,
+      });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/contracts/:contractId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.contractIdParam, req.params);
+      const data = await svc.deleteContract({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
 router.post(
   "/contracts/:contractId/lifecycle",
   requirePermission("compliance.ifrs15.manage"),
@@ -162,6 +210,31 @@ router.post(
     } catch (e) {
       next(e);
     }
+  }
+);
+
+router.put(
+  "/contracts/:contractId/obligations/:obligationId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.obligationIdParam, req.params);
+      const payload = validate(v.updateObligation, req.body);
+      const data = await svc.updateObligation({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, obligationId: params.obligationId, payload });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/contracts/:contractId/obligations/:obligationId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.obligationIdParam, req.params);
+      const data = await svc.deleteObligation({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, obligationId: params.obligationId });
+      res.json(data);
+    } catch (e) { next(e); }
   }
 );
 
@@ -263,6 +336,69 @@ router.post(
   }
 );
 
+router.put(
+  "/contracts/:contractId/modifications/:modificationId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.modificationIdParam, req.params);
+      const payload = validate(v.updateModification, req.body);
+      const data = await svc.updateModification({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, modificationId: params.modificationId, payload });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/contracts/:contractId/modifications/:modificationId/submit-for-approval",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.modificationIdParam, req.params);
+      const data = await svc.submitModification({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, modificationId: params.modificationId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/contracts/:contractId/modifications/:modificationId/approve",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.modificationIdParam, req.params);
+      const payload = validate(v.modificationDecision, req.body || {});
+      const data = await svc.approveModification({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, modificationId: params.modificationId, payload });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.post(
+  "/contracts/:contractId/modifications/:modificationId/reject",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.modificationIdParam, req.params);
+      const payload = validate(v.modificationDecision, req.body || {});
+      const data = await svc.rejectModification({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, modificationId: params.modificationId, payload });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/contracts/:contractId/modifications/:modificationId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.modificationIdParam, req.params);
+      const data = await svc.deleteModification({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, modificationId: params.modificationId });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
 router.post(
   "/contracts/:contractId/modifications/:modificationId/apply",
   requirePermission("compliance.ifrs15.manage"),
@@ -313,6 +449,31 @@ router.post(
     } catch (e) {
       next(e);
     }
+  }
+);
+
+router.put(
+  "/contracts/:contractId/variable-consideration/:variableConsiderationId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.variableConsiderationIdParam, req.params);
+      const payload = validate(v.updateVariableConsideration, req.body);
+      const data = await svc.updateVariableConsideration({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, variableConsiderationId: params.variableConsiderationId, payload });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/contracts/:contractId/variable-consideration/:variableConsiderationId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.variableConsiderationIdParam, req.params);
+      const data = await svc.deleteVariableConsideration({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, variableConsiderationId: params.variableConsiderationId });
+      res.json(data);
+    } catch (e) { next(e); }
   }
 );
 
@@ -472,6 +633,31 @@ router.get(
     } catch (e) {
       next(e);
     }
+  }
+);
+
+router.put(
+  "/contracts/:contractId/costs/:costId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.costIdParam, req.params);
+      const payload = validate(v.updateCost, { ...req.body, ...params });
+      const data = await svc.updateCost({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, costId: params.costId, payload });
+      res.json(data);
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/contracts/:contractId/costs/:costId",
+  requirePermission("compliance.ifrs15.manage"),
+  async (req, res, next) => {
+    try {
+      const params = validate(v.costIdParam, req.params);
+      const data = await svc.deleteCost({ orgId: req.user.organization_id, actorUserId: req.user.id, contractId: params.contractId, costId: params.costId });
+      res.json(data);
+    } catch (e) { next(e); }
   }
 );
 

@@ -36,7 +36,9 @@ function overlapDays(aStart, aEnd, bStart, bEnd) {
 async function getSettings(client, orgId) {
   const { rows } = await client.query(
     `SELECT organization_id, revenue_account_id, contract_asset_account_id, contract_liability_account_id,
-            default_billing_account_id, rounding_decimals
+            default_billing_account_id, financing_interest_income_account_id,
+            financing_interest_expense_account_id, default_cost_asset_account_id,
+            default_cost_amort_expense_account_id, rounding_decimals, created_at, updated_at
      FROM ifrs15_settings
      WHERE organization_id=$1`,
     [orgId]
@@ -317,14 +319,20 @@ async function upsertSettings({ orgId, actorUserId, payload }) {
     const { rows } = await client.query(
       `INSERT INTO ifrs15_settings(
          organization_id, revenue_account_id, contract_asset_account_id, contract_liability_account_id,
-         default_billing_account_id, rounding_decimals
+         default_billing_account_id, financing_interest_income_account_id,
+         financing_interest_expense_account_id, default_cost_asset_account_id,
+         default_cost_amort_expense_account_id, rounding_decimals
        )
-       VALUES ($1,$2,$3,$4,$5,$6)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (organization_id) DO UPDATE SET
          revenue_account_id=EXCLUDED.revenue_account_id,
          contract_asset_account_id=EXCLUDED.contract_asset_account_id,
          contract_liability_account_id=EXCLUDED.contract_liability_account_id,
          default_billing_account_id=EXCLUDED.default_billing_account_id,
+         financing_interest_income_account_id=EXCLUDED.financing_interest_income_account_id,
+         financing_interest_expense_account_id=EXCLUDED.financing_interest_expense_account_id,
+         default_cost_asset_account_id=EXCLUDED.default_cost_asset_account_id,
+         default_cost_amort_expense_account_id=EXCLUDED.default_cost_amort_expense_account_id,
          rounding_decimals=EXCLUDED.rounding_decimals,
          updated_at=NOW()
        RETURNING *`,
@@ -334,6 +342,10 @@ async function upsertSettings({ orgId, actorUserId, payload }) {
         payload.contract_asset_account_id,
         payload.contract_liability_account_id,
         (payload.default_billing_account_id || payload.billing_account_id || null),
+        payload.financing_interest_income_account_id || null,
+        payload.financing_interest_expense_account_id || null,
+        payload.default_cost_asset_account_id || null,
+        payload.default_cost_amort_expense_account_id || null,
         payload.rounding_decimals ?? 2,
       ]
     );
@@ -480,6 +492,58 @@ async function createContract({ orgId, actorUserId, payload }) {
   } finally {
     client.release();
   }
+}
+
+
+async function updateContract({ orgId, actorUserId, contractId, payload }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    if (!['draft','cancelled'].includes(contract.status)) {
+      throw new AppError(409, "Only draft or cancelled IFRS 15 contracts can be edited directly. Use a contract modification for active/completed contracts.");
+    }
+    const hasSchedule = await client.query(`SELECT 1 FROM ifrs15_recognition_schedule_lines WHERE organization_id=$1 AND contract_id=$2 LIMIT 1`, [orgId, contractId]);
+    if (hasSchedule.rows.length) throw new AppError(409, "Cannot edit a contract after recognition schedule lines have been generated");
+    const businessPartnerId = payload.business_partner_id || payload.customer_id || contract.business_partner_id;
+    if (payload.business_partner_id || payload.customer_id) await getCustomerBusinessPartnerOrThrow(client, orgId, businessPartnerId);
+    const { rows } = await client.query(
+      `UPDATE ifrs15_contracts
+       SET business_partner_id=$1, code=$2, contract_date=$3, currency_code=$4,
+           transaction_price=$5, base_transaction_price=$5, billing_policy=$6,
+           billing_account_id=$7, start_date=$8, end_date=$9, updated_at=NOW()
+       WHERE organization_id=$10 AND id=$11 RETURNING *`,
+      [businessPartnerId, payload.code ?? contract.code,
+       payload.contract_date ? asDateOnly(payload.contract_date) : asDateOnly(contract.contract_date),
+       payload.currency_code ?? contract.currency_code,
+       payload.transaction_price != null ? new Decimal(payload.transaction_price).toFixed(6) : new Decimal(contract.transaction_price || 0).toFixed(6),
+       payload.billing_policy ?? contract.billing_policy,
+       payload.billing_account_id !== undefined ? payload.billing_account_id : contract.billing_account_id,
+       payload.start_date !== undefined ? (payload.start_date ? asDateOnly(payload.start_date) : null) : contract.start_date,
+       payload.end_date !== undefined ? (payload.end_date ? asDateOnly(payload.end_date) : null) : contract.end_date,
+       orgId, contractId]
+    );
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "CONTRACT_UPDATED", meta: { fields: Object.keys(payload || {}) } });
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (e) { await client.query("ROLLBACK"); throw e; }
+  finally { client.release(); }
+}
+
+async function deleteContract({ orgId, actorUserId, contractId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    if (!['draft','cancelled'].includes(contract.status)) throw new AppError(409, "Only draft or cancelled IFRS 15 contracts can be deleted");
+    const posted = await client.query(`SELECT 1 FROM ifrs15_posting_ledger WHERE organization_id=$1 AND contract_id=$2 AND journal_id IS NOT NULL LIMIT 1`, [orgId, contractId]);
+    if (posted.rows.length) throw new AppError(409, "Cannot delete a contract with accounting postings");
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "CONTRACT_DELETED", meta: { code: contract.code } });
+    await client.query(`DELETE FROM ifrs15_contracts WHERE organization_id=$1 AND id=$2`, [orgId, contractId]);
+    await client.query("COMMIT");
+    return { ok: true, deleted: true, id: contractId };
+  } catch (e) { await client.query("ROLLBACK"); throw e; }
+  finally { client.release(); }
 }
 
 async function getContract({ orgId, contractId }) {
@@ -647,6 +711,51 @@ async function addObligation({ orgId, actorUserId, contractId, payload }) {
   } finally {
     client.release();
   }
+}
+
+
+async function updateObligation({ orgId, actorUserId, contractId, obligationId, payload }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    if (contract.status !== "draft") throw new AppError(409, "Obligations can only be edited while contract is draft");
+    const { rows: existingRows } = await client.query(`SELECT * FROM ifrs15_performance_obligations WHERE contract_id=$1 AND id=$2`, [contractId, obligationId]);
+    if (!existingRows.length) throw new AppError(404, "Performance obligation not found");
+    const existing = existingRows[0];
+    const { rows } = await client.query(
+      `UPDATE ifrs15_performance_obligations
+       SET description=$1, obligation_type=$2, satisfaction_method=$3, standalone_selling_price=$4,
+           start_date=$5, end_date=$6, satisfaction_date=$7, updated_at=NOW()
+       WHERE contract_id=$8 AND id=$9 RETURNING *`,
+      [payload.description ?? existing.description, payload.obligation_type ?? existing.obligation_type,
+       payload.satisfaction_method ?? existing.satisfaction_method,
+       payload.standalone_selling_price != null ? new Decimal(payload.standalone_selling_price).toFixed(6) : new Decimal(existing.standalone_selling_price || 0).toFixed(6),
+       payload.start_date !== undefined ? (payload.start_date ? asDateOnly(payload.start_date) : null) : existing.start_date,
+       payload.end_date !== undefined ? (payload.end_date ? asDateOnly(payload.end_date) : null) : existing.end_date,
+       payload.satisfaction_date !== undefined ? (payload.satisfaction_date ? asDateOnly(payload.satisfaction_date) : null) : existing.satisfaction_date,
+       contractId, obligationId]
+    );
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "OBLIGATION_UPDATED", meta: { obligation_id: obligationId } });
+    await client.query("COMMIT");
+    return rows[0];
+  } catch (e) { await client.query("ROLLBACK"); throw e; }
+  finally { client.release(); }
+}
+
+async function deleteObligation({ orgId, actorUserId, contractId, obligationId }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const contract = await getContractOrThrow(client, orgId, contractId);
+    if (contract.status !== "draft") throw new AppError(409, "Obligations can only be deleted while contract is draft");
+    const { rowCount } = await client.query(`DELETE FROM ifrs15_performance_obligations WHERE contract_id=$1 AND id=$2`, [contractId, obligationId]);
+    if (!rowCount) throw new AppError(404, "Performance obligation not found");
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "OBLIGATION_DELETED", meta: { obligation_id: obligationId } });
+    await client.query("COMMIT");
+    return { ok: true, deleted: true, id: obligationId };
+  } catch (e) { await client.query("ROLLBACK"); throw e; }
+  finally { client.release(); }
 }
 
 async function activateContract({ orgId, actorUserId, contractId, payload }) {
@@ -1067,6 +1176,70 @@ async function createModification({ orgId, actorUserId, contractId, payload }) {
   }
 }
 
+
+async function updateModification({ orgId, actorUserId, contractId, modificationId, payload }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const { rows: mRows } = await client.query(`SELECT * FROM ifrs15_contract_modifications WHERE organization_id=$1 AND contract_id=$2 AND id=$3`, [orgId, contractId, modificationId]);
+    if (!mRows.length) throw new AppError(404, "Modification not found");
+    if (!['draft','rejected'].includes(mRows[0].status)) throw new AppError(409, "Only draft or rejected modifications can be edited");
+    const m = mRows[0];
+    const { rows } = await client.query(
+      `UPDATE ifrs15_contract_modifications SET modification_date=$1, modification_type=$2, new_base_transaction_price=$3, notes=$4,
+       adds_distinct_goods_services=$5, price_increase_commensurate_with_ssp=$6, remaining_goods_services_distinct=$7, status='draft'
+       WHERE organization_id=$8 AND contract_id=$9 AND id=$10 RETURNING *`,
+      [payload.modification_date ? asDateOnly(payload.modification_date) : asDateOnly(m.modification_date), payload.modification_type ?? m.modification_type,
+       payload.new_base_transaction_price !== undefined ? (payload.new_base_transaction_price != null ? new Decimal(payload.new_base_transaction_price).toFixed(6) : null) : m.new_base_transaction_price,
+       payload.notes !== undefined ? payload.notes : m.notes,
+       payload.adds_distinct_goods_services !== undefined ? payload.adds_distinct_goods_services : m.adds_distinct_goods_services,
+       payload.price_increase_commensurate_with_ssp !== undefined ? payload.price_increase_commensurate_with_ssp : m.price_increase_commensurate_with_ssp,
+       payload.remaining_goods_services_distinct !== undefined ? payload.remaining_goods_services_distinct : m.remaining_goods_services_distinct,
+       orgId, contractId, modificationId]);
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "MODIFICATION_UPDATED", meta: { modification_id: modificationId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
+async function submitModification({ orgId, actorUserId, contractId, modificationId }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const { rows } = await client.query(`UPDATE ifrs15_contract_modifications SET status='submitted' WHERE organization_id=$1 AND contract_id=$2 AND id=$3 AND status IN ('draft','rejected') RETURNING *`, [orgId, contractId, modificationId]);
+    if (!rows.length) throw new AppError(409, "Only draft or rejected modifications can be submitted");
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "MODIFICATION_SUBMITTED", meta: { modification_id: modificationId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
+async function approveModification({ orgId, actorUserId, contractId, modificationId, payload }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const { rows } = await client.query(`UPDATE ifrs15_contract_modifications SET status='approved', notes=COALESCE($4, notes) WHERE organization_id=$1 AND contract_id=$2 AND id=$3 AND status='submitted' RETURNING *`, [orgId, contractId, modificationId, payload?.notes || null]);
+    if (!rows.length) throw new AppError(409, "Only submitted modifications can be approved");
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "MODIFICATION_APPROVED", meta: { modification_id: modificationId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
+async function rejectModification({ orgId, actorUserId, contractId, modificationId, payload }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const { rows } = await client.query(`UPDATE ifrs15_contract_modifications SET status='rejected', notes=COALESCE($4, notes) WHERE organization_id=$1 AND contract_id=$2 AND id=$3 AND status='submitted' RETURNING *`, [orgId, contractId, modificationId, payload?.notes || null]);
+    if (!rows.length) throw new AppError(409, "Only submitted modifications can be rejected");
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "MODIFICATION_REJECTED", meta: { modification_id: modificationId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
+async function deleteModification({ orgId, actorUserId, contractId, modificationId }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const { rows } = await client.query(`UPDATE ifrs15_contract_modifications SET status='voided' WHERE organization_id=$1 AND contract_id=$2 AND id=$3 AND status IN ('draft','rejected') RETURNING *`, [orgId, contractId, modificationId]);
+    if (!rows.length) throw new AppError(409, "Only draft or rejected modifications can be voided");
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "MODIFICATION_VOIDED", meta: { modification_id: modificationId } });
+    await client.query("COMMIT"); return { ok: true, voided: true, id: modificationId };
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
 async function applyModification({ orgId, actorUserId, contractId, modificationId, payload }) {
   const client = await pool.connect();
   try {
@@ -1080,7 +1253,7 @@ async function applyModification({ orgId, actorUserId, contractId, modificationI
     );
     if (!mRows.length) throw new AppError(404, "Modification not found");
     const mod = mRows[0];
-    if (mod.status !== "draft") throw new AppError(409, "Modification already applied/voided");
+    if (mod.status !== "approved") throw new AppError(409, "Only approved modifications can be applied");
 
     // Determine modification accounting treatment.
     const decisionInputs = {
@@ -1404,6 +1577,31 @@ async function createVariableConsideration({ orgId, actorUserId, contractId, pay
   } finally {
     client.release();
   }
+}
+
+
+async function updateVariableConsideration({ orgId, actorUserId, contractId, variableConsiderationId, payload }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const vc = await getVariableConsiderationOrThrow(client, orgId, contractId, variableConsiderationId);
+    if (!['DRAFT','REVIEWED'].includes(vc.status)) throw new AppError(409, "Only draft or reviewed variable consideration entries can be edited");
+    const { rows } = await client.query(
+      `UPDATE ifrs15_variable_consideration SET effective_date=$1, method=$2, estimate_amount=$3, highly_probable_no_reversal=$4, constraint_basis=$5, rationale=$6, status='DRAFT', include_in_transaction_price=FALSE, included_amount=0, notes=$7 WHERE organization_id=$8 AND contract_id=$9 AND id=$10 RETURNING *`,
+      [payload.effective_date ? asDateOnly(payload.effective_date) : asDateOnly(vc.effective_date), payload.method ?? vc.method, payload.estimate_amount != null ? new Decimal(payload.estimate_amount).toFixed(6) : new Decimal(vc.estimate_amount || 0).toFixed(6), payload.highly_probable_no_reversal !== undefined ? !!payload.highly_probable_no_reversal : !!vc.highly_probable_no_reversal, payload.constraint_basis !== undefined ? payload.constraint_basis : vc.constraint_basis, payload.rationale !== undefined ? payload.rationale : vc.rationale, payload.notes !== undefined ? payload.notes : vc.notes, orgId, contractId, variableConsiderationId]
+    );
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "VARIABLE_CONSIDERATION_UPDATED", meta: { vc_id: variableConsiderationId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
+async function deleteVariableConsideration({ orgId, actorUserId, contractId, variableConsiderationId }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); const vc = await getVariableConsiderationOrThrow(client, orgId, contractId, variableConsiderationId);
+    if (!['DRAFT','REVIEWED'].includes(vc.status)) throw new AppError(409, "Only draft or reviewed variable consideration entries can be voided");
+    const { rows } = await client.query(`UPDATE ifrs15_variable_consideration SET status='VOIDED', notes=COALESCE(notes, 'Voided') WHERE organization_id=$1 AND contract_id=$2 AND id=$3 RETURNING *`, [orgId, contractId, variableConsiderationId]);
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "VARIABLE_CONSIDERATION_VOIDED", meta: { vc_id: variableConsiderationId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
 }
 
 async function reviewVariableConsideration({ orgId, actorUserId, contractId, variableConsiderationId, payload }) {
@@ -1766,6 +1964,35 @@ async function listCosts({ orgId, contractId }) {
   return { costs: rows };
 }
 
+
+async function updateCost({ orgId, actorUserId, contractId, costId, payload }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); const settings = await getSettingsOrThrow(client, orgId); await getContractOrThrow(client, orgId, contractId);
+    const { rows: existingRows } = await client.query(`SELECT c.*, EXISTS (SELECT 1 FROM ifrs15_cost_amort_schedule_lines s WHERE s.organization_id=c.organization_id AND s.cost_id=c.id AND s.status='posted') AS has_posted_amort FROM ifrs15_capitalised_costs c WHERE c.organization_id=$1 AND c.contract_id=$2 AND c.id=$3`, [orgId, contractId, costId]);
+    if (!existingRows.length) throw new AppError(404, "Capitalised cost not found");
+    const existing = existingRows[0];
+    if (existing.status !== 'active') throw new AppError(409, "Only active costs can be edited");
+    if (existing.has_posted_amort) throw new AppError(409, "Cannot edit a cost after amortisation has been posted");
+    const assetAccount = payload.asset_account_id || existing.asset_account_id || settings.default_cost_asset_account_id;
+    const amortExpAccount = payload.amort_expense_account_id || existing.amort_expense_account_id || settings.default_cost_amort_expense_account_id;
+    const { rows } = await client.query(`UPDATE ifrs15_capitalised_costs SET cost_type=$1, description=$2, amount=$3, asset_account_id=$4, amort_expense_account_id=$5, amort_start_date=$6, amort_end_date=$7 WHERE organization_id=$8 AND contract_id=$9 AND id=$10 RETURNING *`, [payload.cost_type ?? existing.cost_type, payload.description !== undefined ? payload.description : existing.description, payload.amount != null ? new Decimal(payload.amount).toFixed(6) : new Decimal(existing.amount || 0).toFixed(6), assetAccount, amortExpAccount, payload.amort_start_date ? asDateOnly(payload.amort_start_date) : asDateOnly(existing.amort_start_date), payload.amort_end_date ? asDateOnly(payload.amort_end_date) : asDateOnly(existing.amort_end_date), orgId, contractId, costId]);
+    await client.query(`DELETE FROM ifrs15_cost_amort_schedule_lines WHERE organization_id=$1 AND contract_id=$2 AND cost_id=$3 AND status <> 'posted'`, [orgId, contractId, costId]);
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "COST_UPDATED", meta: { cost_id: costId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
+async function deleteCost({ orgId, actorUserId, contractId, costId }) {
+  const client = await pool.connect();
+  try { await client.query("BEGIN"); await getContractOrThrow(client, orgId, contractId);
+    const { rows } = await client.query(`UPDATE ifrs15_capitalised_costs c SET status='voided' WHERE c.organization_id=$1 AND c.contract_id=$2 AND c.id=$3 AND c.status='active' AND NOT EXISTS (SELECT 1 FROM ifrs15_cost_amort_schedule_lines s WHERE s.organization_id=c.organization_id AND s.cost_id=c.id AND s.status='posted') RETURNING *`, [orgId, contractId, costId]);
+    if (!rows.length) throw new AppError(409, "Only active unposted costs can be voided");
+    await client.query(`UPDATE ifrs15_cost_amort_schedule_lines SET status='voided' WHERE organization_id=$1 AND contract_id=$2 AND cost_id=$3 AND status <> 'posted'`, [orgId, contractId, costId]);
+    await recordEvent(client, { orgId, contractId, actorUserId, eventType: "COST_VOIDED", meta: { cost_id: costId } });
+    await client.query("COMMIT"); return rows[0];
+  } catch(e) { await client.query("ROLLBACK"); throw e; } finally { client.release(); }
+}
+
 async function listModifications({ orgId, contractId }) {
   const client = await pool.connect();
   try {
@@ -2084,16 +2311,20 @@ async function remainingPerformanceObligationsReport({ orgId, asOfPeriodId }) {
 
 async function revenueDisaggregationReport({ orgId, periodId, dimension }) {
   // Uses posted schedule lines as the revenue journal basis.
-  const dim = dimension || 'OBLIGATION_TYPE';
+  const aliases = { customer: 'CUSTOMER', contract: 'CONTRACT', obligation: 'OBLIGATION_TYPE', obligation_type: 'OBLIGATION_TYPE', satisfaction_method: 'SATISFACTION_METHOD' };
+  const dim = aliases[String(dimension || 'OBLIGATION_TYPE')] || String(dimension || 'OBLIGATION_TYPE').toUpperCase();
 
   let groupExpr;
-  let joinExtra = '';
   if (dim === 'SATISFACTION_METHOD') {
     groupExpr = 'o.satisfaction_method';
   } else if (dim === 'CUSTOMER') {
-    groupExpr = 'c.business_partner_id';
-  } else {
+    groupExpr = 'c.business_partner_id::text';
+  } else if (dim === 'CONTRACT') {
+    groupExpr = 'c.code';
+  } else if (dim === 'OBLIGATION_TYPE') {
     groupExpr = 'o.obligation_type';
+  } else {
+    throw new AppError(400, 'Unsupported disaggregation dimension');
   }
 
   const { rows } = await pool.query(
@@ -2182,10 +2413,12 @@ async function judgementsReport({ orgId, asOfDate }) {
   };
 }
 module.exports = {
-  getSettings,
+  getSettings: getSettingsPublic,
   upsertSettings,
   listContracts,
   createContract,
+  updateContract,
+  deleteContract,
   submitContractForApproval,
   approveContractWorkflow,
   rejectContractWorkflow,
@@ -2194,16 +2427,25 @@ module.exports = {
   getPostingLedger,
   getContractEvents,
   addObligation,
+  updateObligation,
+  deleteObligation,
   activateContract,
   generateSchedule,
   getSchedule,
   postRevenueForPeriod,
   // Stage 2
   createModification,
+  updateModification,
+  submitModification,
+  approveModification,
+  rejectModification,
+  deleteModification,
   listModifications,
   applyModification,
   // Stage 2B
   createVariableConsideration,
+  updateVariableConsideration,
+  deleteVariableConsideration,
   listVariableConsideration,
   reviewVariableConsideration,
   approveVariableConsideration,
@@ -2213,6 +2455,8 @@ module.exports = {
   listFinancingTerms,
   postFinancingForPeriod,
   createCost,
+  updateCost,
+  deleteCost,
   listCosts,
   getCostSchedule,
   generateCostSchedule,

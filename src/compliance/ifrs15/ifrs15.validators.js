@@ -1,6 +1,19 @@
 const { z } = require("zod");
 
 const uuid = z.string().uuid();
+const decimalInput = z.union([
+  z.number().finite(),
+  z.string().trim().regex(/^-?\d+(\.\d{1,6})?$/, "Expected a decimal amount with up to 6 decimal places"),
+]);
+const positiveDecimalInput = z.union([
+  z.number().positive(),
+  z.string().trim().regex(/^\d+(\.\d{1,6})?$/, "Expected a positive decimal amount with up to 6 decimal places"),
+]).refine((v) => Number(v) > 0, "Amount must be greater than zero");
+const nonNegativeDecimalInput = z.union([
+  z.number().min(0),
+  z.string().trim().regex(/^\d+(\.\d{1,6})?$/, "Expected a non-negative decimal amount with up to 6 decimal places"),
+]).refine((v) => Number(v) >= 0, "Amount cannot be negative");
+
 
 const contractIdParam = z.object({ contractId: uuid });
 
@@ -15,7 +28,7 @@ const upsertSettings = z.object({
   financing_interest_expense_account_id: uuid.optional(),
   default_cost_asset_account_id: uuid.optional(),
   default_cost_amort_expense_account_id: uuid.optional(),
-  rounding_decimals: z.number().int().min(0).max(6).optional().default(2),
+  rounding_decimals: z.coerce.number().int().min(0).max(6).optional().default(2),
 });
 
 
@@ -49,23 +62,30 @@ const createContract = z.object({
   customer_id: uuid.optional(),
   contract_date: z.coerce.date(),
   currency_code: z.string().min(3).max(10).optional(),
-  transaction_price: z.number().min(0),
+  transaction_price: nonNegativeDecimalInput,
   billing_policy: z.enum(["UPFRONT", "AS_RECOGNIZED", "NONE"]).optional().default("UPFRONT"),
   billing_account_id: uuid.optional(),
   start_date: z.coerce.date().optional(),
   end_date: z.coerce.date().optional(),
 });
 
+const updateContract = createContract.partial().refine((payload) => Object.keys(payload).length > 0, "At least one field is required");
+
+
 const addObligation = z.object({
   contractId: uuid,
   description: z.string().min(1).max(500),
   obligation_type: z.enum(["POINT_IN_TIME", "OVER_TIME"]),
   satisfaction_method: z.enum(["TIME", "OUTPUT", "INPUT"]).optional().default("TIME"),
-  standalone_selling_price: z.number().positive(),
+  standalone_selling_price: positiveDecimalInput,
   start_date: z.coerce.date().optional(),
   end_date: z.coerce.date().optional(),
   satisfaction_date: z.coerce.date().optional(),
 });
+
+const obligationIdParam = z.object({ contractId: uuid, obligationId: uuid });
+const updateObligation = addObligation.omit({ contractId: true }).partial().refine((payload) => Object.keys(payload).length > 0, "At least one field is required");
+
 
 const activateContract = z.object({
   contractId: uuid,
@@ -92,13 +112,17 @@ const createModification = z.object({
   contractId: uuid,
   modification_date: z.coerce.date(),
   modification_type: z.enum(["PRICE_CHANGE", "SCOPE_CHANGE", "SCOPE_AND_PRICE"]),
-  new_base_transaction_price: z.number().nonnegative().optional(),
+  new_base_transaction_price: nonNegativeDecimalInput.optional(),
   // Decision-engine inputs (IFRS 15.20-21).
   adds_distinct_goods_services: z.boolean().optional(),
   price_increase_commensurate_with_ssp: z.boolean().optional(),
   remaining_goods_services_distinct: z.boolean().optional(),
   notes: z.string().max(1000).optional(),
 });
+
+const updateModification = createModification.omit({ contractId: true }).partial().refine((payload) => Object.keys(payload).length > 0, "At least one field is required");
+const modificationDecision = z.object({ notes: z.string().max(1000).optional() }).optional().default({});
+
 
 const modificationIdParam = z.object({ contractId: uuid, modificationId: uuid });
 
@@ -119,12 +143,15 @@ const createVariableConsideration = z.object({
   contractId: uuid,
   effective_date: z.coerce.date(),
   method: z.enum(["EXPECTED_VALUE", "MOST_LIKELY"]),
-  estimate_amount: z.number(),
+  estimate_amount: decimalInput,
   // Governance: management's assertion that it is "highly probable" a significant reversal will not occur.
   highly_probable_no_reversal: z.boolean().optional().default(false),
   constraint_basis: z.string().max(2000).optional(),
   rationale: z.string().max(2000).optional(),
 });
+
+const updateVariableConsideration = createVariableConsideration.omit({ contractId: true }).extend({ notes: z.string().max(2000).optional() }).partial().refine((payload) => Object.keys(payload).length > 0, "At least one field is required");
+
 
 const variableConsiderationIdParam = z.object({ contractId: uuid, variableConsiderationId: uuid });
 
@@ -135,7 +162,7 @@ const reviewVariableConsideration = z.object({
 const approveVariableConsideration = z.object({
   // Only approvable if highly_probable_no_reversal is true (enforced in service).
   include_in_transaction_price: z.boolean().optional().default(false),
-  included_amount: z.number().optional(),
+  included_amount: decimalInput.optional(),
   notes: z.string().max(2000).optional(),
 });
 
@@ -150,7 +177,7 @@ const applyVariableConsideration = z.object({
 
 const setFinancingTerms = z.object({
   contractId: uuid,
-  annual_rate: z.number().nonnegative(),
+  annual_rate: nonNegativeDecimalInput,
   effective_from: z.coerce.date(),
   effective_to: z.coerce.date().optional(),
 });
@@ -169,12 +196,15 @@ const createCost = z.object({
   contractId: uuid,
   cost_type: z.enum(["ACQUISITION", "FULFILMENT"]),
   description: z.string().max(500).optional(),
-  amount: z.number().positive(),
+  amount: positiveDecimalInput,
   asset_account_id: uuid.optional(),
   amort_expense_account_id: uuid.optional(),
   amort_start_date: z.coerce.date(),
   amort_end_date: z.coerce.date(),
 });
+
+const updateCost = createCost.omit({ contractId: true }).partial().refine((payload) => Object.keys(payload).length > 0, "At least one field is required");
+
 
 const costIdParam = z.object({ contractId: uuid, costId: uuid });
 
@@ -204,7 +234,7 @@ const rpoReport = z.object({
 
 const revenueDisaggregationReport = z.object({
   period_id: uuid,
-  dimension: z.enum(["OBLIGATION_TYPE", "SATISFACTION_METHOD", "CUSTOMER"]).optional().default("OBLIGATION_TYPE"),
+  dimension: z.enum(["OBLIGATION_TYPE", "SATISFACTION_METHOD", "CUSTOMER", "CONTRACT", "customer", "contract", "obligation", "obligation_type", "satisfaction_method"]).optional().default("OBLIGATION_TYPE"),
 });
 
 const judgementsReport = z.object({
@@ -217,14 +247,20 @@ module.exports = {
   lifecycleAction,
   upsertSettings,
   createContract,
+  updateContract,
   addObligation,
+  obligationIdParam,
+  updateObligation,
   activateContract,
   generateSchedule,
   postRevenue,
   createModification,
+  updateModification,
   modificationIdParam,
+  modificationDecision,
   applyModification,
   createVariableConsideration,
+  updateVariableConsideration,
   variableConsiderationIdParam,
   reviewVariableConsideration,
   approveVariableConsideration,
@@ -232,6 +268,7 @@ module.exports = {
   setFinancingTerms,
   postFinancing,
   createCost,
+  updateCost,
   costIdParam,
   generateCostSchedule,
   postCostAmort,
