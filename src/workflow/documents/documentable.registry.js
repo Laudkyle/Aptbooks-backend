@@ -129,15 +129,25 @@ const registry = {
     description: (entity) => entity.reason || null,
     versionFilename: (entity) => `leave-request-${entity.id}.json`
   },
+  payroll_run: {
+    entityType: "payroll_run",
+    documentTypeCode: "PAYROLL_RUN",
+    documentTypeName: "Payroll Run",
+    noun: "payroll run",
+    blockedActionLabel: "post",
+    title: (entity) => `Payroll Run ${entity.id}`,
+    description: (entity) => `Payroll run for period ${entity.period_id}`,
+    versionFilename: (entity) => `payroll-run-${entity.id}.json`
+  },
   payslip: {
     entityType: "payslip",
     documentTypeCode: "PAYSLIP",
     documentTypeName: "Payslip",
     noun: "payslip",
-    blockedActionLabel: "post",
-    title: (entity) => `Payroll Run ${entity.id}`,
-    description: (entity) => `Payroll run for period ${entity.period_id}`,
-    versionFilename: (entity) => `payroll-run-${entity.id}.json`
+    blockedActionLabel: "issue",
+    title: (entity) => `Payslip ${entity.employee_no || entity.id}`,
+    description: (entity) => entity.period_id ? `Payslip for period ${entity.period_id}` : null,
+    versionFilename: (entity) => `payslip-${entity.id}.json`
   },
   budget: {
     entityType: "budget",

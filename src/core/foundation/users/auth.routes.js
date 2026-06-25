@@ -445,6 +445,7 @@ router.post("/register", async (req, res, next) => {
      ($1, 'TRANSFER', 'Transfer', 'Money transfer between accounts', TRUE),
      
      -- HR/Payroll documents
+     ($1, 'PAYROLL_RUN', 'Payroll Run', 'Payroll batch/run approval document', TRUE),
      ($1, 'PAYSLIP', 'Payslip', 'Employee salary slip', TRUE),
      ($1, 'SALARY_ADVANCE', 'Salary Advance', 'Employee salary advance', TRUE),
      ($1, 'REIMBURSEMENT', 'Reimbursement', 'Employee expense reimbursement', TRUE),

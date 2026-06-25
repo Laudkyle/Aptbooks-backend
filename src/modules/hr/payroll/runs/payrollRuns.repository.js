@@ -38,8 +38,9 @@ async function getRun(orgId, runId) {
   return rows[0] || null;
 }
 
-async function setRunStatus(orgId, runId, status, actorUserId) {
-  const { rows } = await pool.query(
+async function setRunStatus(orgId, runId, status, actorUserId, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `UPDATE hr_payroll_runs SET status=$3, updated_at=NOW(), updated_by=$4 WHERE organization_id=$1 AND id=$2 RETURNING *`,
     [orgId, runId, status, actorUserId]
   );
@@ -150,8 +151,9 @@ async function linkRunJournal(orgId, runId, journalId, actorUserId) {
   return rows[0];
 }
 
-async function markJournalPosted(orgId, runId, journalId, actorUserId) {
-  const { rows } = await pool.query(
+async function markJournalPosted(orgId, runId, journalId, actorUserId, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `
       UPDATE hr_payroll_run_postings
       SET posted_at=NOW(), posted_by=$4, updated_at=NOW(), updated_by=$4

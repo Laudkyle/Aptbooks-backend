@@ -86,7 +86,7 @@ async function submitRunForApproval({ orgId, actorUserId, runId }) {
     await documentableSvc.submitEntityForApproval({
       orgId,
       actorUserId,
-      entityType: "payslip",
+      entityType: "payroll_run",
       entity: run,
       workflowDocumentId: run.workflow_document_id,
       snapshot: { header: run, lines, related: { journal }, meta: { status: run.status } },
@@ -109,7 +109,7 @@ async function approveRunWorkflow({ orgId, actorUserId, runId, comment }) {
     if (!run) throw new AppError(404, "Payroll run not found");
     if (run.status !== "submitted") throw new AppError(409, "Only submitted payroll runs can be approved");
     await documentableSvc.approveEntityDocument({
-      orgId, actorUserId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
+      orgId, actorUserId, entityType: "payroll_run", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
     });
     await client.query(
       `UPDATE hr_payroll_runs SET status='approved', updated_at=NOW(), updated_by=$3 WHERE organization_id=$1 AND id=$2`,
@@ -125,7 +125,7 @@ async function rejectRunWorkflow({ orgId, actorUserId, runId, comment }) {
     if (!run) throw new AppError(404, "Payroll run not found");
     if (run.status !== "submitted") throw new AppError(409, "Only submitted payroll runs can be rejected");
     await documentableSvc.rejectEntityDocument({
-      orgId, actorUserId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
+      orgId, actorUserId, entityType: "payroll_run", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
     });
     await client.query(
       `UPDATE hr_payroll_runs SET status='rejected', updated_at=NOW(), updated_by=$3 WHERE organization_id=$1 AND id=$2`,
@@ -137,7 +137,7 @@ async function rejectRunWorkflow({ orgId, actorUserId, runId, comment }) {
 
 async function assertRunApprovalStateAllowsPost({ orgId, run, client }) {
   return documentableSvc.assertEntityApprovedForAction({
-    orgId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, client, actionLabel: "post"
+    orgId, entityType: "payroll_run", workflowDocumentId: run.workflow_document_id, client, actionLabel: "post"
   });
 }
 
@@ -451,15 +451,39 @@ async function buildJournal({ orgId, actorUserId, runId, idempotencyKey }) {
 }
 
 async function postJournal({ orgId, actorUserId, runId }) {
-  const run = await getRun({ orgId, runId });
-  await assertRunApprovalStateAllowsPost({ orgId, run, client: pool });
-  const link = await runsRepo.getRunJournal(orgId, runId);
-  if (!link?.journal_entry_id) throw new AppError(400, "No journal built for this payroll run");
+  return withTransaction(async (client) => {
+    const run = await getRun({ orgId, runId });
+    if (run.status !== "approved") {
+      throw new AppError(409, "Payroll run must be approved before posting the payroll journal");
+    }
 
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: link.journal_entry_id, actorUserId });
-  await runsRepo.markJournalPosted(orgId, runId, link.journal_entry_id, actorUserId);
-  await runsRepo.setRunStatus(orgId, runId, "posted", actorUserId);
-  return { runId, journalId: posted.journalId, status: "posted" };
+    // Payroll approval is the controlling approval for payroll-generated journals.
+    // Do not require a second hidden journal-entry workflow document before HR posting.
+    await assertRunApprovalStateAllowsPost({ orgId, run, client });
+
+    const link = await runsRepo.getRunJournal(orgId, runId);
+    if (!link?.journal_entry_id) throw new AppError(400, "No journal built for this payroll run");
+    if (link.posted_at || link.journal_status === "posted") {
+      throw new AppError(409, "Payroll journal has already been posted");
+    }
+
+    const posted = await journalIF.postDraftJournal({
+      orgId,
+      journalId: link.journal_entry_id,
+      actorUserId,
+      client,
+      sourceApproval: {
+        entityType: "payroll_run",
+        entityId: run.id,
+        workflowDocumentId: run.workflow_document_id,
+        reason: "Approved payroll run controls posting of generated payroll journal"
+      }
+    });
+
+    await runsRepo.markJournalPosted(orgId, runId, link.journal_entry_id, actorUserId, client);
+    await runsRepo.setRunStatus(orgId, runId, "posted", actorUserId, client);
+    return { runId, journalId: posted.journalId, status: "posted" };
+  });
 }
 
 module.exports = {

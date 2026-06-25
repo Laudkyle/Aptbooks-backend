@@ -372,7 +372,7 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
   }
 }
 
-async function postDraftJournal({ orgId, journalId, actorUserId, client: existingClient = null }) {
+async function postDraftJournal({ orgId, journalId, actorUserId, client: existingClient = null, sourceApproval = null }) {
   const client = existingClient || (await pool.connect());
   const managesTx = !existingClient;
   try {
@@ -397,7 +397,17 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       throw new AppError(409, "Journal must be in draft or approved status to post");
     }
 
-    await assertJournalApprovalStateAllowsPost({ orgId, journal, client });
+    if (sourceApproval?.entityType) {
+      await documentableSvc.assertEntityApprovedForAction({
+        orgId,
+        entityType: sourceApproval.entityType,
+        workflowDocumentId: sourceApproval.workflowDocumentId,
+        client,
+        actionLabel: "post generated journal"
+      });
+    } else {
+      await assertJournalApprovalStateAllowsPost({ orgId, journal, client });
+    }
 
     assertCanPost({
       settings,

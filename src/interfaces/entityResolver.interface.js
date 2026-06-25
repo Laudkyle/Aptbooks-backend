@@ -192,6 +192,15 @@ const RESOLVERS = {
     return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Leave Request" };
   },
 
+  payroll_run: async ({ orgId, entityId }) => {
+    const { rows } = await pool.query(
+      `SELECT id, id::text AS entity_ref FROM hr_payroll_runs WHERE organization_id=$1 AND id=$2`,
+      [orgId, entityId]
+    );
+    if (!rows.length) return { exists: false, entity_ref: null, entity_label: null };
+    return { exists: true, entity_ref: rows[0].entity_ref, entity_label: "Payroll Run" };
+  },
+
   payslip: async ({ orgId, entityId }) => {
     const { rows } = await pool.query(
       `SELECT id, id::text AS entity_ref FROM hr_payroll_runs WHERE organization_id=$1 AND id=$2`,

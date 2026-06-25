@@ -8,8 +8,8 @@ async function createDraftJournal({ orgId, actorUserId, payload, client = null }
   return journalSvc.createDraftJournal({ orgId, actorUserId, payload, client });
 }
 
-async function postDraftJournal({ orgId, journalId, actorUserId, client = null }) {
-  return journalSvc.postDraftJournal({ orgId, journalId, actorUserId, client });
+async function postDraftJournal({ orgId, journalId, actorUserId, client = null, sourceApproval = null }) {
+  return journalSvc.postDraftJournal({ orgId, journalId, actorUserId, client, sourceApproval });
 }
 
 /**
