@@ -27,6 +27,12 @@ async function listRules({ orgId, query }) {
   return repo.listRules(orgId, query);
 }
 
+async function getRule({ orgId, ruleId }) {
+  const rule = await repo.getRule(orgId, ruleId);
+  if (!rule) throw new AppError(404, "NOT_FOUND", "Statutory rule not found");
+  return rule;
+}
+
 async function updateRule({ orgId, actorUserId, ruleId, payload, audit, writeAudit }) {
   const p = { ...payload };
   if (p.brackets) {
@@ -67,4 +73,4 @@ async function deactivateRule({ orgId, actorUserId, ruleId, audit, writeAudit })
   return updated;
 }
 
-module.exports = { createRule, listRules, updateRule, deactivateRule };
+module.exports = { createRule, listRules, getRule, updateRule, deactivateRule };

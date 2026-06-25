@@ -12,6 +12,7 @@ const {
   updateLeaveTypeSchema,
   upsertLeaveBalanceSchema,
   createLeaveRequestSchema,
+  updateLeaveRequestSchema,
   rejectLeaveRequestSchema,
 } = require("../../../shared/validators/hr.validators");
 
@@ -40,6 +41,16 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.listLeaveTypes({ orgId: req.user.organization_id, query: req.query }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.get(
+  "/types/:id",
+  requirePermission("hr.leave.read"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.getLeaveType({ orgId: req.user.organization_id, leaveTypeId: req.params.id }));
     } catch (e) { next(e); }
   }
 );
@@ -88,6 +99,37 @@ router.get(
   }
 );
 
+router.get(
+  "/balances/:id",
+  requirePermission("hr.leave.read"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.getLeaveBalance({ orgId: req.user.organization_id, balanceId: req.params.id }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.put(
+  "/balances/:id",
+  requirePermission("hr.leave.manage"),
+  async (req, res, next) => {
+    try {
+      const payload = validate(upsertLeaveBalanceSchema, req.body);
+      res.json(await svc.updateLeaveBalance({ orgId: req.user.organization_id, actorUserId: req.user.id, balanceId: req.params.id, payload, audit: req.audit, writeAudit }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/balances/:id",
+  requirePermission("hr.leave.manage"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.deleteLeaveBalance({ orgId: req.user.organization_id, actorUserId: req.user.id, balanceId: req.params.id, audit: req.audit, writeAudit }));
+    } catch (e) { next(e); }
+  }
+);
+
 // Leave Requests
 router.post(
   "/requests",
@@ -117,6 +159,27 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.getLeaveRequest({ orgId: req.user.organization_id, requestId: req.params.id }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.put(
+  "/requests/:id",
+  requirePermission("hr.leave.manage"),
+  async (req, res, next) => {
+    try {
+      const payload = validate(updateLeaveRequestSchema, req.body || {});
+      res.json(await svc.updateLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, payload, audit: req.audit, writeAudit }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.delete(
+  "/requests/:id",
+  requirePermission("hr.leave.manage"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.deleteLeaveRequest({ orgId: req.user.organization_id, actorUserId: req.user.id, requestId: req.params.id, audit: req.audit, writeAudit }));
     } catch (e) { next(e); }
   }
 );

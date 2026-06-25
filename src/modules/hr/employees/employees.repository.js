@@ -208,6 +208,12 @@ async function setEmployeeStatus(orgId, id, status) {
   return rows[0] || null;
 }
 
+async function deleteEmployee(orgId, id) {
+  // Soft delete: employees may be referenced by payroll, leave, benefits, and audit records.
+  // Mark inactive instead of hard-deleting to preserve accounting/history integrity.
+  return setEmployeeStatus(orgId, id, "inactive");
+}
+
 module.exports = {
   createEmployee,
   listEmployees,
@@ -215,4 +221,5 @@ module.exports = {
   getEmployeeByNo,
   updateEmployee,
   setEmployeeStatus,
+  deleteEmployee,
 };

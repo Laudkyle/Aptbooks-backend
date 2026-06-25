@@ -145,6 +145,52 @@ async function createRun({ orgId, actorUserId, payload }) {
   return runsRepo.createRun(orgId, actorUserId, payload);
 }
 
+async function updateRun({ orgId, actorUserId, runId, payload }) {
+  return withTransaction(async (client) => {
+    const run = await getRun({ orgId, runId });
+    if (!run) throw new AppError(404, "Payroll run not found");
+    if (["submitted", "approved", "posted", "voided"].includes(run.status)) {
+      throw new AppError(409, "Only draft, calculated, or rejected payroll runs can be edited");
+    }
+
+    const journal = await runsRepo.getRunJournal(orgId, runId);
+    if (journal?.journal_entry_id) {
+      throw new AppError(409, "Payroll run already has a generated journal and cannot be edited");
+    }
+
+    const updated = await runsRepo.updateRun(orgId, runId, actorUserId, payload, client);
+
+    // If a calculated/rejected run is edited, calculated line snapshots are no longer reliable.
+    if (["calculated", "rejected"].includes(run.status)) {
+      await runsRepo.clearRunLines(orgId, runId, client);
+      await runsRepo.setRunStatus(orgId, runId, "draft", actorUserId, client);
+      return getRun({ orgId, runId });
+    }
+
+    return updated;
+  });
+}
+
+async function deleteRun({ orgId, actorUserId, runId }) {
+  return withTransaction(async (client) => {
+    const run = await getRun({ orgId, runId });
+    if (!run) throw new AppError(404, "Payroll run not found");
+    if (!["draft", "calculated", "rejected", "voided"].includes(run.status)) {
+      throw new AppError(409, "Only draft, calculated, rejected, or voided payroll runs can be deleted");
+    }
+
+    const journal = await runsRepo.getRunJournal(orgId, runId);
+    if (journal?.journal_entry_id) {
+      throw new AppError(409, "Payroll run has a generated journal and cannot be deleted");
+    }
+
+    await runsRepo.clearRunLines(orgId, runId, client);
+    const deleted = await runsRepo.deleteRun(orgId, runId, client);
+    if (!deleted) throw new AppError(404, "Payroll run not found");
+    return { id: runId, deleted: true, previous_status: run.status };
+  });
+}
+
 async function listRuns({ orgId, query }) {
   return runsRepo.listRuns(orgId, query);
 }
@@ -490,6 +536,8 @@ module.exports = {
   createRun,
   listRuns,
   getRun,
+  updateRun,
+  deleteRun,
   calculateRun,
   submitRunForApproval,
   approveRunWorkflow,

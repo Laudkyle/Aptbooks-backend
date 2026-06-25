@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "entity_type": "leave_request",
+  "entity_id": "22421ae6-1f2c-49bc-ada1-7552bd77c3e8",
+  "snapshot_at": "2026-06-25T11:40:33.523Z",
+  "header": {
+    "id": "22421ae6-1f2c-49bc-ada1-7552bd77c3e8",
+    "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+    "employee_id": "ddf82240-5508-4be6-8597-d8304ef191ad",
+    "leave_type_id": "23dabb9a-23fc-4da7-a548-07e728277614",
+    "start_date": "2026-07-01T00:00:00.000Z",
+    "end_date": "2026-07-02T00:00:00.000Z",
+    "days": "3.00",
+    "reason": null,
+    "status": "draft",
+    "document_id": null,
+    "created_by_user_id": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "created_at": "2026-06-25T11:40:28.815Z",
+    "updated_at": null,
+    "workflow_document_id": null,
+    "employee_no": "000002",
+    "first_name": "joe",
+    "last_name": "Nansun",
+    "leave_type_code": "L1",
+    "leave_type_name": "Leave Type 1"
+  },
+  "lines": [],
+  "related": {
+    "employee_id": "ddf82240-5508-4be6-8597-d8304ef191ad",
+    "leave_type_id": "23dabb9a-23fc-4da7-a548-07e728277614"
+  },
+  "meta": {
+    "status": "draft",
+    "start_date": "2026-07-01T00:00:00.000Z",
+    "end_date": "2026-07-02T00:00:00.000Z",
+    "days": "3.00"
+  }
+}

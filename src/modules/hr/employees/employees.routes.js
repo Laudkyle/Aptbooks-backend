@@ -78,6 +78,14 @@ router.put("/:id", requirePermission("hr.employees.manage"), async (req, res, ne
   } catch (e) { next(e); }
 });
 
+router.delete("/:id", requirePermission("hr.employees.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    res.json(await svc.deleteEmployee({ orgId, actorUserId, employeeId: req.params.id, audit: req.audit, writeAudit }));
+  } catch (e) { next(e); }
+});
+
 // Convenience status endpoints (Stage 1 lifecycle hooks)
 router.post("/:id/activate", idempotency({ required: true }), requirePermission("hr.employees.manage"), async (req, res, next) => {
   try {

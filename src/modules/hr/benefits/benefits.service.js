@@ -22,6 +22,12 @@ async function listBenefitPlans({ orgId, query }) {
   return repo.listBenefitPlans(orgId, query);
 }
 
+async function getBenefitPlan({ orgId, planId }) {
+  const plan = await repo.getBenefitPlan(orgId, planId);
+  if (!plan) throw new AppError(404, "NOT_FOUND", "Benefit plan not found");
+  return plan;
+}
+
 async function updateBenefitPlan({ orgId, actorUserId, planId, payload, audit, writeAudit }) {
   const updated = await repo.updateBenefitPlan(orgId, planId, payload);
   if (!updated) throw new AppError(404, "NOT_FOUND", "Benefit plan not found");
@@ -78,6 +84,12 @@ async function listEmployeeBenefits({ orgId, query }) {
   return repo.listEmployeeBenefits(orgId, query);
 }
 
+async function getEmployeeBenefit({ orgId, employeeBenefitId }) {
+  const eb = await repo.getEmployeeBenefit(orgId, employeeBenefitId);
+  if (!eb) throw new AppError(404, "NOT_FOUND", "Employee benefit not found");
+  return eb;
+}
+
 async function updateEmployeeBenefit({ orgId, actorUserId, employeeBenefitId, payload, audit, writeAudit }) {
   const updated = await repo.updateEmployeeBenefit(orgId, employeeBenefitId, payload);
   if (!updated) throw new AppError(404, "NOT_FOUND", "Employee benefit not found");
@@ -114,6 +126,6 @@ async function deactivateEmployeeBenefit({ orgId, actorUserId, employeeBenefitId
 }
 
 module.exports = {
-  createBenefitPlan, listBenefitPlans, updateBenefitPlan, deactivateBenefitPlan,
-  assignEmployeeBenefit, listEmployeeBenefits, updateEmployeeBenefit, deactivateEmployeeBenefit,
+  createBenefitPlan, listBenefitPlans, getBenefitPlan, updateBenefitPlan, deactivateBenefitPlan,
+  assignEmployeeBenefit, listEmployeeBenefits, getEmployeeBenefit, updateEmployeeBenefit, deactivateEmployeeBenefit,
 };

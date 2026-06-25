@@ -159,6 +159,15 @@ const createLeaveRequestSchema = z.object({
   reason: z.string().max(2000).optional(),
 });
 
+const updateLeaveRequestSchema = z.object({
+  employee_id: uuid.optional(),
+  leave_type_id: uuid.optional(),
+  start_date: z.string().min(8).optional(),
+  end_date: z.string().min(8).optional(),
+  days: z.number().positive().optional(),
+  reason: z.string().max(2000).nullable().optional(),
+});
+
 const rejectLeaveRequestSchema = z.object({
   reason: z.string().max(2000).optional(),
 });
@@ -267,6 +276,7 @@ createDepartmentSchema,
   updateLeaveTypeSchema,
   upsertLeaveBalanceSchema,
   createLeaveRequestSchema,
+  updateLeaveRequestSchema,
   rejectLeaveRequestSchema,
   createBenefitPlanSchema,
   updateBenefitPlanSchema,

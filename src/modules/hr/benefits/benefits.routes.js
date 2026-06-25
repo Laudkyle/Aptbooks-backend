@@ -40,6 +40,16 @@ router.get(
   }
 );
 
+router.get(
+  "/plans/:id",
+  requirePermission("hr.benefits.read"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.getBenefitPlan({ orgId: req.user.organization_id, planId: req.params.id }));
+    } catch (e) { next(e); }
+  }
+);
+
 router.put(
   "/plans/:id",
   requirePermission("hr.benefits.manage"),
@@ -80,6 +90,16 @@ router.get(
   async (req, res, next) => {
     try {
       res.json(await svc.listEmployeeBenefits({ orgId: req.user.organization_id, query: req.query }));
+    } catch (e) { next(e); }
+  }
+);
+
+router.get(
+  "/employee-benefits/:id",
+  requirePermission("hr.benefits.read"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.getEmployeeBenefit({ orgId: req.user.organization_id, employeeBenefitId: req.params.id }));
     } catch (e) { next(e); }
   }
 );

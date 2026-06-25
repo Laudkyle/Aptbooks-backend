@@ -33,10 +33,17 @@ const createPayrollRunSchema = z.object({
   currency: z.string().min(3).max(3).optional(),
 });
 
+const updatePayrollRunSchema = z.object({
+  period_id: z.string().uuid().optional(),
+  pay_date: z.string().min(8).optional(),
+  currency: z.string().min(3).max(3).optional(),
+});
+
 module.exports = {
   createPayrollComponentSchema,
   updatePayrollComponentSchema,
   assignEmployeeComponentSchema,
   updateEmployeeComponentSchema,
   createPayrollRunSchema,
+  updatePayrollRunSchema,
 };

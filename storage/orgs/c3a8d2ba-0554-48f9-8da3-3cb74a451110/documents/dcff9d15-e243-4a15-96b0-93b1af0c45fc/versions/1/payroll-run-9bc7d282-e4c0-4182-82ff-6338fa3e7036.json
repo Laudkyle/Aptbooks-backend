@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "entity_type": "payroll_run",
+  "entity_id": "9bc7d282-e4c0-4182-82ff-6338fa3e7036",
+  "snapshot_at": "2026-06-25T11:26:41.070Z",
+  "header": {
+    "id": "9bc7d282-e4c0-4182-82ff-6338fa3e7036",
+    "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+    "period_id": "6b190796-e3d4-41f8-b60a-66fc236a460d",
+    "pay_date": "2026-06-29T00:00:00.000Z",
+    "currency": "GHS",
+    "status": "calculated",
+    "created_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "updated_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "created_at": "2026-06-25T11:26:34.887Z",
+    "updated_at": "2026-06-25T11:26:39.828Z",
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "96ee237f-08b2-4703-87e9-efd1d6351c79",
+      "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+      "payroll_run_id": "9bc7d282-e4c0-4182-82ff-6338fa3e7036",
+      "line_no": 1,
+      "employee_id": "ddf82240-5508-4be6-8597-d8304ef191ad",
+      "base_salary": "8900.00",
+      "total_earnings": "8900.00",
+      "total_deductions": "0.00",
+      "gross_pay": "17800.00",
+      "net_pay": "17800.00",
+      "currency": "GHS",
+      "breakdown_json": {
+        "benefits": [],
+        "earnings": [
+          {
+            "code": "Basic",
+            "amount": 8900,
+            "component_id": "5505e4bf-9aa2-4bf9-b640-a568995c37fc"
+          }
+        ],
+        "statutory": [],
+        "deductions": [],
+        "base_salary": 8900,
+        "employer_contributions_total": 0
+      },
+      "created_at": "2026-06-25T11:26:39.821Z",
+      "updated_at": "2026-06-25T11:26:39.821Z",
+      "employee_no": "000002",
+      "first_name": "joe",
+      "last_name": "Nansun"
+    },
+    {
+      "id": "665d6404-1660-4083-96ad-92f573e4c210",
+      "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+      "payroll_run_id": "9bc7d282-e4c0-4182-82ff-6338fa3e7036",
+      "line_no": 2,
+      "employee_id": "05463f66-f4fd-472d-99ad-267361d72672",
+      "base_salary": "8000.00",
+      "total_earnings": "8000.00",
+      "total_deductions": "0.00",
+      "gross_pay": "16000.00",
+      "net_pay": "16000.00",
+      "currency": "GHS",
+      "breakdown_json": {
+        "benefits": [],
+        "earnings": [
+          {
+            "code": "Basic",
+            "amount": 8000,
+            "component_id": "5505e4bf-9aa2-4bf9-b640-a568995c37fc"
+          }
+        ],
+        "statutory": [],
+        "deductions": [],
+        "base_salary": 8000,
+        "employer_contributions_total": 0
+      },
+      "created_at": "2026-06-25T11:26:39.821Z",
+      "updated_at": "2026-06-25T11:26:39.821Z",
+      "employee_no": "00001",
+      "first_name": "Kyle",
+      "last_name": "Ninchan"
+    }
+  ],
+  "related": {
+    "journal": null
+  },
+  "meta": {
+    "status": "calculated"
+  }
+}

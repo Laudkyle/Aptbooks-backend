@@ -68,6 +68,27 @@ async function setStatus({ orgId, actorUserId, employeeId, status, audit, writeA
   return updated;
 }
 
+async function deleteEmployee({ orgId, actorUserId, employeeId, audit, writeAudit }) {
+  const before = await repo.getEmployee(orgId, employeeId);
+  if (!before) throw new AppError(404, "Employee not found");
+  const updated = await repo.deleteEmployee(orgId, employeeId);
+  if (writeAudit) {
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "hr.employee.deleted",
+      entityType: "hr_employees",
+      entityId: employeeId,
+      ip: audit?.ip,
+      userAgent: audit?.userAgent,
+      before,
+      after: updated,
+      meta: { soft_delete: true }
+    });
+  }
+  return updated;
+}
+
 function csvEscape(v) {
   if (v === null || v === undefined) return "";
   const s = String(v);
@@ -191,6 +212,7 @@ module.exports = {
   listEmployees,
   getEmployee,
   updateEmployee,
+  deleteEmployee,
   setStatus,
   exportEmployeesCsv,
   importEmployees,

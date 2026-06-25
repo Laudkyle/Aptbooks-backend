@@ -28,6 +28,12 @@ async function listLeaveTypes({ orgId, query }) {
   return repo.listLeaveTypes(orgId, query);
 }
 
+async function getLeaveType({ orgId, leaveTypeId }) {
+  const t = await repo.getLeaveType(orgId, leaveTypeId);
+  if (!t) throw new AppError(404, "NOT_FOUND", "Leave type not found");
+  return t;
+}
+
 async function updateLeaveType({ orgId, actorUserId, leaveTypeId, payload, audit, writeAudit }) {
   const updated = await repo.updateLeaveType(orgId, leaveTypeId, payload);
   if (!updated) throw new AppError(404, "NOT_FOUND", "Leave type not found");
@@ -94,6 +100,44 @@ async function upsertLeaveBalance({ orgId, actorUserId, payload, audit, writeAud
   return bal;
 }
 
+async function getLeaveBalance({ orgId, balanceId }) {
+  const bal = await repo.getLeaveBalanceById(orgId, balanceId);
+  if (!bal) throw new AppError(404, "NOT_FOUND", "Leave balance not found");
+  return bal;
+}
+
+async function updateLeaveBalance({ orgId, actorUserId, balanceId, payload, audit, writeAudit }) {
+  const before = await repo.getLeaveBalanceById(orgId, balanceId);
+  if (!before) throw new AppError(404, "NOT_FOUND", "Leave balance not found");
+  const updated = await repo.updateLeaveBalanceById(orgId, balanceId, {
+    employee_id: payload.employee_id,
+    leave_type_id: payload.leave_type_id,
+    balance_days: payload.balance_days,
+  });
+  await repo.insertLeaveLedger(orgId, {
+    employeeId: updated.employee_id,
+    leaveTypeId: updated.leave_type_id,
+    deltaDays: 0,
+    reason: payload.reason || "Balance updated",
+    refType: "manual",
+    refId: updated.id,
+  });
+  if (writeAudit) {
+    await writeAudit({ organizationId: orgId, actorUserId, action: "hr.leave_balance.updated", entityType: "hr_leave_balances", entityId: updated.id, ip: audit?.ip, userAgent: audit?.userAgent, before, after: updated, meta: payload });
+  }
+  return updated;
+}
+
+async function deleteLeaveBalance({ orgId, actorUserId, balanceId, audit, writeAudit }) {
+  const before = await repo.getLeaveBalanceById(orgId, balanceId);
+  if (!before) throw new AppError(404, "NOT_FOUND", "Leave balance not found");
+  const deleted = await repo.deleteLeaveBalance(orgId, balanceId);
+  if (writeAudit) {
+    await writeAudit({ organizationId: orgId, actorUserId, action: "hr.leave_balance.deleted", entityType: "hr_leave_balances", entityId: balanceId, ip: audit?.ip, userAgent: audit?.userAgent, before });
+  }
+  return { id: balanceId, deleted: true, previous: deleted };
+}
+
 async function listLeaveBalances({ orgId, query }) {
   return repo.listLeaveBalances(orgId, query);
 }
@@ -124,6 +168,31 @@ async function getLeaveRequest({ orgId, requestId }) {
   const r = await repo.getLeaveRequest(orgId, requestId);
   if (!r) throw new AppError(404, "NOT_FOUND", "Leave request not found");
   return r;
+}
+
+async function updateLeaveRequest({ orgId, actorUserId, requestId, payload, audit, writeAudit }) {
+  const before = await repo.getLeaveRequest(orgId, requestId);
+  if (!before) throw new AppError(404, "NOT_FOUND", "Leave request not found");
+  if (!["draft", "rejected"].includes(before.status)) throw new AppError(409, "BAD_STATE", "Only draft/rejected leave requests can be edited");
+  const start = payload.start_date || before.start_date;
+  const end = payload.end_date || before.end_date;
+  assertDateOrder(start, end);
+  const updated = await repo.updateLeaveRequest(orgId, requestId, payload);
+  if (writeAudit) {
+    await writeAudit({ organizationId: orgId, actorUserId, action: "hr.leave_request.updated", entityType: "hr_leave_requests", entityId: requestId, ip: audit?.ip, userAgent: audit?.userAgent, before, after: updated, meta: payload });
+  }
+  return updated;
+}
+
+async function deleteLeaveRequest({ orgId, actorUserId, requestId, audit, writeAudit }) {
+  const before = await repo.getLeaveRequest(orgId, requestId);
+  if (!before) throw new AppError(404, "NOT_FOUND", "Leave request not found");
+  if (!["draft", "rejected", "cancelled"].includes(before.status)) throw new AppError(409, "BAD_STATE", "Only draft/rejected/cancelled leave requests can be deleted");
+  const deleted = await repo.deleteLeaveRequest(orgId, requestId);
+  if (writeAudit) {
+    await writeAudit({ organizationId: orgId, actorUserId, action: "hr.leave_request.deleted", entityType: "hr_leave_requests", entityId: requestId, ip: audit?.ip, userAgent: audit?.userAgent, before });
+  }
+  return { id: requestId, deleted: true, previous: deleted };
 }
 
 async function submitLeaveRequest({ orgId, actorUserId, requestId, audit, writeAudit }) {
@@ -297,15 +366,21 @@ module.exports = {
   // types
   createLeaveType,
   listLeaveTypes,
+  getLeaveType,
   updateLeaveType,
   deactivateLeaveType,
   // balances
   upsertLeaveBalance,
   listLeaveBalances,
+  getLeaveBalance,
+  updateLeaveBalance,
+  deleteLeaveBalance,
   // requests
   createLeaveRequest,
   listLeaveRequests,
   getLeaveRequest,
+  updateLeaveRequest,
+  deleteLeaveRequest,
   submitLeaveRequest,
   approveLeaveRequest,
   rejectLeaveRequest,

@@ -38,6 +38,49 @@ async function getRun(orgId, runId) {
   return rows[0] || null;
 }
 
+async function updateRun(orgId, runId, actorUserId, payload, client = null) {
+  const db = client || pool;
+  const fields = [];
+  const vals = [orgId, runId];
+  let i = 3;
+
+  if (payload.period_id !== undefined) { fields.push(`period_id=$${i++}`); vals.push(payload.period_id); }
+  if (payload.pay_date !== undefined) { fields.push(`pay_date=$${i++}`); vals.push(new Date(payload.pay_date)); }
+  if (payload.currency !== undefined) { fields.push(`currency=$${i++}`); vals.push(String(payload.currency || 'GHS').toUpperCase()); }
+
+  if (!fields.length) return getRun(orgId, runId);
+
+  fields.push(`updated_at=NOW()`);
+  fields.push(`updated_by=$${i++}`);
+  vals.push(actorUserId);
+
+  const { rows } = await db.query(
+    `UPDATE hr_payroll_runs
+     SET ${fields.join(', ')}
+     WHERE organization_id=$1 AND id=$2
+     RETURNING *`,
+    vals
+  );
+  return rows[0] || null;
+}
+
+async function clearRunLines(orgId, runId, client = null) {
+  const db = client || pool;
+  await db.query(
+    `DELETE FROM hr_payroll_run_lines WHERE organization_id=$1 AND payroll_run_id=$2`,
+    [orgId, runId]
+  );
+}
+
+async function deleteRun(orgId, runId, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
+    `DELETE FROM hr_payroll_runs WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, runId]
+  );
+  return rows[0] || null;
+}
+
 async function setRunStatus(orgId, runId, status, actorUserId, client = null) {
   const db = client || pool;
   const { rows } = await db.query(
@@ -169,6 +212,9 @@ module.exports = {
   createRun,
   listRuns,
   getRun,
+  updateRun,
+  clearRunLines,
+  deleteRun,
   setRunStatus,
   getPeriod,
   replaceRunLines,

@@ -33,6 +33,16 @@ router.get(
   }
 );
 
+router.get(
+  "/rules/:id",
+  requirePermission("hr.statutory.read"),
+  async (req, res, next) => {
+    try {
+      res.json(await svc.getRule({ orgId: req.user.organization_id, ruleId: req.params.id }));
+    } catch (e) { next(e); }
+  }
+);
+
 router.put(
   "/rules/:id",
   requirePermission("hr.statutory.manage"),

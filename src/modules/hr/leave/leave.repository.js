@@ -80,6 +80,42 @@ async function getLeaveBalance(orgId, { employeeId, leaveTypeId }, client=null, 
   return r.rows[0] || null;
 }
 
+async function getLeaveBalanceById(orgId, id) {
+  const r = await pool.query(
+    `
+      SELECT b.*, lt.code AS leave_type_code, lt.name AS leave_type_name
+      FROM hr_leave_balances b
+      JOIN hr_leave_types lt ON lt.id=b.leave_type_id
+      WHERE b.organization_id=$1 AND b.id=$2
+    `,
+    [orgId, id]
+  );
+  return r.rows[0] || null;
+}
+
+async function updateLeaveBalanceById(orgId, id, payload) {
+  const fields = [];
+  const params = [orgId, id];
+  const set = (k, v) => { params.push(v); fields.push(`${k}=$${params.length}`); };
+  if (payload.employee_id !== undefined) set("employee_id", payload.employee_id);
+  if (payload.leave_type_id !== undefined) set("leave_type_id", payload.leave_type_id);
+  if (payload.balance_days !== undefined) set("balance_days", payload.balance_days);
+  if (!fields.length) return getLeaveBalanceById(orgId, id);
+  const r = await pool.query(
+    `UPDATE hr_leave_balances SET ${fields.join(', ')}, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    params
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteLeaveBalance(orgId, id) {
+  const r = await pool.query(
+    `DELETE FROM hr_leave_balances WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, id]
+  );
+  return r.rows[0] || null;
+}
+
 async function listLeaveBalances(orgId, query = {}) {
   const params = [orgId];
   let where = "WHERE b.organization_id=$1";
@@ -167,6 +203,32 @@ async function listLeaveRequests(orgId, query = {}) {
   return r.rows;
 }
 
+async function updateLeaveRequest(orgId, id, payload) {
+  const fields = [];
+  const params = [orgId, id];
+  const set = (k, v) => { params.push(v); fields.push(`${k}=$${params.length}`); };
+  if (payload.employee_id !== undefined) set("employee_id", payload.employee_id);
+  if (payload.leave_type_id !== undefined) set("leave_type_id", payload.leave_type_id);
+  if (payload.start_date !== undefined) set("start_date", payload.start_date);
+  if (payload.end_date !== undefined) set("end_date", payload.end_date);
+  if (payload.days !== undefined) set("days", payload.days);
+  if (payload.reason !== undefined) set("reason", payload.reason);
+  if (!fields.length) return getLeaveRequest(orgId, id);
+  const r = await pool.query(
+    `UPDATE hr_leave_requests SET ${fields.join(', ')}, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    params
+  );
+  return r.rows[0] || null;
+}
+
+async function deleteLeaveRequest(orgId, id) {
+  const r = await pool.query(
+    `DELETE FROM hr_leave_requests WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, id]
+  );
+  return r.rows[0] || null;
+}
+
 async function setLeaveRequestStatus(orgId, id, status, client=null) {
   const r = await q(client).query(
     `UPDATE hr_leave_requests SET status=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
@@ -193,7 +255,7 @@ module.exports = {
   // leave types
   createLeaveType, listLeaveTypes, getLeaveType, updateLeaveType, deactivateLeaveType,
   // balances
-  upsertLeaveBalance, getLeaveBalance, listLeaveBalances, insertLeaveLedger, setLeaveBalance,
+  upsertLeaveBalance, getLeaveBalance, getLeaveBalanceById, updateLeaveBalanceById, deleteLeaveBalance, listLeaveBalances, insertLeaveLedger, setLeaveBalance,
   // requests
-  createLeaveRequest, getLeaveRequest, listLeaveRequests, setLeaveRequestStatus,
+  createLeaveRequest, getLeaveRequest, listLeaveRequests, updateLeaveRequest, deleteLeaveRequest, setLeaveRequestStatus,
 };

@@ -5,7 +5,7 @@ const { requirePermission } = require("../../../../middleware/permission.middlew
 const { idempotency } = require("../../../../middleware/idempotency.middleware");
 const { validate } = require("../../../../shared/validators/validate");
 
-const { createPayrollRunSchema } = require("../../../../shared/validators/hr.payroll.validators");
+const { createPayrollRunSchema, updatePayrollRunSchema } = require("../../../../shared/validators/hr.payroll.validators");
 
 const svc = require("./payrollRuns.service");
 
@@ -44,6 +44,51 @@ router.get("/:id", requirePermission("hr.payroll.read"), async (req, res, next) 
     next(e);
   }
 });
+
+
+router.put(
+  "/:id",
+  requirePermission("hr.payroll.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const payload = validate(updatePayrollRunSchema, req.body);
+      res.json(await svc.updateRun({ orgId, actorUserId, runId: req.params.id, payload }));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+router.patch(
+  "/:id",
+  requirePermission("hr.payroll.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const payload = validate(updatePayrollRunSchema, req.body);
+      res.json(await svc.updateRun({ orgId, actorUserId, runId: req.params.id, payload }));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+router.delete(
+  "/:id",
+  requirePermission("hr.payroll.manage"),
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      res.json(await svc.deleteRun({ orgId, actorUserId, runId: req.params.id }));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 router.post(
   "/:id/calculate",
