@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "entity_type": "payslip",
+  "entity_id": "f04e98eb-faf9-4857-8261-63d8be170e11",
+  "snapshot_at": "2026-06-25T10:55:59.482Z",
+  "header": {
+    "id": "f04e98eb-faf9-4857-8261-63d8be170e11",
+    "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+    "period_id": "6b190796-e3d4-41f8-b60a-66fc236a460d",
+    "pay_date": "2026-06-26T00:00:00.000Z",
+    "currency": "GHS",
+    "status": "calculated",
+    "created_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "updated_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "created_at": "2026-06-25T10:46:22.831Z",
+    "updated_at": "2026-06-25T10:55:57.828Z",
+    "workflow_document_id": null
+  },
+  "lines": [
+    {
+      "id": "84fac6a4-b27e-49db-a15c-a72f6111d530",
+      "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+      "payroll_run_id": "f04e98eb-faf9-4857-8261-63d8be170e11",
+      "line_no": 1,
+      "employee_id": "05463f66-f4fd-472d-99ad-267361d72672",
+      "base_salary": "8000.00",
+      "total_earnings": "8000.00",
+      "total_deductions": "0.00",
+      "gross_pay": "16000.00",
+      "net_pay": "16000.00",
+      "currency": "GHS",
+      "breakdown_json": {
+        "benefits": [],
+        "earnings": [
+          {
+            "code": "Basic",
+            "amount": 8000,
+            "component_id": "5505e4bf-9aa2-4bf9-b640-a568995c37fc"
+          }
+        ],
+        "statutory": [],
+        "deductions": [],
+        "base_salary": 8000,
+        "employer_contributions_total": 0
+      },
+      "created_at": "2026-06-25T10:55:57.816Z",
+      "updated_at": "2026-06-25T10:55:57.816Z",
+      "employee_no": "00001",
+      "first_name": "Kyle",
+      "last_name": "Ninchan"
+    }
+  ],
+  "related": {
+    "journal": {
+      "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+      "payroll_run_id": "f04e98eb-faf9-4857-8261-63d8be170e11",
+      "journal_entry_id": "1440efe1-632b-4931-b102-57db2dd500af",
+      "posted_at": null,
+      "posted_by": null,
+      "created_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+      "updated_by": null,
+      "created_at": "2026-06-25T10:49:05.273Z",
+      "updated_at": "2026-06-25T10:49:05.273Z",
+      "journal_status": "draft"
+    }
+  },
+  "meta": {
+    "status": "calculated"
+  }
+}

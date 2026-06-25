@@ -95,6 +95,10 @@ async function submitRunForApproval({ orgId, actorUserId, runId }) {
         await client.query(`UPDATE hr_payroll_runs SET workflow_document_id=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, runId, workflowDocumentId]);
       }
     });
+    await client.query(
+      `UPDATE hr_payroll_runs SET status='submitted', updated_at=NOW(), updated_by=$3 WHERE organization_id=$1 AND id=$2`,
+      [orgId, runId, actorUserId]
+    );
     return getRun({ orgId, runId });
   });
 }
@@ -107,6 +111,10 @@ async function approveRunWorkflow({ orgId, actorUserId, runId, comment }) {
     await documentableSvc.approveEntityDocument({
       orgId, actorUserId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
     });
+    await client.query(
+      `UPDATE hr_payroll_runs SET status='approved', updated_at=NOW(), updated_by=$3 WHERE organization_id=$1 AND id=$2`,
+      [orgId, runId, actorUserId]
+    );
     return getRun({ orgId, runId });
   });
 }
@@ -119,6 +127,10 @@ async function rejectRunWorkflow({ orgId, actorUserId, runId, comment }) {
     await documentableSvc.rejectEntityDocument({
       orgId, actorUserId, entityType: "payslip", workflowDocumentId: run.workflow_document_id, creatorUserId: run.created_by, comment, client
     });
+    await client.query(
+      `UPDATE hr_payroll_runs SET status='rejected', updated_at=NOW(), updated_by=$3 WHERE organization_id=$1 AND id=$2`,
+      [orgId, runId, actorUserId]
+    );
     return getRun({ orgId, runId });
   });
 }
@@ -455,6 +467,9 @@ module.exports = {
   listRuns,
   getRun,
   calculateRun,
+  submitRunForApproval,
+  approveRunWorkflow,
+  rejectRunWorkflow,
   buildJournal,
   postJournal,
   listRunLines,
