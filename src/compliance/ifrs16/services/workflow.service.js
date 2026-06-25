@@ -26,6 +26,47 @@ async function submitLeaseModification({ orgId, actorUserId, leaseId, modificati
 async function approveLeaseModification({ orgId, actorUserId, leaseId, modificationId, comment }) { const client = await pool.connect(); try { await client.query('BEGIN'); const modification = await getLeaseModification({ orgId, leaseId, modificationId }); const result = await workflow.approveLeaseModificationWorkflow({ orgId, actorUserId, modification, comment, client }); await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'MODIFICATION_APPROVED', payload:{ modification_id: modificationId, final_approval: result.final_approval } }); await client.query('COMMIT'); return result; } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); } }
 async function rejectLeaseModification({ orgId, actorUserId, leaseId, modificationId, comment }) { const client = await pool.connect(); try { await client.query('BEGIN'); const modification = await getLeaseModification({ orgId, leaseId, modificationId }); const result = await workflow.rejectLeaseModificationWorkflow({ orgId, actorUserId, modification, comment, client }); await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'MODIFICATION_REJECTED', payload:{ modification_id: modificationId, comment: comment || null } }); await client.query('COMMIT'); return result; } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); } }
 
+
+async function updateLeaseModification({ orgId, actorUserId, leaseId, modificationId, payload }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await getLeaseBase({ orgId, leaseId, client });
+    const { rows: existingRows } = await client.query(`SELECT * FROM lease_modifications WHERE organization_id=$1 AND lease_id=$2 AND id=$3 FOR UPDATE`, [orgId, leaseId, modificationId]);
+    if (!existingRows.length) throw new AppError(404, 'Lease modification not found');
+    const existing = existingRows[0];
+    if (!['draft','rejected'].includes(existing.status)) throw new AppError(409, `Lease modification can only be edited while draft or rejected. Current status is '${existing.status}'`);
+    const fields = [
+      ['effective_date', payload.effective_date ? toISODate(payload.effective_date) : undefined], ['reason', payload.reason], ['new_term_months', payload.new_term_months],
+      ['new_payment_amount', payload.new_payment_amount], ['new_payments_per_year', payload.new_payments_per_year], ['new_annual_discount_rate', payload.new_annual_discount_rate],
+      ['new_payment_timing', payload.new_payment_timing]
+    ].filter(([, value]) => value !== undefined);
+    if (!fields.length) throw new AppError(400, 'No modification fields supplied');
+    const sets = fields.map(([field], idx) => `${field}=$${idx + 4}`);
+    const values = fields.map(([, value]) => value);
+    const { rows } = await client.query(`UPDATE lease_modifications SET ${sets.join(', ')}, status='draft', submitted_at=NULL, submitted_by=NULL, approved_at=NULL, approved_by=NULL, rejected_at=NULL, rejected_by=NULL, rejection_reason=NULL, updated_at=NOW() WHERE organization_id=$1 AND lease_id=$2 AND id=$3 RETURNING *`, [orgId, leaseId, modificationId, ...values]);
+    await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'MODIFICATION_UPDATED', payload: rows[0] });
+    await client.query('COMMIT');
+    return rows[0];
+  } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+}
+
+async function deleteLeaseModification({ orgId, actorUserId, leaseId, modificationId }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await getLeaseBase({ orgId, leaseId, client });
+    const { rows: existingRows } = await client.query(`SELECT * FROM lease_modifications WHERE organization_id=$1 AND lease_id=$2 AND id=$3 FOR UPDATE`, [orgId, leaseId, modificationId]);
+    if (!existingRows.length) throw new AppError(404, 'Lease modification not found');
+    const existing = existingRows[0];
+    if (!['draft','rejected','voided'].includes(existing.status)) throw new AppError(409, `Lease modification cannot be deleted while '${existing.status}'`);
+    await client.query(`DELETE FROM lease_modifications WHERE organization_id=$1 AND lease_id=$2 AND id=$3`, [orgId, leaseId, modificationId]);
+    await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'MODIFICATION_DELETED', payload:{ modification_id: modificationId } });
+    await client.query('COMMIT');
+    return { deleted: true };
+  } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+}
+
 async function applyLeaseModification({ orgId, actorUserId, leaseId, modificationId }) {
   const client = await pool.connect();
   try {
@@ -35,7 +76,7 @@ async function applyLeaseModification({ orgId, actorUserId, leaseId, modificatio
     const { rows } = await client.query(`SELECT * FROM lease_modifications WHERE organization_id=$1 AND lease_id=$2 AND id=$3 FOR UPDATE`, [orgId, leaseId, modificationId]);
     if (!rows.length) throw new AppError(404,'Lease modification not found');
     const modification = rows[0];
-    if (!['draft','approved'].includes(modification.status)) throw new AppError(409, 'Only draft/approved modifications can be applied');
+    if (modification.status !== 'approved') throw new AppError(409, 'Only approved modifications can be applied');
     await workflow.assertLeaseModificationApprovalStateAllowsAction({ orgId, modification, client, actionLabel: 'apply' });
 
     const effectiveDate = toISODate(modification.effective_date);
@@ -163,7 +204,7 @@ async function getLeaseDashboard({ orgId, query }) {
                   SELECT COALESCE(SUM(payment_amount),0)::numeric AS next_12m
                   FROM lease_schedule_lines sl WHERE sl.lease_id=l.id AND sl.due_date > $2 AND sl.due_date <= ($2::date + INTERVAL '12 months')
                 ) n ON TRUE
-                WHERE l.organization_id=$1`, [orgId, asOfDate]).catch(() => pool.query(`SELECT COALESCE(SUM(closing_balance),0)::numeric AS liability_balance, COALESCE(SUM(closing_balance),0)::numeric AS current_liability FROM lease_schedule_lines lsl JOIN leases l ON l.id=lsl.lease_id WHERE l.organization_id=$1 AND lsl.due_date >= $2`, [orgId, asOfDate])),
+                WHERE l.organization_id=$1`, [orgId, asOfDate]),
     pool.query(`SELECT COALESCE(SUM(depreciation_amount),0)::numeric AS scheduled_depreciation FROM lease_schedule_lines lsl JOIN leases l ON l.id=lsl.lease_id WHERE l.organization_id=$1 AND lsl.due_date <= $2`, [orgId, asOfDate]),
     pool.query(`SELECT event_type, COUNT(*)::int AS count FROM lease_events WHERE organization_id=$1 AND created_at >= NOW() - INTERVAL '90 days' GROUP BY event_type ORDER BY count DESC`, [orgId]),
   ]);
@@ -178,20 +219,14 @@ async function getDisclosureReport({ orgId, query }) {
       COALESCE(SUM(CASE WHEN snapshot_type='modification' AND effective_date <= $2 THEN lease_liability_amount ELSE 0 END),0)::numeric AS remeasurements,
       COALESCE((SELECT SUM(principal_amount) FROM lease_schedule_lines sl JOIN leases l ON l.id=sl.lease_id WHERE l.organization_id=$1 AND sl.due_date <= $2),0)::numeric AS principal_reduction,
       COALESCE((SELECT SUM(lease_liability_amount) FROM lease_measurement_snapshots ms JOIN leases l ON l.id=ms.lease_id WHERE l.organization_id=$1 AND ms.effective_date <= $2),0)::numeric AS closing_liability
-      FROM lease_measurement_snapshots WHERE organization_id=$1`, [orgId, asOfDate]).catch(() => pool.query(`SELECT COALESCE(SUM(CASE WHEN initial_recognition_date <= $2 THEN initial_lease_liability ELSE 0 END),0)::numeric AS opening_liability,
-      0::numeric AS remeasurements,
-      COALESCE(SUM(CASE WHEN lsl.due_date <= $2 THEN lsl.principal_amount ELSE 0 END),0)::numeric AS principal_reduction,
-      COALESCE(SUM(CASE WHEN lsl.due_date > $2 THEN lsl.closing_balance ELSE 0 END),0)::numeric AS closing_liability FROM leases l LEFT JOIN lease_schedule_lines lsl ON lsl.lease_id=l.id WHERE l.organization_id=$1`, [orgId, asOfDate])),
+      FROM lease_measurement_snapshots WHERE organization_id=$1`, [orgId, asOfDate]),
     pool.query(`SELECT
       COALESCE(SUM(CASE WHEN snapshot_type='initial' AND effective_date <= $2 THEN rou_asset_amount ELSE 0 END),0)::numeric AS rou_opening_cost,
       COALESCE(SUM(CASE WHEN snapshot_type='initial' AND effective_date <= $2 THEN rou_asset_amount ELSE 0 END),0)::numeric AS additions,
       COALESCE((SELECT SUM(depreciation_amount) FROM lease_schedule_lines sl JOIN leases l ON l.id=sl.lease_id WHERE l.organization_id=$1 AND sl.due_date <= $2),0)::numeric AS depreciation,
       0::numeric AS impairments,
       COALESCE((SELECT SUM(rou_asset_amount) FROM lease_measurement_snapshots ms JOIN leases l ON l.id=ms.lease_id WHERE l.organization_id=$1 AND ms.snapshot_type='modification' AND ms.effective_date <= $2),0)::numeric AS remeasurement_adjustments
-      FROM lease_measurement_snapshots WHERE organization_id=$1`, [orgId, asOfDate]).catch(() => pool.query(`SELECT COALESCE(SUM(initial_lease_liability),0)::numeric AS rou_opening_cost,
-      COALESCE(SUM(CASE WHEN initial_recognition_date <= $2 THEN initial_lease_liability ELSE 0 END),0)::numeric AS additions,
-      COALESCE(SUM(CASE WHEN lsl.due_date <= $2 THEN lsl.depreciation_amount ELSE 0 END),0)::numeric AS depreciation,
-      0::numeric AS impairments, 0::numeric AS remeasurement_adjustments FROM leases l LEFT JOIN lease_schedule_lines lsl ON lsl.lease_id=l.id WHERE organization_id=$1`, [orgId, asOfDate])),
+      FROM lease_measurement_snapshots WHERE organization_id=$1`, [orgId, asOfDate]),
     pool.query(`SELECT CASE
                         WHEN due_date <= $2::date + INTERVAL '1 year' THEN 'within_1_year'
                         WHEN due_date <= $2::date + INTERVAL '5 years' THEN '1_to_5_years'
@@ -214,7 +249,7 @@ async function getDisclosureReport({ orgId, query }) {
 }
 
 module.exports = {
-  createLeaseModification, listLeaseModifications, getLeaseModification, applyLeaseModification,
+  createLeaseModification, listLeaseModifications, getLeaseModification, updateLeaseModification, deleteLeaseModification, applyLeaseModification,
   submitLeaseWorkflow, approveLease, rejectLease, submitLeaseModification, approveLeaseModification, rejectLeaseModification,
   updateLeaseStatus, listLeaseEvents, listLeasePostingLedger, getLeaseDashboard, getDisclosureReport,
 };

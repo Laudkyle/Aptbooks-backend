@@ -80,7 +80,7 @@ async function getLeaseSnapshot({ orgId, leaseId, client = pool }) {
     client.query(`SELECT * FROM lease_payments WHERE lease_id=$1 AND organization_id=$2 ORDER BY due_date ASC, created_at ASC`, [leaseId, orgId]),
     client.query(`SELECT * FROM lease_modifications WHERE lease_id=$1 AND organization_id=$2 ORDER BY effective_date DESC, created_at DESC`, [leaseId, orgId]),
     client.query(`SELECT * FROM lease_schedule_lines WHERE lease_id=$1 ORDER BY line_no ASC`, [leaseId]),
-    client.query(`SELECT * FROM lease_measurement_snapshots WHERE lease_id=$1 AND organization_id=$2 ORDER BY effective_date DESC, created_at DESC`, [leaseId, orgId]).catch(() => ({ rows: [] })),
+    client.query(`SELECT * FROM lease_measurement_snapshots WHERE lease_id=$1 AND organization_id=$2 ORDER BY effective_date DESC, created_at DESC`, [leaseId, orgId]),
   ]);
   return { lease, contract: contractRows.rows[0] || null, assets: assetRows.rows, payments: paymentRows.rows, modifications: modRows.rows, schedule: schedRows.rows, measurement_snapshots: snapRows.rows };
 }

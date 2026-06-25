@@ -8,6 +8,15 @@ function calculatePresentValue({ payment, annualDiscountRate, periods, paymentsP
   return paymentTiming === 'advance' ? pvOrdinary.times(onePlusR) : pvOrdinary;
 }
 
+function presentValueSingleFutureAmount({ amount, annualDiscountRate, periods, paymentsPerYear = 12 }) {
+  const value = toDecimal(amount);
+  if (value.lte(0)) return new Decimal(0);
+  const r = toDecimal(annualDiscountRate).div(paymentsPerYear || 12);
+  const n = toDecimal(periods);
+  if (r.equals(0)) return value;
+  return value.div(new Decimal(1).plus(r).pow(n));
+}
+
 function resolveDepreciationPeriods({ termMonths, usefulLifeMonths, ownershipTransfers = false, purchaseOptionReasonablyCertain = false }) {
   const term = Number(termMonths || 0);
   const life = Number(usefulLifeMonths || 0);
@@ -34,8 +43,13 @@ function buildMeasurement({ lease, contract = null, assets = [], effectiveDate, 
   const periods = toDecimal(termMonths).times(paymentsPerYear).div(12);
   if (!periods.isInteger() || !periods.greaterThan(0)) throw new AppError(400, 'Term months and payments_per_year must produce a whole number of periods');
 
-  const residualValueGuarantee = toDecimal(contract?.residual_value_guarantee || 0);
-  const purchaseOptionAmount = toDecimal(contract?.purchase_option_amount || 0);
+  const residualValueGuaranteeUndiscounted = toDecimal(contract?.residual_value_guarantee || 0);
+  const purchaseOptionUndiscounted = toDecimal(contract?.purchase_option_amount || 0);
+  const residualValueGuarantee = presentValueSingleFutureAmount({ amount: residualValueGuaranteeUndiscounted, annualDiscountRate, periods, paymentsPerYear });
+  const includePurchaseOption = !!(contract?.has_purchase_option || lease.purchase_option_reasonably_certain);
+  const purchaseOptionAmount = includePurchaseOption
+    ? presentValueSingleFutureAmount({ amount: purchaseOptionUndiscounted, annualDiscountRate, periods, paymentsPerYear })
+    : new Decimal(0);
   const initialDirectCosts = toDecimal(contract?.initial_direct_costs || 0);
   const leaseIncentives = toDecimal(contract?.lease_incentives || 0);
   const restorationProvision = toDecimal(contract?.restoration_provision || 0);
@@ -76,6 +90,8 @@ function buildMeasurement({ lease, contract = null, assets = [], effectiveDate, 
     accruedLeasePayments,
     residualValueGuarantee,
     purchaseOptionAmount,
+    residualValueGuaranteeUndiscounted,
+    purchaseOptionUndiscounted,
     leaseLiability: leaseLiability.toDecimalPlaces(6),
     initialRouAsset: initialRouAsset.toDecimalPlaces(6),
     depreciationMonths,
@@ -130,32 +146,28 @@ function generateScheduleLines({ lease, measurement, startDate, openingLiability
 }
 
 async function persistMeasurementSnapshot({ client, orgId, actorUserId, leaseId, snapshotType, measurement, modificationId = null, reason = null, payload = {} }) {
-  try {
-    await client.query(
+  await client.query(
       `INSERT INTO lease_measurement_snapshots(
           organization_id, lease_id, modification_id, snapshot_type, effective_date,
           payment_timing, term_months, payments_per_year, annual_discount_rate, payment_amount,
           lease_liability_amount, rou_asset_amount, depreciation_basis_amount, depreciation_months,
-          initial_direct_costs, lease_incentives, restoration_provision, residual_value_guarantee,
+          initial_direct_costs, lease_incentives, restoration_provision, residual_value_guarantee, purchase_option_amount,
           prepaid_lease_payments, accrued_lease_payments, source_payload, reason, created_by
        ) VALUES (
           $1,$2,$3,$4,$5,
           $6,$7,$8,$9,$10,
           $11,$12,$13,$14,
-          $15,$16,$17,$18,
-          $19,$20,$21,$22,$23
+          $15,$16,$17,$18,$19,
+          $20,$21,$22,$23,$24
        )`,
       [
         orgId, leaseId, modificationId, snapshotType, measurement.effectiveDate,
         measurement.paymentTiming, Number(payload.term_months || 0), Number(payload.payments_per_year || 0), measurement.annualDiscountRate.toNumber(), measurement.paymentAmount.toNumber(),
         measurement.leaseLiability.toNumber(), measurement.initialRouAsset.toNumber(), measurement.initialRouAsset.toNumber(), measurement.depreciationMonths,
-        measurement.initialDirectCosts.toNumber(), measurement.leaseIncentives.toNumber(), measurement.restorationProvision.toNumber(), measurement.residualValueGuarantee.toNumber(),
+        measurement.initialDirectCosts.toNumber(), measurement.leaseIncentives.toNumber(), measurement.restorationProvision.toNumber(), measurement.residualValueGuarantee.toNumber(), measurement.purchaseOptionAmount.toNumber(),
         measurement.prepaidLeasePayments.toNumber(), measurement.accruedLeasePayments.toNumber(), payload, reason, actorUserId,
       ]
     );
-  } catch (_) {
-    // Skip on databases before migration is applied.
-  }
 }
 
 function journalLine(accountId, debit, credit, memo) {
@@ -164,6 +176,7 @@ function journalLine(accountId, debit, credit, memo) {
 
 module.exports = {
   calculatePresentValue,
+  presentValueSingleFutureAmount,
   resolveDepreciationPeriods,
   determineRecognitionModel,
   buildMeasurement,

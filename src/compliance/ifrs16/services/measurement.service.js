@@ -81,8 +81,13 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
     const { lease, contract, assets } = await loadLeaseMeasurementContext({ orgId, leaseId, client });
     if (lease.status !== 'draft') throw new AppError(409, `Initial recognition posting is not allowed when lease status is '${lease.status}'`);
     await workflow.assertLeaseApprovalStateAllowsAction({ orgId, lease, client, actionLabel: 'post' });
-    await assertPostableAccount({ orgId, accountId: lease.rou_asset_account_id, label: 'rou_asset_account_id', client });
-    await assertPostableAccount({ orgId, accountId: lease.lease_liability_account_id, label: 'lease_liability_account_id', client });
+    if (lease.recognition_model === 'on_balance_sheet') {
+      for (const [accountId, label] of [
+        [lease.rou_asset_account_id, 'rou_asset_account_id'], [lease.lease_liability_account_id, 'lease_liability_account_id'],
+        [lease.depreciation_expense_account_id, 'depreciation_expense_account_id'], [lease.accumulated_depreciation_account_id, 'accumulated_depreciation_account_id'],
+      ]) await assertPostableAccount({ orgId, accountId, label, client });
+      if (lease.cash_account_id) await assertPostableAccount({ orgId, accountId: lease.cash_account_id, label: 'cash_account_id', client });
+    }
     if (lease.initial_recognition_journal_id) { await client.query('COMMIT'); return { already_posted: true, journal_id: lease.initial_recognition_journal_id, recognition_date: lease.initial_recognition_date }; }
 
     const entryDate = payload?.entryDate || payload?.entry_date ? toISODate(payload?.entryDate || payload?.entry_date) : toISODate(lease.commencement_date);
@@ -95,16 +100,23 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       return { already_posted:false, recognition_date: entryDate, exempt:true, recognition_model: measurement.recognitionModel };
     }
     const idempotencyKey = buildIfrs16IdempotencyKey(['LEASE', leaseId, 'INIT']);
-    const lines = [
-      journalLine(lease.rou_asset_account_id, measurement.initialRouAsset, 0, 'Recognise right-of-use asset'),
-      journalLine(lease.lease_liability_account_id, 0, measurement.leaseLiability, 'Recognise lease liability'),
-    ];
     const directCosts = toDecimal(contract?.initial_direct_costs || 0);
     const incentives = toDecimal(contract?.lease_incentives || 0);
     const restoration = toDecimal(contract?.restoration_provision || 0);
-    if (directCosts.greaterThan(0) && lease.cash_account_id) lines.push(journalLine(lease.rou_asset_account_id, directCosts, 0, 'Capitalise initial direct costs'), journalLine(lease.cash_account_id, 0, directCosts, 'Settle initial direct costs'));
-    if (incentives.greaterThan(0) && lease.cash_account_id) lines.push(journalLine(lease.cash_account_id, incentives, 0, 'Lease incentive received'), journalLine(lease.rou_asset_account_id, 0, incentives, 'Reduce right-of-use asset for incentive'));
-    if (restoration.greaterThan(0) && lease.lease_liability_account_id) lines.push(journalLine(lease.rou_asset_account_id, restoration, 0, 'Capitalise restoration obligation'), journalLine(lease.lease_liability_account_id, 0, restoration, 'Recognise restoration-related obligation'));
+    const prepaid = toDecimal(contract?.prepaid_lease_payments || 0);
+    const accrued = toDecimal(contract?.accrued_lease_payments || 0);
+    if ((directCosts.greaterThan(0) || incentives.greaterThan(0) || prepaid.greaterThan(0)) && !lease.cash_account_id) {
+      throw new AppError(409, 'Cash/bank account is required for initial direct costs, incentives, or prepaid lease payments');
+    }
+    const lines = [
+      journalLine(lease.rou_asset_account_id, measurement.initialRouAsset, 0, 'Recognise right-of-use asset'),
+      journalLine(lease.lease_liability_account_id, 0, measurement.leaseLiability, 'Recognise lease liability at present value'),
+    ];
+    if (directCosts.greaterThan(0)) lines.push(journalLine(lease.cash_account_id, 0, directCosts, 'Settle initial direct costs'));
+    if (prepaid.greaterThan(0)) lines.push(journalLine(lease.cash_account_id, 0, prepaid, 'Recognise prepaid lease payment included in ROU asset'));
+    if (incentives.greaterThan(0)) lines.push(journalLine(lease.cash_account_id, incentives, 0, 'Lease incentive received'));
+    if (restoration.greaterThan(0)) lines.push(journalLine(lease.lease_liability_account_id, 0, restoration, 'Recognise restoration-related obligation'));
+    if (accrued.greaterThan(0)) lines.push(journalLine(lease.lease_liability_account_id, accrued, 0, 'Accrued lease payments at commencement'));
 
     const postedJournal = await workflow.createAndPostWorkflowBackedJournal({
       orgId, actorUserId, client, sourceDocument: lease,
@@ -127,11 +139,14 @@ async function postLeasePeriod({ orgId, actorUserId, leaseId, payload }) {
     await client.query('BEGIN'); const { lease, contract } = await loadLeaseMeasurementContext({ orgId, leaseId, client });
     if (lease.status !== 'active') throw new AppError(409, `Periodic posting is not allowed when lease status is '${lease.status}'`);
     await workflow.assertLeaseApprovalStateAllowsAction({ orgId, lease, client, actionLabel:'post' });
-    for (const [field,label] of [[lease.interest_expense_account_id,'interest_expense_account_id'],[lease.lease_liability_account_id,'lease_liability_account_id'],[lease.cash_account_id,'cash_account_id'],[lease.depreciation_expense_account_id,'depreciation_expense_account_id'],[lease.accumulated_depreciation_account_id,'accumulated_depreciation_account_id']]) await assertPostableAccount({ orgId, accountId: field, label, client });
+    const exemptRecognition = ['short_term_exempt', 'low_value_exempt'].includes(lease.recognition_model);
+    const neededAccounts = exemptRecognition
+      ? [[lease.depreciation_expense_account_id,'lease_expense_account_id'],[lease.cash_account_id,'cash_account_id']]
+      : [[lease.interest_expense_account_id,'interest_expense_account_id'],[lease.lease_liability_account_id,'lease_liability_account_id'],[lease.cash_account_id,'cash_account_id'],[lease.depreciation_expense_account_id,'depreciation_expense_account_id'],[lease.accumulated_depreciation_account_id,'accumulated_depreciation_account_id']];
+    for (const [field,label] of neededAccounts) await assertPostableAccount({ orgId, accountId: field, label, client });
     const from = toISODate(payload.from_date), to = toISODate(payload.to_date);
     const { rows: lines } = await client.query(`SELECT * FROM lease_schedule_lines WHERE lease_id=$1 AND due_date BETWEEN $2 AND $3 ORDER BY due_date ASC FOR UPDATE`, [leaseId, from, to]);
     if (!lines.length) { await client.query('ROLLBACK'); return { posted: 0, message: 'No schedule lines in range' }; }
-    const exemptRecognition = ['short_term_exempt', 'low_value_exempt'].includes(lease.recognition_model);
     let posted = 0; const journalIds = [];
     for (const line of lines) {
       const entryDate = line.due_date; const period = await findOpenPeriodForDate({ orgId, date: entryDate });
