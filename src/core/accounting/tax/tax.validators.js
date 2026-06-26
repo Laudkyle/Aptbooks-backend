@@ -191,7 +191,7 @@ const taxReturnTemplateBoxSchema = z.object({
 });
 
 const createTaxReturnTemplateSchema = z.object({
-  taxType: z.enum(["VAT", "GST", "SALES"]).optional(),
+  taxType: z.enum(["VAT", "GST", "SALES", "WITHHOLDING", "IMPORT", "OTHER"]).optional(),
   code: z.string().max(50),
   name: z.string().max(255),
   description: z.string().optional().nullable(),

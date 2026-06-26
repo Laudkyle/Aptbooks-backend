@@ -44,7 +44,7 @@ function normalizeFilingAdapterRow(row) {
     ...row,
     adapterCode: row.adapter_code ?? row.adapterCode ?? null,
     jurisdictionCode: row.jurisdiction_code ?? row.country_code ?? row.jurisdictionCode ?? null,
-    status: row.status ?? (row.is_active ? "active" : "inactive")
+    status: row.status ?? (row.is_installed ? "installed" : (row.is_active ? "available" : "inactive"))
   };
 }
 
@@ -53,7 +53,7 @@ function normalizeCountryPackRow(row) {
   return {
     ...row,
     jurisdictionCode: row.jurisdictionCode ?? row.country_code ?? null,
-    status: row.status ?? (row.is_active ? "active" : "inactive")
+    status: row.status ?? (row.is_installed ? "installed" : (row.is_active ? "available" : "inactive"))
   };
 }
 
@@ -1806,22 +1806,93 @@ async function testFilingAdapter({ orgId, adapterId, actorUserId }) {
 
 async function listCountryPacks({ orgId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM tax_country_packs WHERE organization_id=$1 OR organization_id IS NULL ORDER BY is_active DESC, country_code`,
+    `SELECT p.*, i.installed_at, i.installed_by,
+            CASE WHEN i.pack_id IS NULL THEN FALSE ELSE TRUE END AS is_installed
+       FROM tax_country_packs p
+       LEFT JOIN tax_country_pack_installs i
+         ON i.pack_id = p.id AND i.organization_id = $1
+      WHERE p.organization_id=$1 OR p.organization_id IS NULL
+      ORDER BY is_installed DESC, p.is_active DESC, p.country_code, p.pack_code`,
     [orgId],
   );
   return rows.map(normalizeCountryPackRow);
 }
 
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function jsonb(value, fallback = {}) {
+  return JSON.stringify(value ?? fallback);
+}
+
+function codeFromPackRow(row) {
+  return row?.code || row?.taxCode || row?.componentTaxCode || null;
+}
+
 async function installCountryPack({ orgId, actorUserId, payload }) {
   const packCode = payload.packCode || payload.countryCode;
   const { rows: packRows } = await pool.query(
-    `SELECT * FROM tax_country_packs WHERE (organization_id=$1 OR organization_id IS NULL) AND (pack_code=$2 OR country_code=$2) ORDER BY organization_id NULLS FIRST LIMIT 1`,
+    `SELECT * FROM tax_country_packs
+      WHERE (organization_id=$1 OR organization_id IS NULL)
+        AND (pack_code=$2 OR country_code=$2)
+      ORDER BY organization_id NULLS FIRST
+      LIMIT 1`,
     [orgId, packCode],
   );
   const pack = packRows[0];
   if (!pack) throw new AppError(404, "Tax country pack not found");
 
+  const metadata = pack.metadata || {};
+
   return withTransaction(async (client) => {
+    const jurisdictionByCode = new Map();
+
+    for (const j of asArray(metadata.jurisdictions)) {
+      const code = String(j.code || j.countryCode || pack.country_code || "").trim().toUpperCase();
+      if (!code) continue;
+      const { rows } = await client.query(
+        `INSERT INTO tax_jurisdictions(
+            organization_id, code, name, country_code, level_code, region_code, is_default, metadata
+         ) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,FALSE),$8::jsonb)
+         ON CONFLICT (organization_id, code) DO UPDATE SET
+            name=EXCLUDED.name,
+            country_code=EXCLUDED.country_code,
+            level_code=EXCLUDED.level_code,
+            region_code=EXCLUDED.region_code,
+            is_default=EXCLUDED.is_default,
+            metadata=tax_jurisdictions.metadata || EXCLUDED.metadata
+         RETURNING id, code`,
+        [
+          orgId,
+          code,
+          j.name || pack.name || code,
+          (j.countryCode || pack.country_code || code).slice(0, 2).toUpperCase(),
+          j.levelCode || "country",
+          j.regionCode || null,
+          j.isDefault === true,
+          jsonb(j.metadata || {}),
+        ],
+      );
+      jurisdictionByCode.set(code, rows[0].id);
+    }
+
+    if (!jurisdictionByCode.size && pack.country_code) {
+      const code = String(pack.country_code).trim().toUpperCase();
+      const { rows } = await client.query(
+        `INSERT INTO tax_jurisdictions(organization_id, code, name, country_code, level_code, is_default, metadata)
+         VALUES ($1,$2,$3,$4,'country',TRUE,$5::jsonb)
+         ON CONFLICT (organization_id, code) DO UPDATE SET
+           name=EXCLUDED.name,
+           country_code=EXCLUDED.country_code,
+           is_default=TRUE
+         RETURNING id, code`,
+        [orgId, code, pack.name || code, code.slice(0, 2), jsonb({ installedFromPack: pack.pack_code })],
+      );
+      jurisdictionByCode.set(code, rows[0].id);
+    }
+
     if (Array.isArray(pack.default_templates)) {
       for (const tpl of pack.default_templates) {
         const { rows: tRows } = await client.query(
@@ -1833,25 +1904,158 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
         );
         const templateId = tRows[0].id;
         if (Array.isArray(tpl.boxes)) {
-          await client.query(
-            `DELETE FROM tax_return_template_boxes WHERE template_id=$1`,
-            [templateId],
-          );
+          await client.query(`DELETE FROM tax_return_template_boxes WHERE template_id=$1`, [templateId]);
           for (const box of tpl.boxes) {
             await client.query(
               `INSERT INTO tax_return_template_boxes(template_id, box_code, label, sort_order, direction)
                VALUES($1,$2,$3,$4,$5)`,
-              [
-                templateId,
-                box.boxCode,
-                box.label,
-                box.sortOrder || 0,
-                box.direction || null,
-              ],
+              [templateId, box.boxCode, box.label, box.sortOrder || 0, box.direction || null],
             );
           }
         }
       }
+    }
+
+    const taxCodeByCode = new Map();
+    for (const tc of asArray(metadata.taxCodes)) {
+      const code = codeFromPackRow(tc);
+      if (!code) continue;
+      const jCode = String(tc.jurisdictionCode || pack.country_code || "").trim().toUpperCase();
+      const jurisdictionId = tc.jurisdictionId || jurisdictionByCode.get(jCode) || jurisdictionByCode.values().next().value || null;
+      const rowMetadata = { ...(tc.metadata || {}) };
+      if (tc.thresholdAmount != null) rowMetadata.thresholdAmount = String(tc.thresholdAmount);
+      if (tc.sourceNote) rowMetadata.sourceNote = tc.sourceNote;
+      rowMetadata.installedFromPack = pack.pack_code;
+
+      const { rows } = await client.query(
+        `INSERT INTO tax_codes(
+            organization_id, jurisdiction_id, code, name, tax_type, rate, is_compound,
+            box_code, direction, category_code, tax_scope, application_scope, calculation_method,
+            exemption_reason_code, exemption_reason, reverse_charge, recoverable_percent, reporting_group,
+            effective_from, effective_to, status, metadata
+         ) VALUES (
+            $1,$2,$3,$4,$5,$6::numeric,COALESCE($7,false),
+            $8,$9,$10,COALESCE($11,'taxable'),COALESCE($12,'both'),COALESCE($13,'standard'),
+            $14,$15,COALESCE($16,false),COALESCE($17,1),$18,
+            COALESCE($19,CURRENT_DATE),$20,COALESCE($21,'active'),$22::jsonb
+         )
+         ON CONFLICT (organization_id, code) DO UPDATE SET
+            jurisdiction_id=EXCLUDED.jurisdiction_id,
+            name=EXCLUDED.name,
+            tax_type=EXCLUDED.tax_type,
+            rate=EXCLUDED.rate,
+            is_compound=EXCLUDED.is_compound,
+            box_code=EXCLUDED.box_code,
+            direction=EXCLUDED.direction,
+            category_code=EXCLUDED.category_code,
+            tax_scope=EXCLUDED.tax_scope,
+            application_scope=EXCLUDED.application_scope,
+            calculation_method=EXCLUDED.calculation_method,
+            exemption_reason_code=EXCLUDED.exemption_reason_code,
+            exemption_reason=EXCLUDED.exemption_reason,
+            reverse_charge=EXCLUDED.reverse_charge,
+            recoverable_percent=EXCLUDED.recoverable_percent,
+            reporting_group=EXCLUDED.reporting_group,
+            effective_from=EXCLUDED.effective_from,
+            effective_to=EXCLUDED.effective_to,
+            status=EXCLUDED.status,
+            metadata=tax_codes.metadata || EXCLUDED.metadata,
+            updated_at=NOW()
+         RETURNING id, code`,
+        [
+          orgId,
+          jurisdictionId,
+          code,
+          tc.name || code,
+          tc.taxType === "WHT" ? "WITHHOLDING" : (tc.taxType || "VAT"),
+          tc.rate ?? "0",
+          tc.isCompound === true,
+          tc.boxCode ?? null,
+          tc.direction ?? (tc.taxType === "WITHHOLDING" ? "withholding" : null),
+          tc.categoryCode ?? tc.taxCategory ?? null,
+          tc.taxScope ?? null,
+          tc.applicationScope ?? null,
+          tc.calculationMethod ?? null,
+          tc.exemptionReasonCode ?? null,
+          tc.exemptionReason ?? null,
+          tc.reverseCharge === true,
+          tc.recoverablePercent ?? null,
+          tc.reportingGroup ?? null,
+          tc.effectiveFrom || null,
+          tc.effectiveTo ?? null,
+          tc.status || null,
+          jsonb(rowMetadata),
+        ],
+      );
+      taxCodeByCode.set(rows[0].code, rows[0].id);
+    }
+
+    for (const tc of asArray(metadata.taxCodes)) {
+      const parentCode = codeFromPackRow(tc);
+      const components = asArray(tc.components);
+      const parentId = taxCodeByCode.get(parentCode);
+      if (!parentId || !components.length) continue;
+      await client.query(`DELETE FROM tax_code_components WHERE organization_id=$1 AND parent_tax_code_id=$2`, [orgId, parentId]);
+      let sequence = 1;
+      for (const componentCode of components) {
+        const componentId = taxCodeByCode.get(componentCode);
+        if (!componentId) continue;
+        await client.query(
+          `INSERT INTO tax_code_components(organization_id, parent_tax_code_id, component_tax_code_id, sequence_no, rate_override)
+           VALUES($1,$2,$3,$4,NULL)
+           ON CONFLICT (organization_id, parent_tax_code_id, component_tax_code_id) DO UPDATE SET sequence_no=EXCLUDED.sequence_no`,
+          [orgId, parentId, componentId, sequence++],
+        );
+      }
+      await client.query(`UPDATE tax_codes SET is_compound=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, parentId]);
+    }
+
+    for (const rule of asArray(metadata.taxRules)) {
+      const code = rule.taxCode || rule.tax_code || null;
+      const taxCodeId = rule.taxCodeId || taxCodeByCode.get(code);
+      if (!taxCodeId) continue;
+      const jCode = String(rule.jurisdictionCode || pack.country_code || "").trim().toUpperCase();
+      const jurisdictionId = rule.jurisdictionId || jurisdictionByCode.get(jCode) || jurisdictionByCode.values().next().value || null;
+      await client.query(
+        `INSERT INTO tax_rules(
+            organization_id, code, name, document_type, partner_type, supply_type, place_of_supply_basis,
+            transaction_scope, jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
+         ) VALUES (
+            $1,$2,$3,$4,$5,$6,$7,COALESCE($8,'both'),$9,$10,COALESCE($11,100),COALESCE($12,CURRENT_DATE),$13,COALESCE($14,'{}'::jsonb),COALESCE($15,'active')
+         )
+         ON CONFLICT (organization_id, code) DO UPDATE SET
+            name=EXCLUDED.name,
+            document_type=EXCLUDED.document_type,
+            partner_type=EXCLUDED.partner_type,
+            supply_type=EXCLUDED.supply_type,
+            place_of_supply_basis=EXCLUDED.place_of_supply_basis,
+            transaction_scope=EXCLUDED.transaction_scope,
+            jurisdiction_id=EXCLUDED.jurisdiction_id,
+            tax_code_id=EXCLUDED.tax_code_id,
+            priority=EXCLUDED.priority,
+            effective_from=EXCLUDED.effective_from,
+            effective_to=EXCLUDED.effective_to,
+            conditions=EXCLUDED.conditions,
+            status=EXCLUDED.status,
+            updated_at=NOW()`,
+        [
+          orgId,
+          rule.code || String(rule.name || code).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 80),
+          rule.name || code,
+          rule.documentType || null,
+          rule.partnerType || null,
+          rule.supplyType || null,
+          rule.placeOfSupplyBasis || null,
+          rule.transactionScope || null,
+          jurisdictionId,
+          taxCodeId,
+          rule.priority ?? 100,
+          rule.effectiveFrom || metadata.effectiveFrom || null,
+          rule.effectiveTo ?? null,
+          jsonb(rule.conditions || {}),
+          rule.status || "active",
+        ],
+      );
     }
 
     await client.query(
@@ -1860,9 +2064,19 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
        ON CONFLICT (organization_id, pack_id) DO UPDATE SET installed_by=EXCLUDED.installed_by, installed_at=EXCLUDED.installed_at`,
       [orgId, pack.id, actorUserId || null],
     );
-    return { installed: true, pack };
+    return {
+      installed: true,
+      pack: normalizeCountryPackRow(pack),
+      installedCounts: {
+        jurisdictions: jurisdictionByCode.size,
+        taxCodes: taxCodeByCode.size,
+        templates: Array.isArray(pack.default_templates) ? pack.default_templates.length : 0,
+        rules: asArray(metadata.taxRules).length,
+      },
+    };
   });
 }
+
 
 // ==================== AUTOMATION RULES ====================
 
@@ -3110,6 +3324,189 @@ async function listWithholdingOpenItems({ orgId, query = {} }) {
   const direction = query?.direction || "payable";
   return getOpenWithholdingItems({ orgId, direction, query });
 }
+
+
+// ==================== GHANA TAX WORKSPACE HELPERS ====================
+function parseMoneyUnits(value, scale = 2) {
+  const raw = String(value ?? "").trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(raw)) throw new AppError(400, "amount must be a positive decimal value");
+  const [whole, frac = ""] = raw.split(".");
+  const padded = (frac + "0".repeat(scale)).slice(0, scale);
+  return BigInt(whole) * (10n ** BigInt(scale)) + BigInt(padded || "0");
+}
+
+function parseRateMicros(value) {
+  const raw = String(value ?? "0").trim();
+  if (!/^\d+(\.\d{1,6})?$/.test(raw)) throw new AppError(400, "rate must be a non-negative decimal value");
+  const [whole, frac = ""] = raw.split(".");
+  return BigInt(whole) * 1000000n + BigInt((frac + "000000").slice(0, 6));
+}
+
+function formatUnits(units, scale = 2) {
+  const negative = units < 0n;
+  const abs = negative ? -units : units;
+  const base = 10n ** BigInt(scale);
+  const whole = abs / base;
+  const frac = String(abs % base).padStart(scale, "0");
+  return `${negative ? "-" : ""}${whole}.${frac}`;
+}
+
+function percentOfUnits(baseUnits, rateMicros) {
+  const denom = 100n * 1000000n;
+  return (baseUnits * rateMicros + denom / 2n) / denom;
+}
+
+async function getGhanaSetupChecklist({ orgId }) {
+  const [packs, jurisdictions, codes, settings, registrations, templates, rules] = await Promise.all([
+    listCountryPacks({ orgId }),
+    listJurisdictions({ orgId }),
+    listTaxCodes({ orgId, query: {} }),
+    getTaxSettings({ orgId }),
+    listTaxRegistrations({ orgId, query: {} }),
+    listTaxReturnTemplates({ orgId, query: {} }),
+    listTaxRules({ orgId, query: {} }),
+  ]);
+  const ghPack = packs.find((p) => String(p.country_code || p.countryCode || "").toUpperCase() === "GH");
+  const ghJurisdiction = jurisdictions.find((j) => String(j.code || "").toUpperCase() === "GH");
+  const ghCodes = codes.filter((c) => String(c.code || "").startsWith("GH_"));
+  const ghVat = ghCodes.find((c) => c.code === "GH_VAT_EFFECTIVE_20");
+  const ghWht = ghCodes.filter((c) => String(c.tax_type || c.taxType || "").includes("WITHHOLDING"));
+  const ghTemplates = templates.filter((t) => String(t.code || t.template_code || "").startsWith("GH_"));
+  const requiredSettings = [
+    ["Output tax account", settings.output_tax_account_id],
+    ["Input tax account", settings.input_tax_account_id],
+    ["Withholding payable account", settings.withholding_tax_payable_account_id],
+    ["Withholding receivable account", settings.withholding_tax_receivable_account_id],
+  ];
+  const checklist = [
+    { key: "ghana_pack", label: "Install Ghana tax country pack", complete: !!ghPack?.is_installed || !!ghPack?.isInstalled, action: "Install Ghana defaults" },
+    { key: "ghana_jurisdiction", label: "Create Ghana tax jurisdiction", complete: !!ghJurisdiction, action: "Install workflows or create GH jurisdiction" },
+    { key: "ghana_vat", label: "Install Ghana VAT/NHIL/GETFund codes", complete: !!ghVat, action: "Install Ghana defaults" },
+    { key: "ghana_wht", label: "Install Ghana withholding tax codes", complete: ghWht.length >= 5, action: "Install Ghana defaults" },
+    { key: "ghana_templates", label: "Install Ghana return templates", complete: ghTemplates.length >= 2, action: "Install Ghana defaults" },
+    { key: "tax_registration", label: "Add the organisation's GRA tax registration", complete: registrations.length > 0, action: "Create tax registration" },
+    { key: "tax_rules", label: "Enable default tax determination rules", complete: rules.some((r) => String(r.name || "").toLowerCase().includes("ghana")), action: "Install workflows" },
+    ...requiredSettings.map(([label, value]) => ({ key: label.toLowerCase().replace(/[^a-z0-9]+/g, "_"), label, complete: !!value, action: "Map tax posting account" })),
+  ];
+  return { country: "GH", pack: ghPack || null, ready: checklist.every((i) => i.complete), checklist };
+}
+
+async function getGhanaTaxDiagnostics({ orgId }) {
+  const checklist = await getGhanaSetupChecklist({ orgId });
+  const settings = await getTaxSettings({ orgId });
+  const codes = await listTaxCodes({ orgId, query: { status: "active" } });
+  const issues = [];
+  for (const item of checklist.checklist) {
+    if (!item.complete) issues.push({ severity: "warning", code: `setup_${item.key}`, message: item.label, recommendation: item.action });
+  }
+  for (const code of codes.filter((c) => String(c.code || "").startsWith("GH_"))) {
+    const type = String(code.tax_type || code.taxType || "");
+    if (!code.posting_account_id && ["VAT", "IMPORT", "OTHER", "WITHHOLDING"].includes(type)) {
+      issues.push({ severity: "info", code: "tax_code_no_posting_account", message: `${code.code} has no code-specific posting account.`, recommendation: "Use default tax settings or map a posting account on the tax code." });
+    }
+    const meta = code.metadata || {};
+    if (Number(code.rate || 0) === 0 && meta.calculation) {
+      issues.push({ severity: "info", code: "configurable_tax_code", message: `${code.code} is configurable.`, recommendation: meta.calculation });
+    }
+  }
+  if (!settings.tax_rounding_strategy) issues.push({ severity: "warning", code: "missing_rounding_strategy", message: "Tax rounding strategy is not configured.", recommendation: "Set line or total rounding in Tax Settings." });
+  return { ready: issues.filter((i) => i.severity === "warning" || i.severity === "error").length === 0, issueCount: issues.length, issues, checklist: checklist.checklist };
+}
+
+async function calculateGhanaTax({ orgId, payload }) {
+  const baseAmount = payload.baseAmount ?? payload.amount;
+  const inclusive = payload.inclusive === true || payload.calculationMode === "inclusive";
+  const taxCode = payload.taxCode || payload.taxCodeCode || null;
+  const taxCodeId = payload.taxCodeId || null;
+  if (!taxCode && !taxCodeId) throw new AppError(400, "taxCode or taxCodeId is required");
+  const params = [orgId];
+  let where = "organization_id=$1";
+  if (taxCodeId) { params.push(taxCodeId); where += ` AND id=$${params.length}`; }
+  else { params.push(taxCode); where += ` AND code=$${params.length}`; }
+  const { rows } = await pool.query(`SELECT * FROM tax_codes WHERE ${where} LIMIT 1`, params);
+  const parent = rows[0];
+  if (!parent) throw new AppError(404, "Tax code not found");
+
+  const baseUnits = parseMoneyUnits(baseAmount);
+  let componentRows = [];
+  if (parent.is_compound) {
+    const { rows: comps } = await pool.query(
+      `SELECT c.*, COALESCE(tcc.rate_override, c.rate) AS effective_rate
+         FROM tax_code_components tcc
+         JOIN tax_codes c ON c.id=tcc.component_tax_code_id
+        WHERE tcc.organization_id=$1 AND tcc.parent_tax_code_id=$2
+        ORDER BY tcc.sequence_no, c.code`,
+      [orgId, parent.id],
+    );
+    componentRows = comps;
+  }
+  if (!componentRows.length) componentRows = [{ ...parent, effective_rate: parent.rate }];
+  const totalRateMicros = componentRows.reduce((sum, c) => sum + parseRateMicros(c.effective_rate ?? c.rate ?? 0), 0n);
+  let taxableUnits = baseUnits;
+  if (inclusive && totalRateMicros > 0n) {
+    const denom = 100n * 1000000n + totalRateMicros;
+    taxableUnits = (baseUnits * 100n * 1000000n + denom / 2n) / denom;
+  }
+  const components = componentRows.map((c) => {
+    const rateMicros = parseRateMicros(c.effective_rate ?? c.rate ?? 0);
+    const threshold = c.metadata?.thresholdAmount ?? c.metadata?.threshold_amount ?? c.thresholdAmount ?? null;
+    const thresholdUnits = threshold ? parseMoneyUnits(threshold) : null;
+    const amountUnits = thresholdUnits && taxableUnits < thresholdUnits ? 0n : percentOfUnits(taxableUnits, rateMicros);
+    return { taxCodeId: c.id, code: c.code, name: c.name, rate: String(c.effective_rate ?? c.rate ?? 0), amount: formatUnits(amountUnits), skippedByThreshold: !!(thresholdUnits && taxableUnits < thresholdUnits) };
+  });
+  const taxUnits = components.reduce((sum, c) => sum + parseMoneyUnits(c.amount), 0n);
+  return {
+    taxCode: { id: parent.id, code: parent.code, name: parent.name, isCompound: !!parent.is_compound },
+    calculationMode: inclusive ? "inclusive" : "exclusive",
+    baseAmount: formatUnits(taxableUnits),
+    enteredAmount: formatUnits(baseUnits),
+    taxAmount: formatUnits(taxUnits),
+    grossAmount: formatUnits(inclusive ? baseUnits : baseUnits + taxUnits),
+    components,
+  };
+}
+
+async function installGhanaTaxWorkflows({ orgId, actorUserId }) {
+  const packResult = await installCountryPack({ orgId, actorUserId, payload: { packCode: "GH-TAX-2026-COMPLETE" } });
+  const { rows: tplRows } = await pool.query(
+    `SELECT id, code FROM tax_return_templates WHERE organization_id=$1 AND code IN ('GH_VAT_2026','GH_WHT_2026') ORDER BY code`,
+    [orgId],
+  );
+  const defaultTemplate = tplRows.find((r) => r.code === "GH_VAT_2026") || tplRows[0];
+  if (defaultTemplate) {
+    await updateTaxReturnConfig({
+      orgId,
+      actorUserId,
+      payload: { defaultTemplateId: defaultTemplate.id, autoSubmitEnabled: false, filingMethod: "manual" },
+    });
+  }
+  await upsertAutomationRule({
+    orgId,
+    actorUserId,
+    payload: {
+      name: "Ghana monthly VAT return reminder",
+      triggerCode: "return_due",
+      scheduleCode: "weekly",
+      scope: { countryCode: "GH", taxType: "VAT", cadence: "monthly" },
+      action: { type: "notify", message: "Review and prepare Ghana VAT/NHIL/GETFund return." },
+      isEnabled: true,
+    },
+  });
+  await upsertAutomationRule({
+    orgId,
+    actorUserId,
+    payload: {
+      name: "Ghana withholding remittance reminder",
+      triggerCode: "return_due",
+      scheduleCode: "weekly",
+      scope: { countryCode: "GH", taxType: "WITHHOLDING", cadence: "monthly" },
+      action: { type: "notify", message: "Review withholding open items and prepare remittance." },
+      isEnabled: true,
+    },
+  });
+  return { installed: true, pack: packResult, configuredTemplates: tplRows.length, automationRules: 2, checklist: await getGhanaSetupChecklist({ orgId }) };
+}
+
 // ==================== MODULE EXPORTS ====================
 
 module.exports = {
@@ -3183,6 +3580,12 @@ module.exports = {
   // Automation Rules
   listAutomationRules,
   upsertAutomationRule,
+
+  // Ghana tax workspace
+  getGhanaSetupChecklist,
+  getGhanaTaxDiagnostics,
+  calculateGhanaTax,
+  installGhanaTaxWorkflows,
 
   // Withholding lifecycle
   getWithholdingDashboard,

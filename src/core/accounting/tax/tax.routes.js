@@ -413,6 +413,36 @@ router.post("/country-packs/install", requirePermission("tax.manage"), async (re
   } catch (e) { next(e); }
 });
 
+
+// ==================== GHANA TAX WORKSPACE ====================
+router.get("/ghana/setup-checklist", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json({ data: await svc.getGhanaSetupChecklist({ orgId }) });
+  } catch (e) { next(e); }
+});
+
+router.get("/ghana/diagnostics", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json({ data: await svc.getGhanaTaxDiagnostics({ orgId }) });
+  } catch (e) { next(e); }
+});
+
+router.post("/ghana/calculate", requirePermission("tax.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json({ data: await svc.calculateGhanaTax({ orgId, payload: req.body || {} }) });
+  } catch (e) { next(e); }
+});
+
+router.post("/ghana/install-workflows", requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json({ data: await svc.installGhanaTaxWorkflows({ orgId, actorUserId: req.user.id }) });
+  } catch (e) { next(e); }
+});
+
 // ==================== AUTOMATION RULES ====================
 router.get("/automation-rules", requirePermission("tax.read"), async (req, res, next) => {
   try {
