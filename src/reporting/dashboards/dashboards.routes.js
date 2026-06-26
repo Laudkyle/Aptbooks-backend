@@ -1,12 +1,14 @@
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./dashboards.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 function ctx(req) {
   return {
-    organizationId: req.user.organization_id,
+    organizationId: resolveOrgId(req),
     userId: req.user.id,
     ip: req.ip,
     userAgent: req.headers["user-agent"],
@@ -31,6 +33,7 @@ router.get(
 router.post(
   "/",
   requirePermission("reporting.dashboards.manage"),
+  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.createDashboard(ctx(req), req.body || {});
@@ -42,6 +45,7 @@ router.post(
 router.patch(
   "/:dashboardId",
   requirePermission("reporting.dashboards.manage"),
+  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.updateDashboard(ctx(req), req.params.dashboardId, req.body || {});
@@ -65,6 +69,7 @@ router.get(
 router.post(
   "/:dashboardId/widgets",
   requirePermission("reporting.dashboards.manage"),
+  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.createWidget(ctx(req), req.params.dashboardId, req.body || {});
@@ -76,6 +81,7 @@ router.post(
 router.patch(
   "/widgets/:widgetId",
   requirePermission("reporting.dashboards.manage"),
+  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.updateWidget(ctx(req), req.params.widgetId, req.body || {});

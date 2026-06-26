@@ -4,8 +4,9 @@ const svc = require("./managementReports.service");
 const { AppError } = require('../../shared/errors/AppError');
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
-function orgId(req) { return req.user.organization_id; }
+function orgId(req) { return resolveOrgId(req); }
 
 router.get(
   "/departmental-pnl",

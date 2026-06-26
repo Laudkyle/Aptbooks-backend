@@ -6,6 +6,7 @@ const { parseCsvText } = require("../../shared/utils/csv");
 const { pool } = require("../../db/pool");
 const { withTransaction } = require("../../db/tx");
 const documentableSvc = require("../../workflow/documents/documentable.service");
+const { toDecimal, decimalToMoneyString, Decimal } = require("../_util");
 
 function assertName(name) {
   if (!name || typeof name !== "string") throw new AppError(400, "name is required");
@@ -38,8 +39,7 @@ function assertVersionStatus(status) {
 }
 
 function roundMoney(v, decimals = 2) {
-  const m = Math.pow(10, decimals);
-  return Math.round((Number(v) + Number.EPSILON) * m) / m;
+  return decimalToMoneyString(v, decimals);
 }
 
 async function resolveAndValidatePeriods({ orgId, budget, periodIds }) {
@@ -136,6 +136,39 @@ async function createVersion({ orgId, budgetId, versionNo, name, status, actorUs
   return created;
 }
 
+async function listVersions({ orgId, budgetId }) {
+  await getBudget({ orgId, id: budgetId });
+  return repo.listVersions({ orgId, budgetId });
+}
+
+async function getVersion({ orgId, budgetId, versionId }) {
+  const version = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!version) throw new AppError(404, "Budget version not found");
+  return version;
+}
+
+async function updateVersion({ orgId, budgetId, versionId, patch, actorUserId, req }) {
+  const before = await repo.getVersion({ orgId, budgetId, versionId });
+  if (!before) throw new AppError(404, "Budget version not found");
+  if (!["draft", "rejected"].includes(before.workflow_status || "draft") && !["draft"].includes(before.status || "draft")) {
+    throw new AppError(409, "Only draft or rejected budget versions can be edited");
+  }
+  if (patch?.status) assertVersionStatus(patch.status);
+  const updated = await repo.updateVersion({ orgId, budgetId, versionId, patch });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.version.update",
+    entityType: "budget_version",
+    entityId: versionId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before,
+    after: updated,
+  });
+  return updated;
+}
+
 async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req }) {
   const v = await repo.getVersion({ orgId, budgetId, versionId });
   if (!v) throw new AppError(404, "Budget version not found");
@@ -157,8 +190,7 @@ async function upsertLines({ orgId, budgetId, versionId, lines, actorUserId, req
         throw new AppError(400, `periodId ${line.periodId} is not in budget fiscalYear ${budget.fiscal_year}`);
       }
     }
-    const amountNum = Number(line.amount);
-    if (Number.isNaN(amountNum)) throw new AppError(400, "Each line amount must be numeric");
+    const amountNum = decimalToMoneyString(line.amount, 2);
     const dim = await validateDimensionJson({ orgId, dimensionJson: line.dimensionJson || {} });
 
     const row = await repo.upsertLine({
@@ -400,6 +432,24 @@ async function updateAlertRule({ orgId, budgetId, ruleId, patch, actorUserId, re
   return updated;
 }
 
+async function deleteAlertRule({ orgId, budgetId, ruleId, actorUserId, req }) {
+  const before = await repo.getAlertRule({ orgId, budgetId, ruleId });
+  if (!before) throw new AppError(404, "Alert rule not found");
+  const deleted = await repo.deleteAlertRule({ orgId, budgetId, ruleId });
+  await writeAudit({
+    organizationId: orgId,
+    actorUserId,
+    action: "reporting.budget.alert_rule.delete",
+    entityType: "budget_alert_rule",
+    entityId: ruleId,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+    before,
+    after: deleted,
+  });
+  return deleted;
+}
+
 async function getVariance({ orgId, budgetId, versionId, periodId }) {
   if (!periodId) throw new AppError(400, "periodId is required");
   const v = await repo.getVersion({ orgId, budgetId, versionId });
@@ -408,15 +458,20 @@ async function getVariance({ orgId, budgetId, versionId, periodId }) {
 
   const rows = await repo.getVariance({ orgId, budgetVersionId: versionId, periodId });
   // Provide simple totals for convenience
-  const totals = rows.reduce(
+  const totalsDecimal = rows.reduce(
     (acc, r) => {
-      acc.budget += Number(r.budget_amount || 0);
-      acc.actual += Number(r.actual_net || 0);
-      acc.variance += Number(r.variance || 0);
+      acc.budget = acc.budget.plus(toDecimal(r.budget_amount || 0, "budget_amount"));
+      acc.actual = acc.actual.plus(toDecimal(r.actual_net || 0, "actual_net"));
+      acc.variance = acc.variance.plus(toDecimal(r.variance || 0, "variance"));
       return acc;
     },
-    { budget: 0, actual: 0, variance: 0 }
+    { budget: new Decimal(0), actual: new Decimal(0), variance: new Decimal(0) }
   );
+  const totals = {
+    budget: totalsDecimal.budget.toFixed(2),
+    actual: totalsDecimal.actual.toFixed(2),
+    variance: totalsDecimal.variance.toFixed(2),
+  };
   return { periodId, budgetId, versionId, totals, lines: rows };
 }
 
@@ -443,24 +498,24 @@ async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId
     let perPeriodAmounts = [];
 
     if (m === "even") {
-      const total = Number(annualAmount);
-      const raw = total / n;
-      let running = 0;
+      const total = toDecimal(annualAmount, "annualAmount");
+      const raw = total.dividedBy(n);
+      let running = new Decimal(0);
       for (let i = 0; i < n; i++) {
-        const a = (i === n - 1) ? roundMoney(total - running, 2) : roundMoney(raw, 2);
-        running = roundMoney(running + a, 2);
+        const a = (i === n - 1) ? roundMoney(total.minus(running), 2) : roundMoney(raw, 2);
+        running = running.plus(toDecimal(a, "distributedAmount"));
         perPeriodAmounts.push(a);
       }
     } else if (m === "weighted") {
       if (!Array.isArray(weights) || weights.length !== n) throw new AppError(400, "weights must be an array aligned to periodIds (same length)");
-      const wsum = weights.reduce((acc, w) => acc + Number(w || 0), 0);
-      if (!wsum) throw new AppError(400, "weights sum must be > 0");
-      const total = Number(annualAmount);
-      let running = 0;
+      const wsum = weights.reduce((acc, w) => acc.plus(toDecimal(w || 0, "weight")), new Decimal(0));
+      if (wsum.lte(0)) throw new AppError(400, "weights sum must be > 0");
+      const total = toDecimal(annualAmount, "annualAmount");
+      let running = new Decimal(0);
       for (let i = 0; i < n; i++) {
-        const share = total * (Number(weights[i]) / wsum);
-        const a = (i === n - 1) ? roundMoney(total - running, 2) : roundMoney(share, 2);
-        running = roundMoney(running + a, 2);
+        const share = total.times(toDecimal(weights[i], "weight")).dividedBy(wsum);
+        const a = (i === n - 1) ? roundMoney(total.minus(running), 2) : roundMoney(share, 2);
+        running = running.plus(toDecimal(a, "distributedAmount"));
         perPeriodAmounts.push(a);
       }
     } else {
@@ -473,8 +528,7 @@ async function distributeAnnual({ orgId, budgetId, versionId, items, actorUserId
     // upsert per period
     for (let i = 0; i < n; i++) {
       const p = periods[i];
-      const amountNum = Number(perPeriodAmounts[i]);
-      if (Number.isNaN(amountNum)) throw new AppError(400, "Computed budget amount must be numeric");
+      const amountNum = decimalToMoneyString(perPeriodAmounts[i], 2);
       const row = await repo.upsertLine({
         orgId,
         versionId,
@@ -541,6 +595,9 @@ module.exports = {
   getBudget,
   updateBudget,
   createVersion,
+  listVersions,
+  getVersion,
+  updateVersion,
   upsertLines,
   importLinesCsv,
   getVariance,
@@ -554,4 +611,5 @@ module.exports = {
   listAlertRules,
   createAlertRule,
   updateAlertRule,
+  deleteAlertRule,
 };

@@ -5,11 +5,12 @@ const svc = require("./centers.service");
 const { AppError } = require('../../shared/errors/AppError');
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 // Get all centers across all types (cost, profit, investment)
 router.get("/all", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { status, includeArchived, grouped } = req.query;
     
     // Parse boolean query parameters
@@ -42,7 +43,7 @@ router.get("/all", requirePermission("reporting.centers.read"), async (req, res,
 // Get centers by type (existing)
 router.get("/:type", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { type } = req.params;
     const { status } = req.query;
     const data = await svc.listCenters({ orgId, type, status });
@@ -55,7 +56,7 @@ router.get("/:type", requirePermission("reporting.centers.read"), async (req, re
 // Get center by ID across all types (auto-detects type)
 router.get("/by-id/:id", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { id } = req.params;
     const data = await svc.getCenterById({ orgId, id });
     
@@ -72,7 +73,7 @@ router.get("/by-id/:id", requirePermission("reporting.centers.read"), async (req
 // Get usage for a center by ID (auto-detects type)
 router.get("/by-id/:id/usage", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { id } = req.params;
     const data = await svc.getCenterUsage({ orgId, id });
     res.json({ data });
@@ -84,7 +85,7 @@ router.get("/by-id/:id/usage", requirePermission("reporting.centers.read"), asyn
 // Get usage for a center by type and ID (existing)
 router.get("/:type/:id/usage", requirePermission("reporting.centers.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { type, id } = req.params;
     const data = await svc.usageForCenter({ orgId, type, id });
     res.json({ data });
@@ -96,7 +97,8 @@ router.get("/:type/:id/usage", requirePermission("reporting.centers.read"), asyn
 // Create center (existing)
 router.post("/:type", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const { type } = req.params;
     const created = await svc.createCenter({ orgId, type, actorUserId, req, ...req.body });
     res.status(201).json({ data: created });
@@ -108,7 +110,8 @@ router.post("/:type", requirePermission("reporting.centers.manage"), idempotency
 // Update center (existing)
 router.put("/:type/:id", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const { type, id: centerId } = req.params;
     const updated = await svc.updateCenter({ orgId, type, id: centerId, actorUserId, req, ...req.body });
     res.json({ data: updated });
@@ -120,7 +123,8 @@ router.put("/:type/:id", requirePermission("reporting.centers.manage"), idempote
 // Archive center (existing)
 router.delete("/:type/:id", requirePermission("reporting.centers.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const { type, id: centerId } = req.params;
     await svc.archiveCenter({ orgId, type, id: centerId, actorUserId, req });
     res.status(204).send();

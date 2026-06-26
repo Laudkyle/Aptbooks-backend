@@ -4,10 +4,11 @@ const { AppError } = require("../../shared/errors/AppError");
 const svc = require("./analytics.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 router.get("/time-series", requirePermission("reporting.analytics.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { fromPeriodId, toPeriodId, accountId, dimensionJson } = req.query;
     const series = await svc.timeSeries({ orgId, fromPeriodId, toPeriodId, accountId, dimensionJson });
     const window = Number(req.query.maWindow || 0);
@@ -18,7 +19,7 @@ router.get("/time-series", requirePermission("reporting.analytics.read"), async 
 
 router.get("/anomalies", requirePermission("reporting.analytics.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { fromPeriodId, toPeriodId, accountId, dimensionJson } = req.query;
     const series = await svc.timeSeries({ orgId, fromPeriodId, toPeriodId, accountId, dimensionJson });
     const threshold = Number(req.query.threshold || 3);

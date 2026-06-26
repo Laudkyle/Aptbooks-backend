@@ -5,10 +5,11 @@ const svc = require("./budgets.service");
 const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 router.get("/", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const data = await svc.listBudgets({ orgId });
     res.json({ data });
   } catch (err) {
@@ -18,7 +19,8 @@ router.get("/", requirePermission("reporting.budgets.read"), async (req, res, ne
 
 router.post("/", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const created = await svc.createBudget({ orgId, actorUserId, req, ...req.body });
     res.status(201).json({ data: created });
   } catch (err) {
@@ -28,7 +30,7 @@ router.post("/", requirePermission("reporting.budgets.manage"), idempotency({ re
 
 router.get("/:id", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const data = await svc.getBudget({ orgId, id: req.params.id });
     res.json({ data });
   } catch (err) {
@@ -38,7 +40,8 @@ router.get("/:id", requirePermission("reporting.budgets.read"), async (req, res,
 
 router.put("/:id", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.updateBudget({ orgId, actorUserId, req, id: req.params.id, ...req.body });
     res.json({ data });
   } catch (err) {
@@ -49,7 +52,8 @@ router.put("/:id", requirePermission("reporting.budgets.manage"), idempotency({ 
 // Budget status management endpoints
 router.post("/:id/archive", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.updateBudget({ 
       orgId, 
       actorUserId, 
@@ -65,7 +69,8 @@ router.post("/:id/archive", requirePermission("reporting.budgets.manage"), idemp
 
 router.post("/:id/activate", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.updateBudget({ 
       orgId, 
       actorUserId, 
@@ -82,7 +87,8 @@ router.post("/:id/activate", requirePermission("reporting.budgets.manage"), idem
 // Versions
 router.post("/:id/versions", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.createVersion({ orgId, budgetId: req.params.id, actorUserId, req, ...req.body });
     res.status(201).json({ data });
   } catch (err) {
@@ -93,7 +99,7 @@ router.post("/:id/versions", requirePermission("reporting.budgets.manage"), idem
 // Get all versions for a budget
 router.get("/:id/versions", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     // Assuming there's a service method to list versions
     // If not, you'll need to add it to the service
     const data = await svc.listVersions({ orgId, budgetId: req.params.id });
@@ -103,10 +109,43 @@ router.get("/:id/versions", requirePermission("reporting.budgets.read"), async (
   }
 });
 
+
+router.put(
+  "/:id/versions/:versionId",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const orgId = resolveOrgId(req);
+      const actorUserId = req.user?.id;
+      const data = await svc.updateVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, patch: req.body || {}, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.patch(
+  "/:id/versions/:versionId",
+  requirePermission("reporting.budgets.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const orgId = resolveOrgId(req);
+      const actorUserId = req.user?.id;
+      const data = await svc.updateVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, patch: req.body || {}, actorUserId, req });
+      res.json({ data });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // Get a specific version
 router.get("/:id/versions/:versionId", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const data = await svc.getVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId });
     res.json({ data });
   } catch (err) {
@@ -116,7 +155,8 @@ router.get("/:id/versions/:versionId", requirePermission("reporting.budgets.read
 
 router.post("/:id/versions/:versionId/lines", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.upsertLines({
       orgId,
       budgetId: req.params.id,
@@ -139,7 +179,8 @@ router.post(
   express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.importLinesCsv({
         orgId,
         budgetId: req.params.id,
@@ -162,7 +203,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.distributeAnnual({
         orgId,
         budgetId: req.params.id,
@@ -185,7 +227,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.finalizeVersion({
         orgId,
         budgetId: req.params.id,
@@ -207,7 +250,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.submitVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, actorUserId, req });
 
       await notificationsSvc.createNotification({
@@ -236,7 +280,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.approveVersion({ orgId, budgetId: req.params.id, versionId: req.params.versionId, actorUserId, req });
       res.json({ data });
     } catch (err) {
@@ -251,7 +296,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.rejectVersion({
         orgId,
         budgetId: req.params.id,
@@ -273,7 +319,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.copyVersion({
         orgId,
         budgetId: req.params.id,
@@ -297,7 +344,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const { pct, accountId, periodId, dimensionJson } = req.body || {};
       const data = await svc.massAdjustLines({
         orgId,
@@ -320,7 +368,7 @@ router.post(
 // Budget alert rules
 router.get("/:id/alerts", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const data = await svc.listAlertRules({ orgId, budgetId: req.params.id });
     res.json({ data });
   } catch (err) {
@@ -330,7 +378,7 @@ router.get("/:id/alerts", requirePermission("reporting.budgets.read"), async (re
 
 router.get("/:id/alerts/:ruleId", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const data = await svc.getAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId });
     res.json({ data });
   } catch (err) {
@@ -340,7 +388,8 @@ router.get("/:id/alerts/:ruleId", requirePermission("reporting.budgets.read"), a
 
 router.post("/:id/alerts", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.createAlertRule({ orgId, budgetId: req.params.id, actorUserId, req, ...req.body });
     res.status(201).json({ data });
   } catch (err) {
@@ -354,7 +403,8 @@ router.put(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.updateAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId, patch: req.body, actorUserId, req });
       res.json({ data });
     } catch (err) {
@@ -369,7 +419,8 @@ router.delete(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.deleteAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId, actorUserId, req });
       res.json({ data });
     } catch (err) {
@@ -378,10 +429,47 @@ router.delete(
   }
 );
 
+
+// Frontend compatibility aliases: alert-rules -> alerts
+router.get("/:id/alert-rules", requirePermission("reporting.budgets.read"), async (req, res, next) => {
+  try {
+    const orgId = resolveOrgId(req);
+    const data = await svc.listAlertRules({ orgId, budgetId: req.params.id });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.post("/:id/alert-rules", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
+    const data = await svc.createAlertRule({ orgId, budgetId: req.params.id, actorUserId, req, ...req.body });
+    res.status(201).json({ data });
+  } catch (err) { next(err); }
+});
+
+router.put("/:id/alert-rules/:ruleId", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
+    const data = await svc.updateAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId, patch: req.body, actorUserId, req });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
+router.delete("/:id/alert-rules/:ruleId", requirePermission("reporting.budgets.manage"), idempotency({ required: true }), async (req, res, next) => {
+  try {
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
+    const data = await svc.deleteAlertRule({ orgId, budgetId: req.params.id, ruleId: req.params.ruleId, actorUserId, req });
+    res.json({ data });
+  } catch (err) { next(err); }
+});
+
 // Variance (Budget vs Actual)
 router.get("/:id/versions/:versionId/variance", requirePermission("reporting.budgets.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { periodId } = req.query;
     const data = await svc.getVariance({
       orgId,

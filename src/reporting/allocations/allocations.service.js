@@ -7,6 +7,9 @@ const {
   normalizeStatus,
   assertUuid,
   assertMoneyAmount,
+  toDecimal,
+  decimalToMoneyString,
+  isClosedPeriodStatus,
 } = require("../_util");
 const { validateDimensionJson } = require("../dimensions/dimensions.validator");
 
@@ -27,10 +30,23 @@ async function fetchAccountNormalBalances({ orgId, accountIds }) {
 }
 
 function normalizeSignedByNormalBalance({ normalBalance, signedAmount }) {
-  // For management reporting, treat "DEBIT" normal as +debits, "CREDIT" normal as +credits.
-  // signedAmount here is (debit_total - credit_total).
   const nb = (normalBalance || "DEBIT").toUpperCase();
-  return nb === "CREDIT" ? -signedAmount : signedAmount;
+  const amount = toDecimal(signedAmount || 0, "signedAmount");
+  return nb === "CREDIT" ? amount.negated() : amount;
+}
+
+async function assertPeriodPostable({ orgId, periodId }) {
+  const { rows } = await pool.query(
+    `SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
+    [orgId, periodId]
+  );
+  if (!rows.length) throw new AppError(404, "Period not found");
+  if (isClosedPeriodStatus(rows[0].status)) throw new AppError(409, `Accounting period is ${rows[0].status}; posting is not allowed`);
+  return rows[0];
+}
+
+function sumJournalSide(lines, side) {
+  return lines.reduce((acc, line) => acc.plus(toDecimal(line[side] || 0, side)), toDecimal(0, side));
 }
 
 function assertName(name, field = "name") {
@@ -52,8 +68,8 @@ function assertTargets(payloadJson) {
     if (!t || typeof t !== "object") throw new AppError(400, "Each target must be an object");
     if (!t.toAccountId) throw new AppError(400, "Each target requires toAccountId");
     assertUuid(t.toAccountId, "toAccountId");
-    const w = Number(t.weight);
-    if (Number.isNaN(w) || w <= 0) throw new AppError(400, "Each target requires weight > 0");
+    const w = toDecimal(t.weight, "target.weight");
+    if (w.lte(0)) throw new AppError(400, "Each target requires weight > 0");
   }
   return targets;
 }
@@ -95,6 +111,83 @@ async function createBase({ orgId, code, name,basis_type, payloadJson, status, a
   });
 
   return rows[0];
+}
+
+async function updateBase({ orgId, id, code, name, basis_type, payloadJson, status, actorUserId, req }) {
+  assertUuid(id, "baseId");
+  const beforeRes = await pool.query(
+    `SELECT id, code, name, basis_type, payload_json AS "payloadJson", status FROM allocation_bases WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, id]
+  );
+  if (!beforeRes.rows.length) throw new AppError(404, "Allocation base not found");
+  const before = beforeRes.rows[0];
+  const c = code === undefined ? null : normalizeCode(code);
+  if (name !== undefined) assertName(name);
+  const st = status === undefined ? null : normalizeStatus(status, STATUS, "status");
+  const pj = payloadJson === undefined ? null : (payloadJson && typeof payloadJson === "object" ? payloadJson : {});
+  const { rows } = await pool.query(
+    `UPDATE allocation_bases
+        SET code = COALESCE($3, code),
+            name = COALESCE($4, name),
+            basis_type = COALESCE($5, basis_type),
+            payload_json = COALESCE($6, payload_json),
+            status = COALESCE($7, status),
+            updated_at = NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id, code, name, basis_type, payload_json AS "payloadJson", status, created_at, updated_at`,
+    [orgId, id, c, name === undefined ? null : name.trim(), basis_type === undefined ? null : basis_type, pj, st]
+  );
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.allocation_base.update", entityType: "allocation_base", entityId: id, before, after: rows[0], req });
+  return rows[0];
+}
+
+async function archiveBase({ orgId, id, actorUserId, req }) {
+  return updateBase({ orgId, id, status: "archived", actorUserId, req });
+}
+
+async function updateRule({ orgId, id, code, name, baseId, sourceAccountId, targetDimension, payloadJson, status, actorUserId, req }) {
+  assertUuid(id, "ruleId");
+  const beforeRes = await pool.query(
+    `SELECT id, code, name, allocation_base_id AS "baseId", source_account_id AS "sourceAccountId", target_dimension AS "targetDimension", payload_json AS "payloadJson", status FROM allocation_rules WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, id]
+  );
+  if (!beforeRes.rows.length) throw new AppError(404, "Allocation rule not found");
+  const before = beforeRes.rows[0];
+  const c = code === undefined ? null : normalizeCode(code);
+  if (name !== undefined) assertName(name);
+  if (baseId !== undefined && baseId !== null) assertUuid(baseId, "baseId");
+  if (sourceAccountId !== undefined && sourceAccountId !== null) assertUuid(sourceAccountId, "sourceAccountId");
+  const td = targetDimension === undefined ? null : assertTargetDimension(targetDimension);
+  const st = status === undefined ? null : normalizeStatus(status, STATUS, "status");
+  const pj = payloadJson === undefined ? null : (payloadJson && typeof payloadJson === "object" ? payloadJson : {});
+  if (pj?.targets) {
+    const targets = assertTargets(pj);
+    for (const t of targets) {
+      if (t.dimensionJson) {
+        t.dimensionJson = await validateDimensionJson({ orgId, dimensionJson: t.dimensionJson });
+      }
+    }
+  }
+  const { rows } = await pool.query(
+    `UPDATE allocation_rules
+        SET code = COALESCE($3, code),
+            name = COALESCE($4, name),
+            allocation_base_id = COALESCE($5, allocation_base_id),
+            source_account_id = COALESCE($6, source_account_id),
+            target_dimension = COALESCE($7, target_dimension),
+            payload_json = COALESCE($8, payload_json),
+            status = COALESCE($9, status),
+            updated_at = NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id, code, name, allocation_base_id AS "baseId", source_account_id AS "sourceAccountId", target_dimension AS "targetDimension", payload_json AS "payloadJson", status, created_at, updated_at`,
+    [orgId, id, c, name === undefined ? null : name.trim(), baseId === undefined ? null : baseId, sourceAccountId === undefined ? null : sourceAccountId, td, pj, st]
+  );
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.allocation_rule.update", entityType: "allocation_rule", entityId: id, before, after: rows[0], req });
+  return rows[0];
+}
+
+async function archiveRule({ orgId, id, actorUserId, req }) {
+  return updateRule({ orgId, id, status: "archived", actorUserId, req });
 }
 
 async function listRules({ orgId }) {
@@ -188,16 +281,14 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
   if (!Array.isArray(ruleIds) || ruleIds.length === 0) throw new AppError(400, "ruleIds must be a non-empty array");
   for (const id of ruleIds) assertUuid(id, "ruleId");
 
-  // validate period exists
-  const period = await pool.query(`SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2`, [orgId, periodId]);
-  if (!period.rows.length) throw new AppError(404, "Period not found");
+  await assertPeriodPostable({ orgId, periodId });
 
   const created = [];
   for (const ruleId of ruleIds) {
     // eslint-disable-next-line no-await-in-loop
     const existing = await pool.query(
       `SELECT id, status FROM cost_allocations
-        WHERE organization_id=$1 AND rule_id=$2 AND period_id=$3 AND status IN ('computed','posted')
+        WHERE organization_id=$1 AND rule_id=$2 AND period_id=$3 AND status IN ('computed','approved','posted')
         ORDER BY computed_at DESC LIMIT 1`,
       [orgId, ruleId, periodId]
     );
@@ -232,18 +323,18 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
         WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
       [orgId, periodId, rule.sourceAccountId]
     );
-    const debit = Number(gl.rows[0]?.debit_total || 0);
-    const credit = Number(gl.rows[0]?.credit_total || 0);
-    const signedNet = debit - credit;
+    const debit = toDecimal(gl.rows[0]?.debit_total || 0, "debit_total");
+    const credit = toDecimal(gl.rows[0]?.credit_total || 0, "credit_total");
+    const signedNet = debit.minus(credit);
 
     // normalise to management-reporting sign (positive = "natural" direction)
     // eslint-disable-next-line no-await-in-loop
     const nb = await fetchAccountNormalBalances({ orgId, accountIds: [rule.sourceAccountId] });
     const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance: nb.get(rule.sourceAccountId) });
-    const baseAmount = Math.abs(normalised);
+    const baseAmount = normalised.abs();
 
-    const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
-    if (totalWeight <= 0) throw new AppError(400, "Total target weight must be > 0");
+    const totalWeight = targets.reduce((acc, t) => acc.plus(toDecimal(t.weight, "target.weight")), toDecimal(0, "weight"));
+    if (totalWeight.lte(0)) throw new AppError(400, "Total target weight must be > 0");
 
     // Begin transaction for allocation header + lines
     const client = await pool.connect();
@@ -253,13 +344,13 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
       const payloadJson = {
         memo: memo || null,
         source_account_id: rule.sourceAccountId,
-        signed_net: signedNet,
-        normalised_net: normalised,
-        base_amount: baseAmount,
-        total_weight: totalWeight,
+        signed_net: signedNet.toFixed(2),
+        normalised_net: normalised.toFixed(2),
+        base_amount: baseAmount.toFixed(2),
+        total_weight: totalWeight.toString(),
         targets: targets.map((t) => ({
           toAccountId: t.toAccountId,
-          weight: Number(t.weight),
+          weight: toDecimal(t.weight, "target.weight").toString(),
           dimensionJson: t.dimensionJson || null,
           notes: t.notes || null,
         })),
@@ -276,16 +367,16 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
       // Compute line amounts (rounded to cents by default, but keep JS number)
       const lineRows = [];
       let lineNo = 1;
-      let allocatedSum = 0;
+      let allocatedSum = toDecimal(0, "allocatedSum");
       for (let i = 0; i < targets.length; i++) {
         const t = targets[i];
-        const w = Number(t.weight);
-        let amt = (baseAmount * w) / totalWeight;
-        // last line residual to ensure sums match baseAmount
+        const w = toDecimal(t.weight, "target.weight");
+        let amt = baseAmount.times(w).dividedBy(totalWeight).toDecimalPlaces(2);
+        // last line residual to ensure sums match baseAmount exactly after rounding
         if (i === targets.length - 1) {
-          amt = baseAmount - allocatedSum;
+          amt = baseAmount.minus(allocatedSum).toDecimalPlaces(2);
         }
-        allocatedSum += amt;
+        allocatedSum = allocatedSum.plus(amt);
         lineRows.push({
           orgId,
           allocationId: allocation.id,
@@ -293,8 +384,8 @@ async function computeAndPersist({ orgId, periodId, ruleIds, memo, replace, acto
           periodId,
           lineNo,
           toAccountId: t.toAccountId,
-          amount: amt,
-          weight: w,
+          amount: amt.toFixed(2),
+          weight: w.toString(),
           notes: t.notes || null,
           dimensionJson: t.dimensionJson || null,
         });
@@ -378,9 +469,10 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
       };
     }
     
-    if (allocation.status !== "computed") {
-      throw new AppError(409, `Allocation must be computed to post (current: ${allocation.status})`);
+    if (allocation.status !== "approved") {
+      throw new AppError(409, `Allocation must be approved before posting (current: ${allocation.status})`);
     }
+    await assertPeriodPostable({ orgId, periodId: allocation.periodId });
     
     // Get allocation lines
     const linesRes = await pool.query(
@@ -393,11 +485,10 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
     
     if (!linesRes.rows.length) throw new AppError(409, "Allocation has no lines to post");
     
-    const baseAmount = Number(allocation.payloadJson?.base_amount ?? 0);
-    if (Number.isNaN(baseAmount)) throw new AppError(500, "Allocation base amount is invalid");
+    const baseAmount = toDecimal(allocation.payloadJson?.base_amount ?? 0, "allocation base amount");
 
   // If base amount is 0, mark as posted without creating journal
-  if (baseAmount === 0) {
+  if (baseAmount.isZero()) {
     await pool.query(
       `UPDATE cost_allocations 
       SET status='posted', posted_at=now(), posted_by=$3, posted_journal_entry_id=NULL, updated_at=now()
@@ -422,7 +513,7 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
     journalLines.push({
       accountId: l.toAccountId,
       debit: amount,
-      credit: 0,
+      credit: "0.00",
       description: l.notes || `Allocation to ${l.toAccountId.substring(0, 8)}...`
     });
   }
@@ -430,17 +521,17 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
   // Credit line (source account provides the allocation)
   journalLines.push({
     accountId: allocation.sourceAccountId,
-    debit: 0,
-    credit: baseAmount,
+    debit: "0.00",
+    credit: baseAmount.toFixed(2),
     description: "Cost allocation source"
   });
 
   // Verify journal is balanced
-  const totalDebit = journalLines.reduce((sum, line) => sum + (line.debit || 0), 0);
-  const totalCredit = journalLines.reduce((sum, line) => sum + (line.credit || 0), 0);
+  const totalDebit = sumJournalSide(journalLines, "debit");
+  const totalCredit = sumJournalSide(journalLines, "credit");
   
-  if (Math.abs(totalDebit - totalCredit) > 0.01) {
-    throw new AppError(400, `Journal not balanced. Debit: ${totalDebit}, Credit: ${totalCredit}`);
+  if (!totalDebit.equals(totalCredit)) {
+    throw new AppError(400, `Journal not balanced. Debit: ${totalDebit.toFixed(2)}, Credit: ${totalCredit.toFixed(2)}`);
   }
 
   try {
@@ -493,7 +584,7 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
       before: { 
         id: allocationId,
         status: "computed",
-        baseAmount: baseAmount
+        baseAmount: baseAmount.toFixed(2)
       },
       after: { 
         id: allocationId,
@@ -508,22 +599,97 @@ async function postAllocation({ orgId, allocationId, entryDate, memo, actorUserI
       id: allocationId, 
       status: "posted", 
       journalEntryId: journalEntryId,
-      baseAmount: baseAmount
+      baseAmount: baseAmount.toFixed(2)
     };
     
   } catch (error) {
-    console.error('Failed to post journal for allocation:', {
-      allocationId,
-      error: error.message,
-      stack: error.stack
-    });
-    
-    // Re-throw as AppError if not already
-    if (error instanceof AppError) {
-      throw error;
-    }
+    if (error instanceof AppError) throw error;
     throw new AppError(500, `Failed to post journal entry: ${error.message}`);
   }
+}
+
+async function approveAllocation({ orgId, allocationId, actorUserId, req }) {
+  assertUuid(allocationId, "allocationId");
+  const beforeRes = await pool.query(
+    `SELECT id, status, period_id AS "periodId", payload_json AS "payloadJson"
+       FROM cost_allocations
+      WHERE organization_id=$1 AND id=$2
+      LIMIT 1`,
+    [orgId, allocationId]
+  );
+  if (!beforeRes.rows.length) throw new AppError(404, "Allocation not found");
+  const before = beforeRes.rows[0];
+  if (before.status !== "computed" && before.status !== "rejected") {
+    throw new AppError(409, `Only computed/rejected allocations can be approved (current: ${before.status})`);
+  }
+  await assertPeriodPostable({ orgId, periodId: before.periodId });
+  const { rows } = await pool.query(
+    `UPDATE cost_allocations
+        SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id, rule_id AS "ruleId", period_id AS "periodId", status, payload_json AS "payloadJson", approved_at AS "approvedAt"`,
+    [orgId, allocationId, actorUserId || null]
+  );
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.allocations.approve", entityType: "cost_allocation", entityId: allocationId, before, after: rows[0], req });
+  return rows[0];
+}
+
+async function rejectAllocation({ orgId, allocationId, reason, actorUserId, req }) {
+  assertUuid(allocationId, "allocationId");
+  const beforeRes = await pool.query(
+    `SELECT id, status, payload_json AS "payloadJson" FROM cost_allocations WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, allocationId]
+  );
+  if (!beforeRes.rows.length) throw new AppError(404, "Allocation not found");
+  const before = beforeRes.rows[0];
+  if (!["computed", "approved"].includes(before.status)) {
+    throw new AppError(409, `Only computed/approved allocations can be rejected (current: ${before.status})`);
+  }
+  const { rows } = await pool.query(
+    `UPDATE cost_allocations
+        SET status='rejected', rejected_at=NOW(), rejected_by=$3,
+            payload_json = jsonb_set(COALESCE(payload_json,'{}'::jsonb), '{rejection_reason}', to_jsonb($4::text), true),
+            updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id, rule_id AS "ruleId", period_id AS "periodId", status, payload_json AS "payloadJson", rejected_at AS "rejectedAt"`,
+    [orgId, allocationId, actorUserId || null, reason || "Rejected"]
+  );
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.allocations.reject", entityType: "cost_allocation", entityId: allocationId, before, after: rows[0], req });
+  return rows[0];
+}
+
+async function reverseAllocation({ orgId, allocationId, entryDate, reason, actorUserId, req }) {
+  assertUuid(allocationId, "allocationId");
+  if (!entryDate || typeof entryDate !== "string") throw new AppError(400, "entryDate is required (YYYY-MM-DD)");
+  const { rows } = await pool.query(
+    `SELECT id, status, period_id AS "periodId", posted_journal_entry_id AS "postedJournalEntryId"
+       FROM cost_allocations WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [orgId, allocationId]
+  );
+  if (!rows.length) throw new AppError(404, "Allocation not found");
+  const allocation = rows[0];
+  if (allocation.status !== "posted") throw new AppError(409, `Only posted allocations can be reversed (current: ${allocation.status})`);
+  if (!allocation.postedJournalEntryId) throw new AppError(409, "Allocation has no posted journal reference to reverse");
+  await assertPeriodPostable({ orgId, periodId: allocation.periodId });
+  const reversal = await journalPosting.reversePostedJournal({
+    orgId,
+    journalId: allocation.postedJournalEntryId,
+    actorUserId,
+    targetPeriodId: allocation.periodId,
+    entryDate,
+    reason: reason || "Cost allocation reversal",
+    idempotencyKey: req?.headers?.["idempotency-key"] || null,
+  });
+  const reversalId = reversal?.journalId || reversal?.id || reversal?.reversalJournalId || null;
+  const { rows: updatedRows } = await pool.query(
+    `UPDATE cost_allocations
+        SET status='reversed', reversed_at=NOW(), reversed_by=$3, reversal_journal_entry_id=$4, updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id, status, posted_journal_entry_id AS "postedJournalEntryId", reversal_journal_entry_id AS "reversalJournalEntryId", reversed_at AS "reversedAt"`,
+    [orgId, allocationId, actorUserId || null, reversalId]
+  );
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.allocations.reverse", entityType: "cost_allocation", entityId: allocationId, before: allocation, after: updatedRows[0], req });
+  return updatedRows[0];
 }
 
 
@@ -563,9 +729,9 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
         WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
       [orgId, periodId, rule.sourceAccountId]
     );
-    const debit = Number(gl.rows[0]?.debit_total || 0);
-    const credit = Number(gl.rows[0]?.credit_total || 0);
-    const signedNet = debit - credit;
+    const debit = toDecimal(gl.rows[0]?.debit_total || 0, "debit_total");
+    const credit = toDecimal(gl.rows[0]?.credit_total || 0, "credit_total");
+    const signedNet = debit.minus(credit);
 
     // normalise to management-reporting sign
     // eslint-disable-next-line no-await-in-loop
@@ -573,25 +739,25 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
     const normalBalance = nb.get(rule.sourceAccountId);
     const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance });
 
-    const baseAmount = Math.abs(normalised);
-    const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
-    if (totalWeight <= 0) throw new AppError(400, "Total target weight must be > 0");
+    const baseAmount = normalised.abs();
+    const totalWeight = targets.reduce((acc, t) => acc.plus(toDecimal(t.weight, "target.weight")), toDecimal(0, "weight"));
+    if (totalWeight.lte(0)) throw new AppError(400, "Total target weight must be > 0");
 
     const lines = [];
-    let allocatedSum = 0;
+    let allocatedSum = toDecimal(0, "allocatedSum");
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
-      const w = Number(t.weight);
-      let amt = (baseAmount * w) / totalWeight;
+      const w = toDecimal(t.weight, "target.weight");
+      let amt = baseAmount.times(w).dividedBy(totalWeight).toDecimalPlaces(2);
       if (i === targets.length - 1) {
-        amt = baseAmount - allocatedSum;
+        amt = baseAmount.minus(allocatedSum).toDecimalPlaces(2);
       }
-      allocatedSum += amt;
+      allocatedSum = allocatedSum.plus(amt);
       lines.push({
         lineNo: i + 1,
         toAccountId: t.toAccountId,
-        amount: amt,
-        weight: w,
+        amount: amt.toFixed(2),
+        weight: w.toString(),
         notes: t.notes || null,
         dimensionJson: t.dimensionJson || {},
       });
@@ -603,10 +769,10 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
       ruleName: rule.name,
       periodId,
       sourceAccountId: rule.sourceAccountId,
-      signedNet,
-      normalisedNet: normalised,
-      baseAmount,
-      totalWeight,
+      signedNet: signedNet.toFixed(2),
+      normalisedNet: normalised.toFixed(2),
+      baseAmount: baseAmount.toFixed(2),
+      totalWeight: totalWeight.toString(),
       lines,
     });
   }
@@ -651,9 +817,9 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
         WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
       [orgId, periodId, rule.sourceAccountId]
     );
-    const debit = Number(gl.rows[0]?.debit_total || 0);
-    const credit = Number(gl.rows[0]?.credit_total || 0);
-    const signedNet = debit - credit;
+    const debit = toDecimal(gl.rows[0]?.debit_total || 0, "debit_total");
+    const credit = toDecimal(gl.rows[0]?.credit_total || 0, "credit_total");
+    const signedNet = debit.minus(credit);
 
     // normalise to management-reporting sign
     // eslint-disable-next-line no-await-in-loop
@@ -661,25 +827,25 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
     const normalBalance = nb.get(rule.sourceAccountId);
     const normalised = normalizeSignedByNormalBalance({ signedAmount: signedNet, normalBalance });
 
-    const baseAmount = Math.abs(normalised);
-    const totalWeight = targets.reduce((s, t) => s + Number(t.weight), 0);
-    if (totalWeight <= 0) throw new AppError(400, "Total target weight must be > 0");
+    const baseAmount = normalised.abs();
+    const totalWeight = targets.reduce((acc, t) => acc.plus(toDecimal(t.weight, "target.weight")), toDecimal(0, "weight"));
+    if (totalWeight.lte(0)) throw new AppError(400, "Total target weight must be > 0");
 
     const lines = [];
-    let allocatedSum = 0;
+    let allocatedSum = toDecimal(0, "allocatedSum");
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
-      const w = Number(t.weight);
-      let amt = (baseAmount * w) / totalWeight;
+      const w = toDecimal(t.weight, "target.weight");
+      let amt = baseAmount.times(w).dividedBy(totalWeight).toDecimalPlaces(2);
       if (i === targets.length - 1) {
-        amt = baseAmount - allocatedSum;
+        amt = baseAmount.minus(allocatedSum).toDecimalPlaces(2);
       }
-      allocatedSum += amt;
+      allocatedSum = allocatedSum.plus(amt);
       lines.push({
         lineNo: i + 1,
         toAccountId: t.toAccountId,
-        amount: amt,
-        weight: w,
+        amount: amt.toFixed(2),
+        weight: w.toString(),
         notes: t.notes || null,
         dimensionJson: t.dimensionJson || {},
       });
@@ -691,10 +857,10 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
       ruleName: rule.name,
       periodId,
       sourceAccountId: rule.sourceAccountId,
-      signedNet,
-      normalisedNet: normalised,
-      baseAmount,
-      totalWeight,
+      signedNet: signedNet.toFixed(2),
+      normalisedNet: normalised.toFixed(2),
+      baseAmount: baseAmount.toFixed(2),
+      totalWeight: totalWeight.toString(),
       lines,
     });
   }
@@ -704,9 +870,16 @@ async function previewCompute({ orgId, periodId, ruleIds }) {
 module.exports = {
   listBases,
   createBase,
+  updateBase,
+  archiveBase,
   listRules,
   createRule,
+  updateRule,
+  archiveRule,
   computeAndPersist,
   postAllocation,
+  approveAllocation,
+  rejectAllocation,
+  reverseAllocation,
   previewCompute
 };

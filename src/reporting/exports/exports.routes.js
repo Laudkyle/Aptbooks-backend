@@ -3,10 +3,11 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 const svc = require("./exports.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 router.get("/trial-balance", requirePermission("reporting.exports.run"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { periodId, format = "json", encrypt = "0" } = req.query;
     const out = await svc.exportTrialBalance({ orgId, periodId, format, encrypt: String(encrypt) === "1" });
     if (out.headers) {
@@ -21,7 +22,7 @@ router.get("/trial-balance", requirePermission("reporting.exports.run"), async (
 
 router.get("/general-ledger", requirePermission("reporting.exports.run"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { periodId, format = "json", encrypt = "0" } = req.query;
     const out = await svc.exportGeneralLedger({ orgId, periodId, format, encrypt: String(encrypt) === "1" });
     if (out.headers) {
@@ -36,7 +37,7 @@ router.get("/general-ledger", requirePermission("reporting.exports.run"), async 
 
 router.get("/account-activity", requirePermission("reporting.exports.run"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { accountId, fromDate, toDate, format = "json", encrypt = "0" } = req.query;
     const out = await svc.exportAccountActivity({
       orgId,

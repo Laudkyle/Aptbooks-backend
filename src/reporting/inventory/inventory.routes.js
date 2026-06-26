@@ -3,12 +3,13 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 const svc = require("./inventory.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 router.use(requirePermission("reporting.inventory.read"));
 
 router.get("/valuation-current", async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { warehouseId } = req.query;
     const data = await svc.valuationCurrent({ orgId, warehouseId });
     res.json({ data });

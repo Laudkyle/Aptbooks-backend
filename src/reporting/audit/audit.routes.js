@@ -3,6 +3,7 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");
 const svc = require("./audit.service");
+const { resolveOrgId } = require("../_util");
 
 router.use(requirePermission("reporting.audit.read"));
 

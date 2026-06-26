@@ -3,12 +3,13 @@ const { requirePermission } = require("../../middleware/permission.middleware");
 const svc = require("./ap.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 router.use(requirePermission("reporting.ap.read"));
 
 router.get("/aged-payables", async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { asOfDate, bucketSetId } = req.query;
     
     // Handle bucketSetId properly - don't convert to number, just pass undefined if it's "undefined" or empty
@@ -31,7 +32,7 @@ router.get("/aged-payables", async (req, res, next) => {
 // Drill-down / open items - Fixed UUID handling
 router.get("/open-items", async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { vendorId } = req.query;
     
     const { rows } = await require("../../db/pool").pool.query(
@@ -50,7 +51,7 @@ router.get("/open-items", async (req, res, next) => {
 
 router.get("/vendor-statement", async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { vendorId, from, to } = req.query;
     const data = await svc.vendorStatement({ 
       orgId, 

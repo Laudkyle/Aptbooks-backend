@@ -100,7 +100,6 @@ async function listLines({ orgId, forecastId, forecastVersionId, accountId, peri
   query += ` ORDER BY fl.created_at DESC`;
   
   const result = await pool.query(query, params);
-  console.log(`Found ${result.rows.length} lines for forecastVersionId ${forecastVersionId}`);
   return result.rows;
 }
 
@@ -473,7 +472,6 @@ async function finalizeVersion({ orgId, forecastId, versionId, actorUserId }) {
         [activeIds, actorUserId]
       );
       
-      console.log(`Archived ${activeVersions.length} active version(s): ${activeVersions.map(v => `v${v.version_no}`).join(', ')}`);
     }
     
     // Now finalize the draft version (make it active)
@@ -850,12 +848,9 @@ async function getVariance({ orgId, forecastId, forecastVersionId, periodId }) {
       periodId
     ]);
     
-    console.log(`Found ${rows.length} variance records`);
     return rows;
     
   } catch (error) {
-    console.error('Error in getVariance:', error.message);
-    console.error('Query parameters:', { orgId, forecastId, forecastVersionId, periodId });
     throw error;
   }
 }

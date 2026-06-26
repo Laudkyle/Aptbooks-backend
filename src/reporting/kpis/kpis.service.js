@@ -1,7 +1,7 @@
 const repo = require("./kpis.repository");
 const { AppError } = require("../../shared/errors/AppError");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
-const { assertUuid, assertCode, assertName } = require("../_util");
+const { assertUuid, assertCode, assertName, toDecimal, decimalToMoneyString, Decimal } = require("../_util");
 const { parseCsvText } = require("../../shared/utils/csv");
 
 const KPI_TYPES = ["ACCOUNT_BALANCE", "EXPRESSION"];
@@ -25,21 +25,41 @@ function parseExpressionJson(input) {
   throw new AppError(400, "expressionJson must be an object or JSON string");
 }
 
+function validateExpressionAst(ast, depth = 0) {
+  if (!ast || typeof ast !== "object" || Array.isArray(ast)) throw new AppError(400, "Invalid KPI expression AST");
+  if (depth > 20) throw new AppError(400, "KPI expression is too deeply nested");
+  const kind = ast.kind;
+  if (!["const", "account_balance", "add", "sub", "mul", "div"].includes(kind)) {
+    throw new AppError(400, `Unsupported KPI expression kind: ${kind}`);
+  }
+  if (kind === "const") {
+    toDecimal(ast.value, "const.value");
+    return ast;
+  }
+  if (kind === "account_balance") {
+    assertUuid(ast.accountId, "accountId");
+    return ast;
+  }
+  validateExpressionAst(ast.a, depth + 1);
+  validateExpressionAst(ast.b, depth + 1);
+  return ast;
+}
+
 async function evalAst({ orgId, periodId, ast, cache }) {
   if (!ast || typeof ast !== "object") throw new AppError(400, "Invalid KPI expression AST");
   const kind = ast.kind;
   switch (kind) {
     case "const":
-      if (typeof ast.value !== "number" || Number.isNaN(ast.value)) throw new AppError(400, "Invalid const value");
-      return ast.value;
+      return toDecimal(ast.value, "const.value");
     case "account_balance": {
       const accountId = ast.accountId;
       assertUuid(accountId, "accountId");
       const key = `bal:${accountId}`;
       if (cache.has(key)) return cache.get(key);
       const v = await repo.getNormalisedAccountActual({ orgId, periodId, accountId });
-      cache.set(key, v);
-      return v;
+      const out = toDecimal(v || 0, "account balance");
+      cache.set(key, out);
+      return out;
     }
     case "add":
     case "sub":
@@ -47,12 +67,12 @@ async function evalAst({ orgId, periodId, ast, cache }) {
     case "div": {
       const a = await evalAst({ orgId, periodId, ast: ast.a, cache });
       const b = await evalAst({ orgId, periodId, ast: ast.b, cache });
-      if (kind === "add") return a + b;
-      if (kind === "sub") return a - b;
-      if (kind === "mul") return a * b;
+      if (kind === "add") return a.plus(b);
+      if (kind === "sub") return a.minus(b);
+      if (kind === "mul") return a.times(b);
       if (kind === "div") {
-        if (b === 0) throw new AppError(400, "Division by zero in KPI expression");
-        return a / b;
+        if (b.isZero()) throw new AppError(400, "Division by zero in KPI expression");
+        return a.dividedBy(b);
       }
       break;
     }
@@ -77,6 +97,7 @@ async function createDefinition({ orgId, actorUserId, req, code, name, kpiType, 
   if (kpiType === "EXPRESSION" && !expr) {
     throw new AppError(400, "expressionJson is required for EXPRESSION KPIs");
   }
+  if (expr) validateExpressionAst(expr);
   const created = await repo.createDefinition({
     orgId,
     code: code.trim(),
@@ -133,6 +154,7 @@ async function updateDefinition({ orgId, actorUserId, req, id, patch }) {
   }
   if (patch.expressionJson !== undefined) {
     outPatch.expressionJson = parseExpressionJson(patch.expressionJson);
+    if (outPatch.expressionJson) validateExpressionAst(outPatch.expressionJson);
   }
   if (patch.category !== undefined) {
     outPatch.category = patch.category;
@@ -200,11 +222,11 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
     if (!def) throw new AppError(404, `KPI definition not found: ${id}`);
     if (def.status !== "active") throw new AppError(409, `KPI definition is not active: ${def.code}`);
 
-    let value = 0;
+    let value = new Decimal(0);
     let meta = { source: "general_ledger_balances", kpi_type: def.kpi_type };
 
     if (def.kpi_type === "ACCOUNT_BALANCE") {
-      value = await repo.getNormalisedAccountActual({ orgId, periodId, accountId: def.account_id });
+      value = toDecimal(await repo.getNormalisedAccountActual({ orgId, periodId, accountId: def.account_id }) || 0, "KPI value");
       meta = { ...meta, account_id: def.account_id };
     } else if (def.kpi_type === "EXPRESSION") {
       const ast = def.expression;
@@ -214,7 +236,7 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
       throw new AppError(400, `Unsupported KPI type: ${def.kpi_type}`);
     }
 
-    if (Number.isNaN(value) || !Number.isFinite(value)) throw new AppError(400, "Computed KPI value is invalid");
+    if (!value.isFinite()) throw new AppError(400, "Computed KPI value is invalid");
 
     const target = await repo.getApplicableTarget({ orgId, kpiDefinitionId: id, periodId });
     if (target) {
@@ -222,9 +244,9 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
         ...meta,
         target: {
           direction: target.direction,
-          target_value: Number(target.target_value),
-          amber_threshold: target.amber_threshold === null ? null : Number(target.amber_threshold),
-          red_threshold: target.red_threshold === null ? null : Number(target.red_threshold),
+          target_value: decimalToMoneyString(target.target_value, 2),
+          amber_threshold: target.amber_threshold === null ? null : decimalToMoneyString(target.amber_threshold, 2),
+          red_threshold: target.red_threshold === null ? null : decimalToMoneyString(target.red_threshold, 2),
         },
       };
     }
@@ -234,7 +256,7 @@ async function computeValues({ orgId, actorUserId, req, periodId, kpiDefinitionI
       kpiDefinitionId: id,
       periodId,
       asOfDate: asOf,
-      value,
+      value: decimalToMoneyString(value, 2),
       metaJson: meta,
     });
     computed.push(row);
@@ -276,9 +298,9 @@ async function createTarget({ orgId, actorUserId, req, kpiDefinitionId, periodId
     kpiDefinitionId,
     periodId: periodId || null,
     direction,
-    targetValue: Number(targetValue),
-    amberThreshold: amberThreshold === undefined ? undefined : Number(amberThreshold),
-    redThreshold: redThreshold === undefined ? undefined : Number(redThreshold),
+    targetValue: decimalToMoneyString(targetValue, 2),
+    amberThreshold: amberThreshold === undefined ? undefined : decimalToMoneyString(amberThreshold, 2),
+    redThreshold: redThreshold === undefined ? undefined : decimalToMoneyString(redThreshold, 2),
   });
   await writeAudit({
     organizationId: orgId,
@@ -339,8 +361,7 @@ async function importValuesCsv({ orgId, csvText, actorUserId, req }) {
     if (!defId) throw new AppError(400, "kpiDefinitionId or kpiCode is required in CSV");
     assertUuid(defId, "kpiDefinitionId");
     assertUuid(periodId, "periodId");
-    const num = Number(valueRaw);
-    if (!Number.isFinite(num)) throw new AppError(400, "value must be numeric");
+    const num = decimalToMoneyString(valueRaw, 2);
     let metaJson = null;
     if (metaRaw) {
       try { metaJson = JSON.parse(metaRaw); } catch (e) { throw new AppError(400, "metaJson must be valid JSON"); }

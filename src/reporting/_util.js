@@ -1,4 +1,5 @@
 const { AppError } = require("../shared/errors/AppError");
+const Decimal = require("decimal.js");
 
 function normalizeCode(code) {
   if (code === null || code === undefined) return null;
@@ -30,12 +31,34 @@ function normalizeStatus(status, allowed, fieldName = "status") {
   return v;
 }
 
+function toDecimal(value, fieldName = "value") {
+  if (value === null || value === undefined || value === "") throw new AppError(400, `${fieldName} is required`);
+  try {
+    const d = new Decimal(value);
+    if (!d.isFinite()) throw new Error("not finite");
+    return d;
+  } catch (e) {
+    throw new AppError(400, `${fieldName} must be a valid decimal value`);
+  }
+}
+
+function decimalToMoneyString(value, decimals = 2) {
+  return toDecimal(value).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP).toFixed(decimals);
+}
+
 function assertMoneyAmount(amount, fieldName = "amount") {
-  if (amount === null || amount === undefined) throw new AppError(400, `${fieldName} is required`);
-  const n = Number(amount);
-  if (!Number.isFinite(n)) throw new AppError(400, `${fieldName} must be a finite number`);
-  // Keep it permissive: some amounts may be negative (e.g., forecast reductions).
-  return n;
+  return decimalToMoneyString(toDecimal(amount, fieldName), 2);
+}
+
+function assertDecimalRatio(value, fieldName = "ratio") {
+  const d = toDecimal(value, fieldName);
+  if (d.lt(0)) throw new AppError(400, `${fieldName} cannot be negative`);
+  return d;
+}
+
+function isClosedPeriodStatus(status) {
+  const s = String(status || "").toLowerCase();
+  return ["closed", "locked", "finalized", "finalised", "blocked"].includes(s);
 }
 
 function assertUuid(id, fieldName) {
@@ -45,13 +68,26 @@ function assertUuid(id, fieldName) {
   return id;
 }
 
+function resolveOrgId(req) {
+  const user = req?.user || {};
+  const orgId = user.organization_id || user.organizationId || user.org_id || user.orgId;
+  if (!orgId) throw new AppError(401, "Organization context is required");
+  return orgId;
+}
+
 module.exports = {
   normalizeCode,
   normalizeStatus,
   assertMoneyAmount,
   assertUuid,
   assertName,
-  assertCode
+  assertCode,
+  resolveOrgId,
+  toDecimal,
+  decimalToMoneyString,
+  assertDecimalRatio,
+  isClosedPeriodStatus,
+  Decimal
 };
 
 

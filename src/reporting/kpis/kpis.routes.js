@@ -4,10 +4,11 @@ const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./kpis.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 router.get("/definitions", requirePermission("reporting.kpis.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { limit, offset, status } = req.query;
     const data = await svc.listDefinitions({
       orgId,
@@ -23,7 +24,8 @@ router.get("/definitions", requirePermission("reporting.kpis.read"), async (req,
 
 router.post("/definitions", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const created = await svc.createDefinition({ orgId, actorUserId, req, ...req.body });
     res.status(201).json({ data: created });
   } catch (err) {
@@ -33,7 +35,8 @@ router.post("/definitions", requirePermission("reporting.kpis.manage"), idempote
 
 router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const updated = await svc.updateDefinition({ orgId, actorUserId, req, id: req.params.id, patch: req.body });
     res.json({ data: updated });
   } catch (err) {
@@ -43,7 +46,8 @@ router.put("/definitions/:id", requirePermission("reporting.kpis.manage"), idemp
 
 router.delete("/definitions/:id", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.archiveDefinition({ orgId, actorUserId, req, id: req.params.id });
     res.json({ data });
   } catch (err) {
@@ -53,7 +57,7 @@ router.delete("/definitions/:id", requirePermission("reporting.kpis.manage"), id
 
 router.get("/values", requirePermission("reporting.kpis.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { periodId } = req.query;
     const { limit, offset } = req.query;
     const data = await svc.listValues({
@@ -70,7 +74,8 @@ router.get("/values", requirePermission("reporting.kpis.read"), async (req, res,
 
 router.post("/values/compute", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const { periodId, kpiDefinitionIds, asOfDate } = req.body;
     const data = await svc.computeValues({ orgId, periodId, kpiDefinitionIds, asOfDate, actorUserId, req });
     res.status(201).json({ data });
@@ -82,7 +87,7 @@ router.post("/values/compute", requirePermission("reporting.kpis.manage"), idemp
 // KPI Targets/Thresholds
 router.get("/definitions/:id/targets", requirePermission("reporting.kpis.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { includeArchived } = req.query;
     const data = await svc.listTargets({ orgId, kpiDefinitionId: req.params.id, includeArchived: includeArchived === "true" });
     res.json({ data });
@@ -93,7 +98,8 @@ router.get("/definitions/:id/targets", requirePermission("reporting.kpis.read"),
 
 router.post("/definitions/:id/targets", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.createTarget({ orgId, kpiDefinitionId: req.params.id, actorUserId, req, ...req.body });
     res.status(201).json({ data });
   } catch (err) {
@@ -103,7 +109,8 @@ router.post("/definitions/:id/targets", requirePermission("reporting.kpis.manage
 
 router.put("/targets/:targetId", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.updateTarget({ orgId, actorUserId, req, targetId: req.params.targetId, patch: req.body });
     res.json({ data });
   } catch (err) {
@@ -113,7 +120,8 @@ router.put("/targets/:targetId", requirePermission("reporting.kpis.manage"), ide
 
 router.delete("/targets/:targetId", requirePermission("reporting.kpis.manage"), idempotency({ required: true }), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const data = await svc.archiveTarget({ orgId, actorUserId, req, targetId: req.params.targetId });
     res.json({ data });
   } catch (err) {
@@ -131,7 +139,8 @@ router.post(
   express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.importValuesCsv({ orgId, actorUserId, req, csvText: req.body });
       res.status(201).json({ data });
     } catch (err) {

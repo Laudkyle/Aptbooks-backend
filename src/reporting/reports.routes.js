@@ -33,6 +33,7 @@ router.use("/analytics", require("./analytics/analytics.routes"));
 
 // Stage 3: saved report builder, dashboards, management reports
 router.use("/reports", require("./report-builder/reportBuilder.routes"));
+router.use("/saved-reports", require("./report-builder/reportBuilder.routes"));
 router.use("/dashboards", require("./dashboards/dashboards.routes"));
 router.use("/management", require("./management/managementReports.routes"));
 

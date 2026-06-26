@@ -4,7 +4,8 @@ const { AppError } = require("../../shared/errors/AppError");
 const repo = require("./reportBuilder.repository");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 
-function assertSqlSafe(sql) {
+function assertSqlSafe(sql, options = {}) {
+  const { requireOrgScope = true } = options || {};
   const text = String(sql || "").trim();
   if (!text) throw new AppError(400, "Query SQL is required");
 
@@ -37,6 +38,29 @@ function assertSqlSafe(sql) {
   const lowered = ` ${start} `;
   for (const k of denied) {
     if (lowered.includes(` ${k}`)) throw new AppError(400, "Unsafe SQL keyword detected");
+  }
+
+  const blockedTables = [
+    "users",
+    "user_sessions",
+    "refresh_tokens",
+    "password",
+    "api_keys",
+    "secrets",
+    "organizations",
+    "audit_logs"
+  ];
+  for (const table of blockedTables) {
+    const re = new RegExp(`\\b${table}\\b`, "i");
+    if (re.test(text)) throw new AppError(400, `Direct access to ${table} is not allowed in saved reports`);
+  }
+
+  if (requireOrgScope) {
+    const hasOrgColumn = /\borganization_id\b/i.test(text);
+    const hasOrgParam = /\$1\b/.test(text);
+    if (!hasOrgColumn || !hasOrgParam) {
+      throw new AppError(400, "Saved report SQL must be organization-scoped using organization_id = $1. Use $2, $3, ... for user parameters.");
+    }
   }
 
   return text;
@@ -227,14 +251,26 @@ async function createVersion(ctx, reportId, payload) {
 }
 
 async function runReportSql({ organizationId, sql, parameters, maxRows = 500 }) {
-  const safe = assertSqlSafe(sql);
+  const safe = assertSqlSafe(sql, { requireOrgScope: true });
   // Enforce LIMIT
   const limit = Math.min(Math.max(Number(maxRows) || 500, 1), 2000);
   const limited = /\blimit\b/i.test(safe) ? safe : `${safe}\nLIMIT ${limit}`;
 
-  const values = Array.isArray(parameters) ? parameters : [];
-  const { rows } = await pool.query(limited, values);
-  return rows;
+  const values = [organizationId, ...(Array.isArray(parameters) ? parameters : [])];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET TRANSACTION READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '5000ms'");
+    const { rows } = await client.query(limited, values);
+    await client.query("COMMIT");
+    return rows;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function runReport(ctx, reportId, { versionId = null, scheduleId = null, parameters = [], maxRows = 500 }) {

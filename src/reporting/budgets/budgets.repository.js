@@ -108,6 +108,57 @@ async function getVersion({ orgId, budgetId, versionId }) {
   return rows.length ? rows[0] : null;
 }
 
+async function listVersions({ orgId, budgetId }) {
+  const { rows } = await pool.query(
+    `
+    SELECT *
+    FROM budget_versions
+    WHERE organization_id=$1 AND budget_id=$2
+    ORDER BY version_no DESC, created_at DESC
+    `,
+    [orgId, budgetId]
+  );
+  return rows;
+}
+
+async function updateVersion({ orgId, budgetId, versionId, patch }) {
+  const { versionNo, name, status, workflowStatus, scenarioKey } = patch || {};
+  const { rows } = await pool.query(
+    `
+    UPDATE budget_versions
+    SET version_no = COALESCE($4, version_no),
+        name = COALESCE($5, name),
+        status = COALESCE($6, status),
+        workflow_status = COALESCE($7, workflow_status),
+        scenario_key = COALESCE($8, scenario_key),
+        updated_at = NOW()
+    WHERE organization_id=$1 AND budget_id=$2 AND id=$3
+    RETURNING *
+    `,
+    [
+      orgId,
+      budgetId,
+      versionId,
+      versionNo === undefined ? null : versionNo,
+      name === undefined ? null : name,
+      status === undefined ? null : status,
+      workflowStatus === undefined ? null : workflowStatus,
+      scenarioKey === undefined ? null : scenarioKey,
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function deleteAlertRule({ orgId, budgetId, ruleId }) {
+  const { rows } = await pool.query(
+    `DELETE FROM budget_alert_rules
+      WHERE organization_id=$1 AND budget_id=$2 AND id=$3
+      RETURNING *`,
+    [orgId, budgetId, ruleId]
+  );
+  return rows[0] || null;
+}
+
 async function upsertLine({ orgId, versionId, accountId, periodId, amount, dimensionJson }) {
   const { rows } = await pool.query(
     `
@@ -326,7 +377,9 @@ module.exports = {
   getBudget,
   updateBudget,
   createVersion,
+  listVersions,
   getVersion,
+  updateVersion,
   upsertLine,
   updateVersionWorkflow,
   copyVersion,
@@ -335,6 +388,7 @@ module.exports = {
   createAlertRule,
   getAlertRule,
   updateAlertRule,
+  deleteAlertRule,
   getVariance,
   getAccountingPeriod,
   listPeriodsByStartYear,

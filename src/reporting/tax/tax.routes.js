@@ -7,6 +7,7 @@ const { AppError } = require('../../shared/errors/AppError');
 const Decimal = require("decimal.js");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 router.use(requirePermission("reporting.tax.read"));
 
 function getOrganizationId(req) {

@@ -623,6 +623,25 @@ async function listForecastVersions({ orgId, forecastId }) {
   return repo.listVersions({ orgId, forecastId });
 }
 
+async function archiveForecastVersion({ orgId, forecastId, versionId, actorUserId, req }) {
+  const before = await getForecastVersion({ orgId, forecastId, versionId, actorUserId, req, includeLines: false });
+  if (!before) throw new AppError(404, "Forecast version not found");
+  if ((before.workflow_status || before.workflowStatus) === "approved") {
+    throw new AppError(409, "Approved forecast versions cannot be archived directly");
+  }
+  const { rows } = await pool.query(
+    `UPDATE forecast_versions
+        SET status='archived', workflow_status='archived', archived_by_user_id=$4, archived_at=NOW(), updated_at=NOW()
+      WHERE organization_id=$1 AND forecast_id=$2 AND id=$3
+      RETURNING *`,
+    [orgId, forecastId, versionId, actorUserId || null]
+  );
+  const updated = rows[0];
+  if (!updated) throw new AppError(404, "Forecast version not found");
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.forecast.version.archive", entityType: "forecast_version", entityId: versionId, before, after: updated, req });
+  return updated;
+}
+
 async function listForecastLines({ orgId, forecastId, versionId, limit = 100, offset = 0, accountId, periodId }) {
   assertUuid(forecastId, "forecastId");
   assertUuid(versionId, "versionId");
@@ -1138,6 +1157,25 @@ async function listForecastVersions({ orgId, forecastId }) {
   return repo.listVersions({ orgId, forecastId });
 }
 
+async function archiveForecastVersion({ orgId, forecastId, versionId, actorUserId, req }) {
+  const before = await getForecastVersion({ orgId, forecastId, versionId, actorUserId, req, includeLines: false });
+  if (!before) throw new AppError(404, "Forecast version not found");
+  if ((before.workflow_status || before.workflowStatus) === "approved") {
+    throw new AppError(409, "Approved forecast versions cannot be archived directly");
+  }
+  const { rows } = await pool.query(
+    `UPDATE forecast_versions
+        SET status='archived', workflow_status='archived', archived_by_user_id=$4, archived_at=NOW(), updated_at=NOW()
+      WHERE organization_id=$1 AND forecast_id=$2 AND id=$3
+      RETURNING *`,
+    [orgId, forecastId, versionId, actorUserId || null]
+  );
+  const updated = rows[0];
+  if (!updated) throw new AppError(404, "Forecast version not found");
+  await writeAudit({ organizationId: orgId, actorUserId, action: "reporting.forecast.version.archive", entityType: "forecast_version", entityId: versionId, before, after: updated, req });
+  return updated;
+}
+
 async function listForecastLines({ orgId, forecastId, versionId, limit = 100, offset = 0, accountId, periodId }) {
   assertUuid(forecastId, "forecastId");
   assertUuid(versionId, "versionId");
@@ -1575,6 +1613,7 @@ module.exports = {
   approveVersion,
   rejectVersion,
   copyVersion,
+  archiveForecastVersion,
   
   // Lines
   upsertLines,

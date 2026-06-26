@@ -6,6 +6,7 @@ const { AppError } = require('../../shared/errors/AppError');
 const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
+const { resolveOrgId } = require("../_util");
 
 // ============================
 // Scenario Management Routes
@@ -14,7 +15,7 @@ const router = express.Router();
 // GET all scenarios
 router.get("/scenarios", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { includeInactive } = req.query;
     
     const data = await svc.listScenarios({ 
@@ -31,7 +32,7 @@ router.get("/scenarios", requirePermission("reporting.forecasts.read"), async (r
 // GET scenarios with usage statistics
 router.get("/scenarios/stats", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     
     const data = await svc.getScenariosWithStats({ orgId });
     
@@ -44,7 +45,7 @@ router.get("/scenarios/stats", requirePermission("reporting.forecasts.read"), as
 // GET a specific scenario by ID
 router.get("/scenarios/:scenarioId", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     
     const data = await svc.getScenario({ 
       orgId, 
@@ -60,7 +61,7 @@ router.get("/scenarios/:scenarioId", requirePermission("reporting.forecasts.read
 // GET a scenario by code
 router.get("/scenarios/code/:code", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     
     const data = await svc.getScenarioByCode({ 
       orgId, 
@@ -80,7 +81,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.createScenario({ 
         orgId, 
@@ -103,7 +105,8 @@ router.put(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       if (Object.keys(req.body).length === 0) {
         throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
@@ -131,7 +134,8 @@ router.patch(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       if (Object.keys(req.body).length === 0) {
         throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
@@ -156,9 +160,11 @@ router.patch(
 router.delete(
   "/scenarios/:scenarioId",
   requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const { force } = req.query; // Optional query param to force hard delete
       
       const data = await svc.deleteScenario({ 
@@ -183,7 +189,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.setDefaultScenario({
         orgId,
@@ -206,7 +213,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.restoreScenario({
         orgId,
@@ -229,7 +237,7 @@ router.post(
 // GET endpoint for listing forecasts
 router.get("/", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { limit, offset, status } = req.query;
     const data = await svc.listForecasts({
       orgId,
@@ -246,7 +254,8 @@ router.get("/", requirePermission("reporting.forecasts.read"), async (req, res, 
 // GET single forecast by ID with all versions and lines
 router.get("/:id", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     const { includeLines } = req.query;
     
     const data = await svc.getForecast({ 
@@ -269,7 +278,8 @@ router.put("/:id",
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       if (Object.keys(req.body).length === 0) {
         throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
@@ -296,7 +306,8 @@ router.patch("/:id",
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       if (Object.keys(req.body).length === 0) {
         throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
@@ -320,7 +331,8 @@ router.patch("/:id",
 // GET a specific forecast version with its lines
 router.get("/:id/versions/:versionId", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: actorUserId } = req.user;
+    const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
     
     const data = await svc.getForecastVersion({ 
       orgId, 
@@ -339,7 +351,7 @@ router.get("/:id/versions/:versionId", requirePermission("reporting.forecasts.re
 // GET all versions for a forecast
 router.get("/:id/versions", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     
     const versions = await svc.listForecastVersions({ 
       orgId, 
@@ -358,7 +370,8 @@ router.put("/:id/versions/:versionId",
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       if (Object.keys(req.body).length === 0) {
         throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
@@ -386,7 +399,8 @@ router.patch("/:id/versions/:versionId",
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       if (Object.keys(req.body).length === 0) {
         throw new AppError(400, "Please change at least one field before saving.", undefined, "empty_update");
@@ -408,10 +422,39 @@ router.patch("/:id/versions/:versionId",
   }
 );
 
+
+router.post(
+  "/:id/versions/:versionId/archive",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const orgId = resolveOrgId(req);
+      const actorUserId = req.user?.id;
+      const data = await svc.archiveForecastVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+      res.json({ data });
+    } catch (err) { next(err); }
+  }
+);
+
+router.delete(
+  "/:id/versions/:versionId",
+  requirePermission("reporting.forecasts.manage"),
+  idempotency({ required: true }),
+  async (req, res, next) => {
+    try {
+      const orgId = resolveOrgId(req);
+      const actorUserId = req.user?.id;
+      const data = await svc.archiveForecastVersion({ orgId, forecastId: req.params.id, versionId: req.params.versionId, actorUserId, req });
+      res.json({ data });
+    } catch (err) { next(err); }
+  }
+);
+
 // GET lines for a specific version
 router.get("/:id/versions/:versionId/lines", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { limit, offset, accountId, periodId } = req.query;
     
     const lines = await svc.listForecastLines({ 
@@ -433,7 +476,7 @@ router.get("/:id/versions/:versionId/lines", requirePermission("reporting.foreca
 // GET forecast summary with key metrics
 router.get("/:id/summary", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     
     const summary = await svc.getForecastSummary({ 
       orgId, 
@@ -449,7 +492,7 @@ router.get("/:id/summary", requirePermission("reporting.forecasts.read"), async 
 // GET workflow history for a forecast version
 router.get("/:id/versions/:versionId/history", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     
     const history = await svc.getVersionWorkflowHistory({ 
       orgId, 
@@ -470,7 +513,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.createForecast({ orgId, actorUserId, req, ...req.body });
       res.status(201).json({ data });
     } catch (err) {
@@ -485,7 +529,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.activateForecast({ orgId, forecastId: req.params.id, actorUserId, req });
       res.json({ data });
     } catch (err) {
@@ -500,7 +545,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.archiveForecast({ orgId, forecastId: req.params.id, actorUserId, req });
       res.json({ data });
     } catch (err) {
@@ -516,7 +562,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.createVersion({ 
         orgId, 
         forecastId: req.params.id, 
@@ -537,7 +584,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.finalizeVersion({
         orgId,
         forecastId: req.params.id,
@@ -559,7 +607,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.submitVersion({ 
         orgId, 
         forecastId: req.params.id, 
@@ -594,7 +643,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.approveVersion({ 
         orgId, 
         forecastId: req.params.id, 
@@ -615,7 +665,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const data = await svc.rejectVersion({ 
         orgId, 
         forecastId: req.params.id, 
@@ -637,7 +688,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       const { newVersionNo, name, scenarioId, probabilityWeight } = req.body || {};
       
       const data = await svc.copyVersion({
@@ -665,7 +717,7 @@ router.get(
   requirePermission("reporting.forecasts.read"),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId } = req.user;
+      const orgId = resolveOrgId(req);
       const { baseVersionId, compareVersionId, periodId } = req.query;
       
       const data = await svc.compareVersions({ 
@@ -688,7 +740,7 @@ router.get(
   requirePermission("reporting.forecasts.read"),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId } = req.user;
+      const orgId = resolveOrgId(req);
       const { forecastVersionId, budgetVersionId, periodId } = req.query;
       
       const data = await svc.forecastVsBudget({ 
@@ -712,7 +764,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.upsertLines({
         orgId,
@@ -737,7 +790,8 @@ router.post(
   idempotency({ required: true }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.upsertLines({
         orgId,
@@ -763,7 +817,8 @@ router.post(
   express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.importLinesCsv({
         orgId,
@@ -789,7 +844,8 @@ router.post(
   express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
   async (req, res, next) => {
     try {
-      const { organization_id: orgId, id: actorUserId } = req.user;
+      const orgId = resolveOrgId(req);
+    const actorUserId = req.user?.id;
       
       const data = await svc.importLinesCsv({
         orgId,
@@ -810,7 +866,7 @@ router.post(
 // Variance (Forecast vs Actual)
 router.get("/:id/variance", requirePermission("reporting.forecasts.read"), async (req, res, next) => {
   try {
-    const { organization_id: orgId } = req.user;
+    const orgId = resolveOrgId(req);
     const { periodId, versionId } = req.query;
     
     const data = await svc.getVariance({ 
