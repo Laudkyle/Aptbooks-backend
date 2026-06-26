@@ -2002,8 +2002,7 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
         if (!componentId) continue;
         await client.query(
           `INSERT INTO tax_code_components(organization_id, parent_tax_code_id, component_tax_code_id, sequence_no, rate_override)
-           VALUES($1,$2,$3,$4,NULL)
-           ON CONFLICT (organization_id, parent_tax_code_id, component_tax_code_id) DO UPDATE SET sequence_no=EXCLUDED.sequence_no`,
+           VALUES($1,$2,$3,$4,NULL)`,
           [orgId, parentId, componentId, sequence++],
         );
       }
@@ -2016,46 +2015,59 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
       if (!taxCodeId) continue;
       const jCode = String(rule.jurisdictionCode || pack.country_code || "").trim().toUpperCase();
       const jurisdictionId = rule.jurisdictionId || jurisdictionByCode.get(jCode) || jurisdictionByCode.values().next().value || null;
-      await client.query(
-        `INSERT INTO tax_rules(
-            organization_id, code, name, document_type, partner_type, supply_type, place_of_supply_basis,
-            transaction_scope, jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
-         ) VALUES (
-            $1,$2,$3,$4,$5,$6,$7,COALESCE($8,'both'),$9,$10,COALESCE($11,100),COALESCE($12,CURRENT_DATE),$13,COALESCE($14,'{}'::jsonb),COALESCE($15,'active')
-         )
-         ON CONFLICT (organization_id, code) DO UPDATE SET
-            name=EXCLUDED.name,
-            document_type=EXCLUDED.document_type,
-            partner_type=EXCLUDED.partner_type,
-            supply_type=EXCLUDED.supply_type,
-            place_of_supply_basis=EXCLUDED.place_of_supply_basis,
-            transaction_scope=EXCLUDED.transaction_scope,
-            jurisdiction_id=EXCLUDED.jurisdiction_id,
-            tax_code_id=EXCLUDED.tax_code_id,
-            priority=EXCLUDED.priority,
-            effective_from=EXCLUDED.effective_from,
-            effective_to=EXCLUDED.effective_to,
-            conditions=EXCLUDED.conditions,
-            status=EXCLUDED.status,
-            updated_at=NOW()`,
-        [
-          orgId,
-          rule.code || String(rule.name || code).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 80),
-          rule.name || code,
-          rule.documentType || null,
-          rule.partnerType || null,
-          rule.supplyType || null,
-          rule.placeOfSupplyBasis || null,
-          rule.transactionScope || null,
-          jurisdictionId,
-          taxCodeId,
-          rule.priority ?? 100,
-          rule.effectiveFrom || metadata.effectiveFrom || null,
-          rule.effectiveTo ?? null,
-          jsonb(rule.conditions || {}),
-          rule.status || "active",
-        ],
+      const ruleCode = rule.code || String(rule.name || code).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 80);
+      const ruleParams = [
+        orgId,
+        ruleCode,
+        rule.name || code,
+        rule.documentType || null,
+        rule.partnerType || null,
+        rule.supplyType || null,
+        rule.placeOfSupplyBasis || null,
+        rule.transactionScope || null,
+        jurisdictionId,
+        taxCodeId,
+        rule.priority ?? 100,
+        rule.effectiveFrom || metadata.effectiveFrom || null,
+        rule.effectiveTo ?? null,
+        jsonb(rule.conditions || {}),
+        rule.status || "active",
+      ];
+      const existingRule = await client.query(
+        `SELECT id FROM tax_rules WHERE organization_id=$1 AND code=$2 LIMIT 1`,
+        [orgId, ruleCode],
       );
+      if (existingRule.rows[0]) {
+        await client.query(
+          `UPDATE tax_rules
+              SET name=$3,
+                  document_type=$4,
+                  partner_type=$5,
+                  supply_type=$6,
+                  place_of_supply_basis=$7,
+                  transaction_scope=COALESCE($8,'both'),
+                  jurisdiction_id=$9,
+                  tax_code_id=$10,
+                  priority=COALESCE($11,100),
+                  effective_from=COALESCE($12,CURRENT_DATE),
+                  effective_to=$13,
+                  conditions=COALESCE($14,'{}'::jsonb),
+                  status=COALESCE($15,'active'),
+                  updated_at=NOW()
+            WHERE organization_id=$1 AND code=$2`,
+          ruleParams,
+        );
+      } else {
+        await client.query(
+          `INSERT INTO tax_rules(
+              organization_id, code, name, document_type, partner_type, supply_type, place_of_supply_basis,
+              transaction_scope, jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
+           ) VALUES (
+              $1,$2,$3,$4,$5,$6,$7,COALESCE($8,'both'),$9,$10,COALESCE($11,100),COALESCE($12,CURRENT_DATE),$13,COALESCE($14,'{}'::jsonb),COALESCE($15,'active')
+           )`,
+          ruleParams,
+        );
+      }
     }
 
     await client.query(

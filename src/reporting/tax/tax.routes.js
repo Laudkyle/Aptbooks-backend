@@ -4,6 +4,7 @@ const { idempotency } = require("../../middleware/idempotency.middleware");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 const svc = require("./tax.service");
 const { AppError } = require('../../shared/errors/AppError');
+const Decimal = require("decimal.js");
 
 const router = express.Router();
 router.use(requirePermission("reporting.tax.read"));
@@ -18,17 +19,33 @@ router.get("/vat-summary", async (req, res, next) => {
 
 router.get("/vat-return", async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: userId } = req.user;
+    const { organization_id: orgId } = req.user;
     const { from, to, templateCode } = req.query;
-    res.json({ data: await svc.vatReturn({ orgId, userId, fromDate: from, toDate: to, templateCode }) });
+    res.json({ data: await svc.vatReturn({ orgId, fromDate: from, toDate: to, templateCode }) });
+  } catch (err) { next(err); }
+});
+
+router.post("/vat-returns", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: userId } = req.user;
+    const { from, to, templateCode, jurisdictionId, includeGhanaComponents } = req.body || {};
+    res.status(201).json({ data: await svc.createVatReturn({ orgId, userId, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null, includeGhanaComponents: Boolean(includeGhanaComponents) }) });
   } catch (err) { next(err); }
 });
 
 router.get('/jurisdiction-return', async (req, res, next) => {
   try {
-    const { organization_id: orgId, id: userId } = req.user;
+    const { organization_id: orgId } = req.user;
     const { from, to, templateCode, jurisdictionId } = req.query;
-    res.json({ data: await svc.jurisdictionReturn({ orgId, userId, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null }) });
+    res.json({ data: await svc.jurisdictionReturn({ orgId, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null }) });
+  } catch (err) { next(err); }
+});
+
+router.post('/jurisdiction-returns', idempotency({ required: true }), requirePermission('tax.manage'), async (req, res, next) => {
+  try {
+    const { organization_id: orgId, id: userId } = req.user;
+    const { from, to, templateCode, jurisdictionId } = req.body || {};
+    res.status(201).json({ data: await svc.createJurisdictionReturn({ orgId, userId, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null }) });
   } catch (err) { next(err); }
 });
 
@@ -65,15 +82,39 @@ router.get('/withholding-summary', async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
     const { from, to } = req.query;
-    const data = await svc.taxTransactions({ orgId, fromDate: from, toDate: to, taxType: 'WITHHOLDING' });
-    const summary = data.reduce((acc, row) => {
-      acc.totalTax += Number(row.signed_tax_amount || 0);
-      acc.totalTaxable += Number(row.signed_taxable_amount || 0);
-      return acc;
-    }, { totalTax: 0, totalTaxable: 0, count: data.length, from, to, taxType: 'WITHHOLDING' });
-    summary.totalTax = Number(summary.totalTax.toFixed(2));
-    summary.totalTaxable = Number(summary.totalTaxable.toFixed(2));
-    res.json({ data: summary });
+    res.json({ data: await svc.withholdingReport({ orgId, fromDate: from, toDate: to, mode: 'summary' }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/withholding/payable', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    res.json({ data: await svc.withholdingReport({ orgId, fromDate: from, toDate: to, mode: 'payable' }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/withholding/receivable', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    res.json({ data: await svc.withholdingReport({ orgId, fromDate: from, toDate: to, mode: 'receivable' }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/withholding/open-items', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    res.json({ data: await svc.withholdingReport({ orgId, fromDate: from, toDate: to, mode: 'open_items' }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/withholding/reconciliation', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    res.json({ data: await svc.withholdingReconciliation({ orgId, fromDate: from, toDate: to }) });
   } catch (err) { next(err); }
 });
 
@@ -82,12 +123,18 @@ router.get('/recoverability', async (req, res, next) => {
     const { organization_id: orgId } = req.user;
     const { from, to } = req.query;
     const data = await svc.taxTransactions({ orgId, fromDate: from, toDate: to, taxType: req.query.taxType || 'VAT' });
-    const rows = data.map((row) => ({
-      ...row,
-      recoverable_percent: row.recoverable_percent ?? 1,
-      recoverable_tax_amount: Number((Number(row.signed_tax_amount || 0) * Number(row.recoverable_percent ?? 1)).toFixed(2)),
-      non_recoverable_tax_amount: Number((Number(row.signed_tax_amount || 0) * (1 - Number(row.recoverable_percent ?? 1))).toFixed(2))
-    }));
+    const rows = data.map((row) => {
+      const tax = new Decimal(String(row.signed_tax_amount || 0));
+      const pctRaw = row.recoverable_percent ?? 1;
+      const pct = new Decimal(String(pctRaw)).greaterThan(1) ? new Decimal(String(pctRaw)).div(100) : new Decimal(String(pctRaw));
+      const recoverable = tax.mul(pct).toDecimalPlaces(2);
+      return {
+        ...row,
+        recoverable_percent: pct.toString(),
+        recoverable_tax_amount: recoverable.toFixed(2),
+        non_recoverable_tax_amount: tax.minus(recoverable).toDecimalPlaces(2).toFixed(2)
+      };
+    });
     res.json({ data: rows });
   } catch (err) { next(err); }
 });
@@ -102,7 +149,7 @@ router.get('/jurisdiction-returns', async (req, res, next) => {
   try {
     const { organization_id: orgId } = req.user;
     const { from, to, templateCode, jurisdictionId } = req.query;
-    res.json({ data: await svc.jurisdictionReturn({ orgId, userId: req.user.id, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null }) });
+    res.json({ data: await svc.jurisdictionReturn({ orgId, fromDate: from, toDate: to, templateCode, jurisdictionId: jurisdictionId || null }) });
   } catch (err) { next(err); }
 });
 
@@ -118,6 +165,30 @@ router.get('/country-pack-readiness', async (req, res, next) => {
     const { organization_id: orgId } = req.user;
     const packs = await svc.listCountryPacks({ orgId });
     res.json({ data: packs.map((row) => ({ ...row, readiness: row.is_active ? 'ready' : 'not_ready' })) });
+  } catch (err) { next(err); }
+});
+
+router.get('/ghana/vat-return', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to, templateCode } = req.query;
+    res.json({ data: await svc.ghanaVatReturn({ orgId, fromDate: from, toDate: to, templateCode }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/ghana/vat-transactions', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    res.json({ data: await svc.ghanaVatTransactions({ orgId, fromDate: from, toDate: to }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/ghana/vat-reconciliation', async (req, res, next) => {
+  try {
+    const { organization_id: orgId } = req.user;
+    const { from, to } = req.query;
+    res.json({ data: await svc.ghanaVatReconciliation({ orgId, fromDate: from, toDate: to }) });
   } catch (err) { next(err); }
 });
 
