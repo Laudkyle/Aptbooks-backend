@@ -50,10 +50,23 @@ function normalizeFilingAdapterRow(row) {
 
 function normalizeCountryPackRow(row) {
   if (!row) return row;
+  const status = row.status ?? (row.is_installed ? "installed" : (row.is_active ? "available" : "inactive"));
   return {
-    ...row,
+    id: row.id,
+    countryCode: row.country_code ?? row.countryCode ?? null,
     jurisdictionCode: row.jurisdictionCode ?? row.country_code ?? null,
-    status: row.status ?? (row.is_installed ? "installed" : (row.is_active ? "available" : "inactive"))
+    packCode: row.pack_code ?? row.packCode ?? row.code ?? null,
+    pack_code: row.pack_code ?? row.packCode ?? row.code ?? null,
+    name: row.name ?? null,
+    description: row.description ?? null,
+    version: row.version_no ?? row.version ?? null,
+    version_no: row.version_no ?? row.version ?? null,
+    status,
+    isActive: row.is_active ?? row.isActive ?? true,
+    isInstalled: row.is_installed ?? row.isInstalled ?? false,
+    is_installed: row.is_installed ?? row.isInstalled ?? false,
+    installedAt: row.installed_at ?? row.installedAt ?? null,
+    installedBy: row.installed_by ?? row.installedBy ?? null,
   };
 }
 
@@ -2082,7 +2095,6 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
       installedCounts: {
         jurisdictions: jurisdictionByCode.size,
         taxCodes: taxCodeByCode.size,
-        templates: Array.isArray(pack.default_templates) ? pack.default_templates.length : 0,
         rules: asArray(metadata.taxRules).length,
       },
     };

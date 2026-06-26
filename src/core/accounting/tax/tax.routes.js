@@ -8,6 +8,12 @@ const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 
 const svc = require("./tax.service");
+
+function getOrganizationId(req) {
+  const orgId = req.user?.organization_id || req.user?.organizationId || req.user?.org_id || req.user?.orgId || null;
+  if (!orgId) throw new AppError(401, "Authenticated user is missing organization context");
+  return orgId;
+}
 const {
   createJurisdictionSchema,
   updateJurisdictionSchema,
@@ -51,14 +57,14 @@ router.use(requirePermission("tax.read"));
 // ==================== JURISDICTIONS ====================
 router.get("/jurisdictions", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.listJurisdictions({ orgId }) });
   } catch (e) { next(e); }
 });
 
 router.post("/jurisdictions", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createJurisdictionSchema, req.body);
     const created = await svc.createJurisdiction({ orgId, payload });
 
@@ -82,7 +88,7 @@ router.post("/jurisdictions", idempotency({ required: true }), requirePermission
 
 router.patch("/jurisdictions/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateJurisdictionSchema, req.body);
     const out = await svc.updateJurisdiction({ orgId, jurisdictionId: req.params.id, payload });
 
@@ -107,7 +113,7 @@ router.patch("/jurisdictions/:id", requirePermission("tax.manage"), async (req, 
 
 router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const out = await svc.deleteJurisdiction({ orgId, jurisdictionId: req.params.id });
 
     await writeAudit({
@@ -128,7 +134,7 @@ router.delete("/jurisdictions/:id", requirePermission("tax.manage"), async (req,
 // ==================== TAX REGISTRATIONS ====================
 router.get("/registrations", requirePermission("tax.registration.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const query = {
       registrationType: req.query.registrationType,
       jurisdictionId: req.query.jurisdictionId,
@@ -141,7 +147,7 @@ router.get("/registrations", requirePermission("tax.registration.read"), async (
 
 router.post("/registrations", idempotency({ required: true }), requirePermission("tax.registration.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createTaxRegistrationSchema, req.body);
     const created = await svc.createTaxRegistration({ orgId, payload });
 
@@ -165,7 +171,7 @@ router.post("/registrations", idempotency({ required: true }), requirePermission
 
 router.patch("/registrations/:id", requirePermission("tax.registration.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateTaxRegistrationSchema, req.body);
     const out = await svc.updateTaxRegistration({ orgId, registrationId: req.params.id, payload });
 
@@ -190,7 +196,7 @@ router.patch("/registrations/:id", requirePermission("tax.registration.manage"),
 
 router.delete("/registrations/:id", requirePermission("tax.registration.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const out = await svc.deleteTaxRegistration({ orgId, registrationId: req.params.id });
 
     await writeAudit({
@@ -211,7 +217,7 @@ router.delete("/registrations/:id", requirePermission("tax.registration.manage")
 // ==================== TAX RULES ====================
 router.get("/rules", requirePermission("tax.rule.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const query = {
       status: req.query.status,
       documentType: req.query.documentType,
@@ -229,7 +235,7 @@ router.get("/rules", requirePermission("tax.rule.read"), async (req, res, next) 
 
 router.post("/rules", idempotency({ required: true }), requirePermission("tax.rule.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createTaxRuleSchema, req.body);
     const created = await svc.createTaxRule({ orgId, payload });
 
@@ -253,7 +259,7 @@ router.post("/rules", idempotency({ required: true }), requirePermission("tax.ru
 
 router.patch("/rules/:id", requirePermission("tax.rule.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateTaxRuleSchema, req.body);
     const out = await svc.updateTaxRule({ orgId, ruleId: req.params.id, payload });
 
@@ -278,7 +284,7 @@ router.patch("/rules/:id", requirePermission("tax.rule.manage"), async (req, res
 
 router.delete("/rules/:id", requirePermission("tax.rule.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const out = await svc.deleteTaxRule({ orgId, ruleId: req.params.id });
 
     await writeAudit({
@@ -299,7 +305,7 @@ router.delete("/rules/:id", requirePermission("tax.rule.manage"), async (req, re
 // ==================== TAX CODES ====================
 router.get("/codes", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const query = {
       status: req.query.status,
       taxType: req.query.taxType,
@@ -311,7 +317,7 @@ router.get("/codes", async (req, res, next) => {
 
 router.post("/codes", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createTaxCodeSchema, req.body);
     const created = await svc.createTaxCode({ orgId, payload });
 
@@ -335,7 +341,7 @@ router.post("/codes", idempotency({ required: true }), requirePermission("tax.ma
 
 router.patch("/codes/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateTaxCodeSchema, req.body);
     const out = await svc.updateTaxCode({ orgId, taxCodeId: req.params.id, payload });
 
@@ -360,7 +366,7 @@ router.patch("/codes/:id", requirePermission("tax.manage"), async (req, res, nex
 
 router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const out = await svc.deleteTaxCode({ orgId, taxCodeId: req.params.id });
 
     await writeAudit({
@@ -381,7 +387,7 @@ router.delete("/codes/:id", requirePermission("tax.manage"), async (req, res, ne
 // ==================== TAX CODE COMPONENTS ====================
 router.get("/codes/:id/components", requirePermission("tax.component.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listTaxCodeComponents({ orgId, taxCodeId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -389,7 +395,7 @@ router.get("/codes/:id/components", requirePermission("tax.component.read"), asy
 
 router.put("/codes/:id/components", requirePermission("tax.component.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(setTaxCodeComponentsSchema, req.body);
     const data = await svc.setTaxCodeComponents({ orgId, taxCodeId: req.params.id, payload });
     res.json({ data });
@@ -399,14 +405,14 @@ router.put("/codes/:id/components", requirePermission("tax.component.manage"), a
 // ==================== COUNTRY PACKS ====================
 router.get("/country-packs", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.listCountryPacks({ orgId }) });
   } catch (e) { next(e); }
 });
 
 router.post("/country-packs/install", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(installCountryPackSchema, req.body);
     const out = await svc.installCountryPack({ orgId, actorUserId: req.user.id, payload });
     res.json(out);
@@ -417,28 +423,28 @@ router.post("/country-packs/install", requirePermission("tax.manage"), async (re
 // ==================== GHANA TAX WORKSPACE ====================
 router.get("/ghana/setup-checklist", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.getGhanaSetupChecklist({ orgId }) });
   } catch (e) { next(e); }
 });
 
 router.get("/ghana/diagnostics", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.getGhanaTaxDiagnostics({ orgId }) });
   } catch (e) { next(e); }
 });
 
 router.post("/ghana/calculate", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.calculateGhanaTax({ orgId, payload: req.body || {} }) });
   } catch (e) { next(e); }
 });
 
 router.post("/ghana/install-workflows", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.installGhanaTaxWorkflows({ orgId, actorUserId: req.user.id }) });
   } catch (e) { next(e); }
 });
@@ -446,14 +452,14 @@ router.post("/ghana/install-workflows", requirePermission("tax.manage"), async (
 // ==================== AUTOMATION RULES ====================
 router.get("/automation-rules", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.listAutomationRules({ orgId }) });
   } catch (e) { next(e); }
 });
 
 router.put("/automation-rules", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(upsertTaxAutomationRuleSchema, req.body);
     const out = await svc.upsertAutomationRule({ orgId, actorUserId: req.user.id, payload });
     res.json(out);
@@ -463,14 +469,14 @@ router.put("/automation-rules", requirePermission("tax.manage"), async (req, res
 // ==================== TAX SETTINGS ====================
 router.get("/settings", async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     res.json({ data: await svc.getTaxSettings({ orgId }) });
   } catch (e) { next(e); }
 });
 
 router.put("/settings", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(setTaxSettingsSchema, req.body);
     const updated = await svc.setTaxSettings({ orgId, payload });
 
@@ -492,7 +498,7 @@ router.put("/settings", requirePermission("tax.manage"), async (req, res, next) 
 // ==================== TAX ADJUSTMENTS ====================
 router.get("/adjustments", requirePermission("tax.adjustment.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listTaxAdjustments({
       orgId,
       query: {
@@ -509,7 +515,7 @@ router.get("/adjustments", requirePermission("tax.adjustment.read"), async (req,
 
 router.post("/adjustments", idempotency({ required: true }), requirePermission("tax.adjustment.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createTaxAdjustmentSchema, req.body);
     const created = await svc.createTaxAdjustment({ orgId, actorUserId: req.user.id, payload });
     await writeAudit({
@@ -522,7 +528,7 @@ router.post("/adjustments", idempotency({ required: true }), requirePermission("
 
 router.post("/adjustments/:id/post", idempotency({ required: true }), requirePermission("tax.adjustment.post"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.postTaxAdjustment({ orgId, actorUserId: req.user.id, adjustmentId: req.params.id });
     await writeAudit({
       organizationId: orgId, actorUserId: req.user.id, action: "tax.adjustment.posted",
@@ -534,7 +540,7 @@ router.post("/adjustments/:id/post", idempotency({ required: true }), requirePer
 
 router.post("/adjustments/:id/void", idempotency({ required: true }), requirePermission("tax.adjustment.void"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(voidTaxAdjustmentSchema, req.body);
     const data = await svc.voidTaxAdjustment({ orgId, actorUserId: req.user.id, adjustmentId: req.params.id, reason: payload.reason });
     await writeAudit({
@@ -549,7 +555,7 @@ router.post("/adjustments/:id/void", idempotency({ required: true }), requirePer
 // ==================== PARTNER TAX PROFILES ====================
 router.get("/partner-profiles", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listPartnerTaxProfiles({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }
@@ -557,7 +563,7 @@ router.get("/partner-profiles", requirePermission("tax.read"), async (req, res, 
 
 router.get("/partner-profiles/:id", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getPartnerTaxProfile({ orgId, profileId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -565,7 +571,7 @@ router.get("/partner-profiles/:id", requirePermission("tax.read"), async (req, r
 
 router.post("/partner-profiles", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createPartnerTaxProfileSchema, req.body);
     const created = await svc.createPartnerTaxProfile({ orgId, actorUserId: req.user.id, payload });
     
@@ -586,7 +592,7 @@ router.post("/partner-profiles", idempotency({ required: true }), requirePermiss
 
 router.patch("/partner-profiles/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updatePartnerTaxProfileSchema, req.body);
     const updated = await svc.updatePartnerTaxProfile({ orgId, profileId: req.params.id, payload, actorUserId: req.user.id });
     
@@ -607,7 +613,7 @@ router.patch("/partner-profiles/:id", requirePermission("tax.manage"), async (re
 
 router.delete("/partner-profiles/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.deletePartnerTaxProfile({ orgId, profileId: req.params.id });
     
     await writeAudit({
@@ -628,7 +634,7 @@ router.delete("/partner-profiles/:id", requirePermission("tax.manage"), async (r
 // ==================== TAX RETURN TEMPLATES ====================
 router.get("/returns/templates", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listTaxReturnTemplates({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }
@@ -636,7 +642,7 @@ router.get("/returns/templates", requirePermission("tax.read"), async (req, res,
 
 router.get("/returns/templates/:id", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getTaxReturnTemplate({ orgId, templateId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -644,7 +650,7 @@ router.get("/returns/templates/:id", requirePermission("tax.read"), async (req, 
 
 router.post("/returns/templates", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createTaxReturnTemplateSchema, req.body);
     const created = await svc.createTaxReturnTemplate({ orgId, actorUserId: req.user.id, payload });
     
@@ -665,7 +671,7 @@ router.post("/returns/templates", idempotency({ required: true }), requirePermis
 
 router.patch("/returns/templates/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateTaxReturnTemplateSchema, req.body);
     const updated = await svc.updateTaxReturnTemplate({ orgId, templateId: req.params.id, payload, actorUserId: req.user.id });
     
@@ -686,7 +692,7 @@ router.patch("/returns/templates/:id", requirePermission("tax.manage"), async (r
 
 router.delete("/returns/templates/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.deleteTaxReturnTemplate({ orgId, templateId: req.params.id });
     
     await writeAudit({
@@ -707,7 +713,7 @@ router.delete("/returns/templates/:id", requirePermission("tax.manage"), async (
 // ==================== TAX RETURN CONFIGURATION ====================
 router.get("/returns/config", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getTaxReturnConfig({ orgId });
     res.json({ data });
   } catch (e) { next(e); }
@@ -715,7 +721,7 @@ router.get("/returns/config", requirePermission("tax.read"), async (req, res, ne
 
 router.put("/returns/config", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateTaxReturnConfigSchema, req.body);
     const updated = await svc.updateTaxReturnConfig({ orgId, payload, actorUserId: req.user.id });
     
@@ -737,7 +743,7 @@ router.put("/returns/config", requirePermission("tax.manage"), async (req, res, 
 // ==================== TAX RETURNS ====================
 router.get("/returns", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listTaxReturns({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }
@@ -745,7 +751,7 @@ router.get("/returns", requirePermission("tax.read"), async (req, res, next) => 
 
 router.get("/returns/:id", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getTaxReturn({ orgId, returnId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -753,7 +759,7 @@ router.get("/returns/:id", requirePermission("tax.read"), async (req, res, next)
 
 router.post("/returns", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createTaxReturnSchema, req.body);
     const created = await svc.createTaxReturn({ orgId, actorUserId: req.user.id, payload });
     
@@ -774,7 +780,7 @@ router.post("/returns", idempotency({ required: true }), requirePermission("tax.
 
 router.post("/returns/:id/submit", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(submitTaxReturnSchema, req.body);
     const result = await svc.submitTaxReturn({ orgId, returnId: req.params.id, payload, actorUserId: req.user.id });
     
@@ -796,7 +802,7 @@ router.post("/returns/:id/submit", idempotency({ required: true }), requirePermi
 // ==================== E-INVOICING ====================
 router.get("/einvoicing/settings", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getEinvoicingSettings({ orgId });
     res.json({ data });
   } catch (e) { next(e); }
@@ -804,7 +810,7 @@ router.get("/einvoicing/settings", requirePermission("tax.read"), async (req, re
 
 router.put("/einvoicing/settings", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateEinvoicingSettingsSchema, req.body);
     const updated = await svc.updateEinvoicingSettings({ orgId, payload, actorUserId: req.user.id });
     
@@ -826,7 +832,7 @@ router.put("/einvoicing/settings", requirePermission("tax.manage"), async (req, 
 // ==================== FILING ADAPTERS ====================
 router.get("/filing-adapters", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listFilingAdapters({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }
@@ -834,7 +840,7 @@ router.get("/filing-adapters", requirePermission("tax.read"), async (req, res, n
 
 router.get("/filing-adapters/:id", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getFilingAdapter({ orgId, adapterId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -842,7 +848,7 @@ router.get("/filing-adapters/:id", requirePermission("tax.read"), async (req, re
 
 router.post("/filing-adapters", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createFilingAdapterSchema, req.body);
     const created = await svc.createFilingAdapter({ orgId, actorUserId: req.user.id, payload });
     
@@ -863,7 +869,7 @@ router.post("/filing-adapters", idempotency({ required: true }), requirePermissi
 
 router.patch("/filing-adapters/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateFilingAdapterSchema, req.body);
     const updated = await svc.updateFilingAdapter({ orgId, adapterId: req.params.id, payload, actorUserId: req.user.id });
     
@@ -884,7 +890,7 @@ router.patch("/filing-adapters/:id", requirePermission("tax.manage"), async (req
 
 router.delete("/filing-adapters/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.deleteFilingAdapter({ orgId, adapterId: req.params.id });
     
     await writeAudit({
@@ -904,7 +910,7 @@ router.delete("/filing-adapters/:id", requirePermission("tax.manage"), async (re
 
 router.post("/filing-adapters/:id/test", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.testFilingAdapter({ orgId, adapterId: req.params.id, actorUserId: req.user.id });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -912,7 +918,7 @@ router.post("/filing-adapters/:id/test", requirePermission("tax.manage"), async 
 // ==================== WITHHOLDING REMITTANCES ====================
 router.get("/withholding/remittances", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listWithholdingRemittances({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }
@@ -920,7 +926,7 @@ router.get("/withholding/remittances", requirePermission("tax.read"), async (req
 // ==================== WITHHOLDING OPEN ITEMS ====================
 router.get("/withholding/open-items", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const direction = req.query.direction || 'payable';
     const data = await svc.getOpenWithholdingItems({ orgId, direction, query: req.query });
     res.json({ data });
@@ -928,7 +934,7 @@ router.get("/withholding/open-items", requirePermission("tax.read"), async (req,
 });
 router.get("/withholding/remittances/:id", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getWithholdingRemittance({ orgId, remittanceId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -936,7 +942,7 @@ router.get("/withholding/remittances/:id", requirePermission("tax.read"), async 
 
 router.post("/withholding/remittances", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createWithholdingRemittanceSchema, req.body);
     const created = await svc.createWithholdingRemittance({ orgId, actorUserId: req.user.id, payload });
     
@@ -957,7 +963,7 @@ router.post("/withholding/remittances", idempotency({ required: true }), require
 
 router.patch("/withholding/remittances/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateWithholdingRemittanceSchema, req.body);
     const updated = await svc.updateWithholdingRemittance({ orgId, remittanceId: req.params.id, payload, actorUserId: req.user.id });
     
@@ -978,7 +984,7 @@ router.patch("/withholding/remittances/:id", requirePermission("tax.manage"), as
 
 router.post("/withholding/remittances/:id/submit", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.submitWithholdingRemittanceForApproval({ orgId, remittanceId: req.params.id, actorUserId: req.user.id });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -986,7 +992,7 @@ router.post("/withholding/remittances/:id/submit", requirePermission("tax.manage
 
 router.post("/withholding/remittances/:id/approve", requirePermission("tax.approve"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.approveWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, comment: req.body.comment });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -994,7 +1000,7 @@ router.post("/withholding/remittances/:id/approve", requirePermission("tax.appro
 
 router.post("/withholding/remittances/:id/reject", requirePermission("tax.approve"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.rejectWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, reason: req.body.reason });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -1002,7 +1008,7 @@ router.post("/withholding/remittances/:id/reject", requirePermission("tax.approv
 
 router.post("/withholding/remittances/:id/post", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(postWithholdingRemittanceSchema, req.body);
     const result = await svc.postWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, payload });
     
@@ -1023,7 +1029,7 @@ router.post("/withholding/remittances/:id/post", idempotency({ required: true })
 
 router.post("/withholding/remittances/:id/void", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(voidWithholdingWorkflowSchema, req.body);
     const result = await svc.voidWithholdingRemittance({ orgId, remittanceId: req.params.id, actorUserId: req.user.id, reason: payload.reason });
     
@@ -1045,7 +1051,7 @@ router.post("/withholding/remittances/:id/void", idempotency({ required: true })
 // ==================== WITHHOLDING CERTIFICATES ====================
 router.get("/withholding/certificates", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.listWithholdingCertificates({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }
@@ -1053,7 +1059,7 @@ router.get("/withholding/certificates", requirePermission("tax.read"), async (re
 
 router.get("/withholding/certificates/:id", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getWithholdingCertificate({ orgId, certificateId: req.params.id });
     res.json({ data });
   } catch (e) { next(e); }
@@ -1061,7 +1067,7 @@ router.get("/withholding/certificates/:id", requirePermission("tax.read"), async
 
 router.post("/withholding/certificates", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(createWithholdingCertificateSchema, req.body);
     const created = await svc.createWithholdingCertificate({ orgId, actorUserId: req.user.id, payload });
     
@@ -1082,7 +1088,7 @@ router.post("/withholding/certificates", idempotency({ required: true }), requir
 
 router.patch("/withholding/certificates/:id", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(updateWithholdingCertificateSchema, req.body);
     const updated = await svc.updateWithholdingCertificate({ orgId, certificateId: req.params.id, payload, actorUserId: req.user.id });
     
@@ -1103,7 +1109,7 @@ router.patch("/withholding/certificates/:id", requirePermission("tax.manage"), a
 
 router.post("/withholding/certificates/:id/submit", requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.submitWithholdingCertificateForApproval({ orgId, certificateId: req.params.id, actorUserId: req.user.id });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -1111,7 +1117,7 @@ router.post("/withholding/certificates/:id/submit", requirePermission("tax.manag
 
 router.post("/withholding/certificates/:id/approve", requirePermission("tax.approve"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.approveWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, comment: req.body.comment });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -1119,7 +1125,7 @@ router.post("/withholding/certificates/:id/approve", requirePermission("tax.appr
 
 router.post("/withholding/certificates/:id/reject", requirePermission("tax.approve"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const result = await svc.rejectWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, reason: req.body.reason });
     res.json({ data: result });
   } catch (e) { next(e); }
@@ -1127,7 +1133,7 @@ router.post("/withholding/certificates/:id/reject", requirePermission("tax.appro
 
 router.post("/withholding/certificates/:id/post", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(postWithholdingCertificateSchema, req.body);
     const result = await svc.postWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, payload });
     
@@ -1148,7 +1154,7 @@ router.post("/withholding/certificates/:id/post", idempotency({ required: true }
 
 router.post("/withholding/certificates/:id/void", idempotency({ required: true }), requirePermission("tax.manage"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const payload = validate(voidWithholdingWorkflowSchema, req.body);
     const result = await svc.voidWithholdingCertificate({ orgId, certificateId: req.params.id, actorUserId: req.user.id, reason: payload.reason });
     
@@ -1170,7 +1176,7 @@ router.post("/withholding/certificates/:id/void", idempotency({ required: true }
 // ==================== WITHHOLDING DASHBOARD ====================
 router.get("/withholding/dashboard", requirePermission("tax.read"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
+    const orgId = getOrganizationId(req);
     const data = await svc.getWithholdingDashboard({ orgId, query: req.query });
     res.json({ data });
   } catch (e) { next(e); }

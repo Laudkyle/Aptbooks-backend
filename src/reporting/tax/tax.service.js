@@ -15,6 +15,25 @@ function d(value) {
   return new Decimal(String(value));
 }
 
+
+function normalizeCountryPackReportRow(row) {
+  if (!row) return row;
+  const installed = Boolean(row.is_installed || row.isInstalled);
+  const active = row.is_active !== false;
+  return {
+    id: row.id,
+    countryCode: row.country_code || row.countryCode || null,
+    packCode: row.pack_code || row.packCode || row.code || null,
+    name: row.name || null,
+    version: row.version_no || row.version || null,
+    scope: row.organization_id ? 'Organization' : 'Default',
+    status: installed ? 'installed' : (active ? 'available' : 'inactive'),
+    readiness: active ? 'ready' : 'not_ready',
+    isInstalled: installed,
+    installedAt: row.installed_at || row.installedAt || null
+  };
+}
+
 function money(value) {
   return d(value).toDecimalPlaces(2).toFixed(2);
 }
@@ -733,8 +752,17 @@ async function withholdingReconciliation({ orgId, fromDate, toDate }) {
 }
 
 async function listCountryPacks({ orgId }) {
-  const { rows } = await pool.query(`SELECT * FROM tax_country_packs WHERE organization_id=$1 OR organization_id IS NULL ORDER BY country_code, pack_code`, [orgId]);
-  return rows;
+  const { rows } = await pool.query(
+    `SELECT p.*, i.installed_at, i.installed_by,
+            CASE WHEN i.pack_id IS NULL THEN FALSE ELSE TRUE END AS is_installed
+       FROM tax_country_packs p
+       LEFT JOIN tax_country_pack_installs i
+         ON i.pack_id = p.id AND i.organization_id = $1
+      WHERE p.organization_id=$1 OR p.organization_id IS NULL
+      ORDER BY is_installed DESC, p.is_active DESC, p.country_code, p.pack_code`,
+    [orgId]
+  );
+  return rows.map(normalizeCountryPackReportRow);
 }
 
 async function listFilingAdapters({ orgId }) {
