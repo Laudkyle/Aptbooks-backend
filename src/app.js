@@ -29,6 +29,7 @@ const businessModuleRoutes = require("./modules/business/business.routes");
 const transactionsModuleRoutes = require("./modules/transactions/transactions.routes");
 const arOpsRoutes = require("./modules/ar/ar.routes");
 const integrationsRoutes = require("./modules/integrations/integrations.routes");
+const commerceRoutes = require("./modules/commerce/commerce.routes");
 const permissionsRoutes = require("./core/foundation/permissions/permissions.routes");
 const rolesRoutes = require("./core/foundation/roles/roles.routes");
 const usersRoutes = require("./core/foundation/users/users.routes");
@@ -159,6 +160,7 @@ app.use("/modules/printing", require("./modules/printing/printing.routes"));
 
 // Stage 6: Integrations (payments, e-invoicing, tax forms)
 app.use("/modules/integrations", integrationsRoutes);
+app.use("/modules/commerce", commerceRoutes);
 
 // Stage 1: HR (Foundation)
 app.use("/modules/hr", require("./modules/hr/hr.routes"));
