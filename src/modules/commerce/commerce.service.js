@@ -10,6 +10,38 @@ const money = (v) => D(v).toDecimalPlaces(2).toFixed(2);
 const qty = (v) => D(v).toDecimalPlaces(6).toFixed(6);
 const uuidArray = (arr) => `{${arr.join(',')}}`;
 
+function toCamelKey(key) { return String(key).replace(/_([a-z])/g, (_, c) => c.toUpperCase()); }
+function toSnakeKey(key) { return String(key).replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`); }
+function camelize(value) {
+  if (Array.isArray(value)) return value.map(camelize);
+  if (value && typeof value === 'object' && !(value instanceof Decimal) && !(value instanceof Date)) {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [toCamelKey(k), camelize(v)]));
+  }
+  return value;
+}
+function normalizePayload(value) {
+  if (Array.isArray(value)) return value.map(normalizePayload);
+  if (value && typeof value === 'object' && !(value instanceof Decimal) && !(value instanceof Date)) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[toCamelKey(k)] = normalizePayload(v);
+    return out;
+  }
+  return value;
+}
+function cleanQuery(query = {}) {
+  return normalizePayload(query || {});
+}
+function ok(result) { return camelize(result); }
+function rowList(rows, meta = {}) { return ok({ data: rows || [], ...meta }); }
+async function optionalQuery(sql, params = [], fallback = []) {
+  try { const { rows } = await pool.query(sql, params); return rows; } catch (_) { return fallback; }
+}
+async function nextReturnNo(client) {
+  const { rows } = await client.query(`SELECT nextval('pos_return_no_seq') AS n`);
+  return `RET-${String(rows[0].n).padStart(8, '0')}`;
+}
+
+
 function ensureLines(lines) {
   if (!Array.isArray(lines) || !lines.length) throw new AppError(400, 'At least one line is required');
 }
@@ -457,8 +489,8 @@ async function createOrder({ orgId, actorUserId, payload }) {
     const currency = payload.currencyCode || await getOrgCurrency(client, orgId);
     const { rows } = await client.query(
       `INSERT INTO commerce_orders(organization_id, order_no, channel_code, customer_id, status, order_date, currency_code, tax_inclusive, subtotal_amount, discount_amount, tax_amount, total_amount, created_by, metadata)
-       VALUES($1,$2,COALESCE($3,'web'),$4,'pending_payment',COALESCE($5::date,CURRENT_DATE),$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
-      [orgId, orderNo, payload.channelCode || null, payload.customerId || null, payload.orderDate || null, currency, !!payload.taxInclusive, money(calc.subtotalAmount), money(calc.discountAmount), money(calc.taxAmount), money(calc.totalAmount), actorUserId || null, payload.metadata || {}]);
+       VALUES($1,$2,COALESCE($3,'web'),$4,COALESCE($14,'pending_payment'),COALESCE($5::date,CURRENT_DATE),$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [orgId, orderNo, payload.channelCode || null, payload.customerId || null, payload.orderDate || null, currency, !!payload.taxInclusive, money(calc.subtotalAmount), money(calc.discountAmount), money(calc.taxAmount), money(calc.totalAmount), actorUserId || null, payload.metadata || {}, ['cart','pending_payment','draft'].includes(payload.status) ? payload.status : 'pending_payment']);
     for (const l of calc.lines) {
       await client.query(
         `INSERT INTO commerce_order_lines(organization_id, order_id, line_no, item_id, description, quantity, unit_price, discount_amount, taxable_amount, tax_amount, total_amount, tax_code_id)
@@ -526,20 +558,27 @@ async function taxSummaryReport({ orgId, query = {} }) {
 
 
 async function createReturn({ orgId, actorUserId, payload }) {
-  if (!payload?.saleId || !Array.isArray(payload.lines) || !payload.lines.length) throw new AppError(400, 'saleId and return lines are required');
+  payload = normalizePayload(payload || {});
+  if (!payload?.saleId) throw new AppError(400, 'saleId is required');
   return withTx(async (client) => {
     const sale = await getSale({ orgId, saleId: payload.saleId, client });
     if (!['completed','posted','partially_returned'].includes(sale.status)) throw new AppError(409, 'Only completed or posted sales can be returned');
+    let returnLines = Array.isArray(payload.lines) && payload.lines.length ? payload.lines : [];
+    if (!returnLines.length) {
+      const { rows: saleLines } = await client.query(`SELECT id AS "saleLineId", item_id AS "itemId", quantity, total_amount AS "refundAmount" FROM pos_sale_lines WHERE organization_id=$1 AND sale_id=$2 ORDER BY line_no`, [orgId, payload.saleId]);
+      returnLines = saleLines.map(l => ({ ...l, restockAction: payload.disposition || 'restock' }));
+    }
+    if (!returnLines.length) throw new AppError(400, 'No sale lines available to return');
     const { rows: noRows } = await client.query(`SELECT nextval('pos_return_no_seq') AS n`);
     const returnNo = payload.returnNo || `RTN-${String(noRows[0].n).padStart(8, '0')}`;
     const { rows } = await client.query(
       `INSERT INTO pos_return_authorizations(organization_id, sale_id, return_no, reason, status, created_by, metadata)
        VALUES($1,$2,$3,$4,'draft',$5,$6) RETURNING *`, [orgId, payload.saleId, returnNo, payload.reason || null, actorUserId || null, payload.metadata || {}]);
-    for (const line of payload.lines) {
+    for (const line of returnLines) {
       if (!line.itemId || D(line.quantity).lte(0)) throw new AppError(400, 'Each return line requires itemId and positive quantity');
       await client.query(
         `INSERT INTO pos_return_lines(organization_id, return_id, sale_line_id, item_id, quantity, refund_amount, restock_action)
-         VALUES($1,$2,$3,$4,$5,$6,$7)`, [orgId, rows[0].id, line.saleLineId || null, line.itemId, qty(line.quantity), money(line.refundAmount || 0), line.restockAction || 'restock']);
+         VALUES($1,$2,$3,$4,$5,$6,$7)`, [orgId, rows[0].id, line.saleLineId || null, line.itemId, qty(line.quantity), money(line.refundAmount || 0), line.restockAction || payload.disposition || 'restock']);
     }
     return rows[0];
   });
@@ -749,20 +788,245 @@ async function ecommerceOrdersReport({ orgId, query = {} }) {
   return { data: rows };
 }
 
+
+async function catalogPrices({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params = [orgId];
+  const where = [`pl.organization_id=$1`, `pli.status='active'`, `(pli.effective_to IS NULL OR pli.effective_to >= CURRENT_DATE)`];
+  let n = 2;
+  if (query.priceListId) { where.push(`pl.id=$${n++}`); params.push(query.priceListId); }
+  if (query.itemId) { where.push(`pli.item_id=$${n++}`); params.push(query.itemId); }
+  if (query.q) { where.push(`(i.sku ILIKE $${n} OR i.name ILIKE $${n})`); params.push(`%${query.q}%`); n++; }
+  const { rows } = await pool.query(
+    `SELECT pli.*, pl.code AS price_list_code, pl.name AS price_list_name, i.sku, i.name AS item_name
+       FROM commerce_price_list_items pli
+       JOIN commerce_price_lists pl ON pl.id=pli.price_list_id
+       JOIN inventory_items i ON i.id=pli.item_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY pl.is_default DESC, pl.name, i.sku LIMIT 250`, params);
+  return rowList(rows);
+}
+async function updatePriceList({ orgId, priceListId, payload }) {
+  payload = normalizePayload(payload || {});
+  const { rows } = await pool.query(
+    `UPDATE commerce_price_lists SET name=COALESCE($3,name), currency_code=COALESCE($4,currency_code), is_default=COALESCE($5,is_default), status=COALESCE($6,status), updated_at=now()
+      WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    [orgId, priceListId, payload.name ?? null, payload.currencyCode ?? null, payload.isDefault ?? null, payload.status ?? null]);
+  if (!rows.length) throw new AppError(404, 'Price list not found');
+  return ok(rows[0]);
+}
+async function listShifts({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params = [orgId]; const where = [`sh.organization_id=$1`]; let n=2;
+  if (query.registerId) { where.push(`sh.register_id=$${n++}`); params.push(query.registerId); }
+  if (query.storeId) { where.push(`sh.store_id=$${n++}`); params.push(query.storeId); }
+  if (query.status) { where.push(`sh.status=$${n++}`); params.push(query.status); }
+  const limit = Math.min(Number(query.limit || 100), 250);
+  const { rows } = await pool.query(
+    `SELECT sh.*, sh.id::text AS shift_no, r.code AS register_code, r.name AS register_name, st.code AS store_code, st.name AS store_name
+       FROM pos_shifts sh JOIN pos_registers r ON r.id=sh.register_id JOIN pos_stores st ON st.id=sh.store_id
+      WHERE ${where.join(' AND ')} ORDER BY sh.opened_at DESC LIMIT ${limit}`, params);
+  return rowList(rows);
+}
+async function listDevices({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params = [orgId]; const where = [`d.organization_id=$1`]; let n=2;
+  if (query.registerId) { where.push(`d.register_id=$${n++}`); params.push(query.registerId); }
+  if (query.storeId) { where.push(`d.store_id=$${n++}`); params.push(query.storeId); }
+  const { rows } = await pool.query(
+    `SELECT d.*, r.code AS register_code, r.name AS register_name, s.code AS store_code, s.name AS store_name
+       FROM pos_devices d LEFT JOIN pos_registers r ON r.id=d.register_id LEFT JOIN pos_stores s ON s.id=d.store_id
+      WHERE ${where.join(' AND ')} ORDER BY d.last_seen_at DESC NULLS LAST, d.device_code`, params);
+  return rowList(rows);
+}
+function normalizePaymentProviderType(value) {
+  const raw = String(value || 'manual').toLowerCase();
+  if (raw === 'manual_terminal') return 'bank_terminal';
+  if (['manual', 'paystack', 'flutterwave', 'hubtel', 'theteller', 'bank_terminal'].includes(raw)) return raw;
+  return 'manual';
+}
+
+async function listPaymentProviders({ orgId }) {
+  const { rows } = await pool.query(
+    `SELECT id, organization_id, code AS provider, code, name AS display_name, name, provider_type, status, config_json AS config, created_at, updated_at
+       FROM commerce_payment_providers
+      WHERE organization_id=$1
+      ORDER BY provider_type, name`,
+    [orgId]
+  );
+  return rowList(rows);
+}
+async function savePaymentProvider({ orgId, payload }) {
+  payload = normalizePayload(payload || {});
+  const provider = payload.provider || payload.code || payload.providerType;
+  if (!provider) throw new AppError(400, 'provider is required');
+  const providerType = normalizePaymentProviderType(payload.providerType || provider);
+  const displayName = payload.displayName || payload.name || provider;
+  const { rows } = await pool.query(
+    `INSERT INTO commerce_payment_providers(organization_id, code, name, provider_type, status, config_json)
+     VALUES($1,$2,$3,$4,COALESCE($5,'active'),COALESCE($6,'{}'::jsonb))
+     ON CONFLICT (organization_id, code) DO UPDATE SET
+       name=EXCLUDED.name,
+       provider_type=EXCLUDED.provider_type,
+       status=EXCLUDED.status,
+       config_json=commerce_payment_providers.config_json || EXCLUDED.config_json,
+       updated_at=now()
+     RETURNING id, organization_id, code AS provider, code, name AS display_name, name, provider_type, status, config_json AS config, created_at, updated_at`,
+    [orgId, provider, displayName, providerType, payload.status || null, payload.config || {}]
+  );
+  return ok(rows[0]);
+}
+async function listPaymentMethods({ orgId }) {
+  const { rows } = await pool.query(`SELECT id, code, name, description, status, created_at FROM payment_methods WHERE organization_id=$1 AND status='active' ORDER BY code`, [orgId]);
+  return rowList(rows);
+}
+async function listAccountingProfiles({ orgId }) {
+  const { rows } = await pool.query(`SELECT * FROM pos_accounting_profiles WHERE organization_id=$1 ORDER BY is_default DESC, name`, [orgId]);
+  return rowList(rows);
+}
+async function saveAccountingProfile({ orgId, payload }) {
+  payload = normalizePayload(payload || {});
+  if (!payload.name) throw new AppError(400, 'name is required');
+  const { rows } = await pool.query(
+    `INSERT INTO pos_accounting_profiles(organization_id, name, is_default, default_cash_account_id, sales_revenue_account_id, discount_account_id, sales_returns_account_id, cogs_account_id, inventory_account_id, cash_over_short_account_id, status)
+     VALUES($1,$2,COALESCE($3,false),$4,$5,$6,$7,$8,$9,$10,COALESCE($11,'active'))
+     ON CONFLICT (organization_id, name) DO UPDATE SET is_default=EXCLUDED.is_default, default_cash_account_id=EXCLUDED.default_cash_account_id, sales_revenue_account_id=EXCLUDED.sales_revenue_account_id, discount_account_id=EXCLUDED.discount_account_id, sales_returns_account_id=EXCLUDED.sales_returns_account_id, cogs_account_id=EXCLUDED.cogs_account_id, inventory_account_id=EXCLUDED.inventory_account_id, cash_over_short_account_id=EXCLUDED.cash_over_short_account_id, status=EXCLUDED.status, updated_at=now()
+     RETURNING *`, [orgId, payload.name, !!payload.isDefault, payload.defaultCashAccountId || null, payload.salesRevenueAccountId || null, payload.discountAccountId || null, payload.salesReturnsAccountId || null, payload.cogsAccountId || null, payload.inventoryAccountId || null, payload.cashOverShortAccountId || null, payload.status || 'active']);
+  return ok(rows[0]);
+}
+async function listCashMovements({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params=[orgId]; const where=[`m.organization_id=$1`]; let n=2;
+  if (query.shiftId) { where.push(`m.shift_id=$${n++}`); params.push(query.shiftId); }
+  const { rows } = await pool.query(`SELECT m.* FROM pos_cash_movements m WHERE ${where.join(' AND ')} ORDER BY m.created_at DESC LIMIT 200`, params);
+  return rowList(rows);
+}
+async function listCashCounts({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params=[orgId]; const where=[`organization_id=$1`]; let n=2;
+  if (query.shiftId) { where.push(`shift_id=$${n++}`); params.push(query.shiftId); }
+  const { rows } = await pool.query(`SELECT * FROM pos_cash_counts WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT 200`, params);
+  return rowList(rows);
+}
+async function listCashDeposits({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params=[orgId]; const where=[`organization_id=$1`]; let n=2;
+  if (query.shiftId) { where.push(`shift_id=$${n++}`); params.push(query.shiftId); }
+  const { rows } = await pool.query(`SELECT * FROM pos_cash_deposits WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT 200`, params);
+  return rowList(rows);
+}
+async function cashShiftSummary({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  if (query.shiftId) return ok(await shiftSummary({ orgId, shiftId: query.shiftId }));
+  return listShifts({ orgId, query: { status: 'open', limit: query.limit || 50 } });
+}
+async function completeSale({ orgId, saleId }) {
+  const { rows } = await pool.query(`UPDATE pos_sales SET status='completed', updated_at=now() WHERE organization_id=$1 AND id=$2 AND status='draft' RETURNING *`, [orgId, saleId]);
+  if (rows.length) return ok(rows[0]);
+  const existing = await getSale({ orgId, saleId });
+  if (existing.status === 'completed' || existing.status === 'posted') return ok(existing);
+  throw new AppError(409, 'Sale cannot be completed from current status');
+}
+async function emailReceipt({ orgId, saleId, payload = {} }) {
+  const receipt = await receiptData({ orgId, saleId });
+  return ok({ deliveryStatus: 'queued', channel: 'email', recipient: payload.email || null, receipt });
+}
+async function whatsappReceipt({ orgId, saleId, payload = {} }) {
+  const receipt = await receiptData({ orgId, saleId });
+  return ok({ deliveryStatus: 'queued', channel: 'whatsapp', recipient: payload.phone || null, receipt });
+}
+async function listReturns({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params=[orgId]; const where=[`r.organization_id=$1`]; let n=2;
+  if (query.status) { where.push(`r.status=$${n++}`); params.push(query.status); }
+  const { rows } = await pool.query(`SELECT r.*, s.sale_no FROM pos_return_authorizations r JOIN pos_sales s ON s.id=r.sale_id WHERE ${where.join(' AND ')} ORDER BY r.created_at DESC LIMIT 200`, params);
+  return rowList(rows);
+}
+async function listRefunds({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const params=[orgId]; const where=[`r.organization_id=$1`]; let n=2;
+  if (query.status) { where.push(`r.status=$${n++}`); params.push(query.status); }
+  const { rows } = await pool.query(`SELECT r.*, s.sale_no FROM pos_refunds r JOIN pos_sales s ON s.id=r.sale_id WHERE ${where.join(' AND ')} ORDER BY r.created_at DESC LIMIT 200`, params);
+  return rowList(rows);
+}
+async function getOrder({ orgId, orderId }) {
+  const { rows } = await pool.query(`SELECT o.*, bp.name AS customer_name FROM commerce_orders o LEFT JOIN business_partners bp ON bp.id=o.customer_id WHERE o.organization_id=$1 AND o.id=$2`, [orgId, orderId]);
+  if (!rows.length) throw new AppError(404, 'Order not found');
+  const { rows: lines } = await pool.query(`SELECT l.*, i.sku, i.name AS item_name FROM commerce_order_lines l JOIN inventory_items i ON i.id=l.item_id WHERE l.organization_id=$1 AND l.order_id=$2 ORDER BY l.line_no`, [orgId, orderId]);
+  return ok({ ...rows[0], lines });
+}
+async function createCart({ orgId, actorUserId, payload = {} }) {
+  payload = normalizePayload(payload || {});
+  if (Array.isArray(payload.lines) && payload.lines.length) return createOrder({ orgId, actorUserId, payload: { ...payload, status: 'cart' } });
+  const orderNo = payload.orderNo || `CART-${Date.now()}`;
+  const currency = payload.currencyCode || (await pool.query(`SELECT base_currency_code FROM organizations WHERE id=$1`, [orgId])).rows[0]?.base_currency_code || 'GHS';
+  const { rows } = await pool.query(`INSERT INTO commerce_orders(organization_id, order_no, channel_code, customer_id, status, order_date, currency_code, tax_inclusive, created_by, metadata) VALUES($1,$2,COALESCE($3,'web'),$4,'cart',COALESCE($5::date,CURRENT_DATE),$6,COALESCE($7,false),$8,$9) RETURNING *`, [orgId, orderNo, payload.channelCode || null, payload.customerId || null, payload.orderDate || null, currency, !!payload.taxInclusive, actorUserId || null, payload.metadata || {}]);
+  return ok(rows[0]);
+}
+async function addCartItem({ orgId, cartId, payload = {} }) {
+  payload = normalizePayload(payload);
+  if (!payload.itemId) throw new AppError(400, 'itemId is required');
+  const { rows: orderRows } = await pool.query(`SELECT * FROM commerce_orders WHERE organization_id=$1 AND id=$2`, [orgId, cartId]);
+  if (!orderRows.length) throw new AppError(404, 'Cart not found');
+  const existing = await getOrder({ orgId, orderId: cartId });
+  const lines = [...(existing.lines || []).map(l => ({ itemId: l.itemId, quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: l.discountAmount, taxCodeId: l.taxCodeId })), payload];
+  await pool.query(`DELETE FROM commerce_order_lines WHERE organization_id=$1 AND order_id=$2`, [orgId, cartId]);
+  const calc = await withTx(async (client)=>calculateSale(client, orgId, { ...orderRows[0], taxInclusive: orderRows[0].tax_inclusive, lines }));
+  for (const l of calc.lines) await pool.query(`INSERT INTO commerce_order_lines(organization_id, order_id, line_no, item_id, description, quantity, unit_price, discount_amount, taxable_amount, tax_amount, total_amount, tax_code_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, [orgId, cartId, l.lineNo, l.itemId, l.item.name, qty(l.quantity), money(l.unitPrice), money(l.discountAmount), money(l.taxableAmount), money(l.taxAmount), money(l.totalAmount), l.taxCodeId]);
+  await pool.query(`UPDATE commerce_orders SET subtotal_amount=$3, discount_amount=$4, tax_amount=$5, total_amount=$6, updated_at=now() WHERE organization_id=$1 AND id=$2`, [orgId, cartId, money(calc.subtotalAmount), money(calc.discountAmount), money(calc.taxAmount), money(calc.totalAmount)]);
+  return getOrder({ orgId, orderId: cartId });
+}
+async function checkout({ orgId, actorUserId, payload = {} }) {
+  payload = normalizePayload(payload);
+  if (payload.cartId) {
+    const { rows } = await pool.query(`UPDATE commerce_orders SET status='pending_payment', updated_at=now() WHERE organization_id=$1 AND id=$2 AND status IN ('cart','draft','pending_payment') RETURNING *`, [orgId, payload.cartId]);
+    if (!rows.length) throw new AppError(404, 'Cart not found or cannot be checked out');
+    return ok(rows[0]);
+  }
+  return createOrder({ orgId, actorUserId, payload });
+}
+async function cancelOrder({ orgId, orderId, payload = {} }) {
+  const { rows } = await pool.query(`UPDATE commerce_orders SET status='cancelled', metadata=metadata || $3::jsonb, updated_at=now() WHERE organization_id=$1 AND id=$2 AND status NOT IN ('fulfilled','cancelled') RETURNING *`, [orgId, orderId, JSON.stringify({ cancelReason: payload.reason || null })]);
+  if (!rows.length) throw new AppError(404, 'Order not found or cannot be cancelled');
+  return ok(rows[0]);
+}
+async function refundOrder({ orgId, orderId, payload = {} }) {
+  const { rows } = await pool.query(`UPDATE commerce_orders SET status='refunded', metadata=metadata || $3::jsonb, updated_at=now() WHERE organization_id=$1 AND id=$2 AND status IN ('paid','fulfilled') RETURNING *`, [orgId, orderId, JSON.stringify({ refund: payload || {} })]);
+  if (!rows.length) throw new AppError(404, 'Order not found or cannot be refunded');
+  return ok(rows[0]);
+}
+async function shiftSummaryReport({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  if (query.shiftId) return ok(await shiftSummary({ orgId, shiftId: query.shiftId }));
+  const shifts = await listShifts({ orgId, query: { ...query, limit: query.limit || 100 } });
+  return shifts;
+}
+async function cashierSalesReport({ orgId, query = {} }) {
+  query = cleanQuery(query);
+  const from = query.from || '1900-01-01'; const to = query.to || '2999-12-31';
+  const { rows } = await pool.query(`SELECT u.id AS cashier_id, COALESCE(u.full_name,u.email::text,'Unknown') AS cashier_name, COUNT(s.id)::int sale_count, COALESCE(SUM(s.total_amount),0)::text total_sales FROM pos_sales s LEFT JOIN users u ON u.id=s.cashier_user_id WHERE s.organization_id=$1 AND s.sale_date BETWEEN $2 AND $3 AND s.status NOT IN ('voided') GROUP BY u.id, u.full_name, u.email ORDER BY total_sales::numeric DESC`, [orgId, from, to]);
+  return rowList(rows, { from, to });
+}
+
+function wrap(fn) {
+  return async (args = {}) => ok(await fn({ ...args, query: cleanQuery(args.query), payload: normalizePayload(args.payload || {}) }));
+}
 module.exports = {
-  listProducts, getProduct, listCustomers, customerPurchaseHistory,
-  listPriceLists, createPriceList, upsertPriceListItem,
-  listStores, createStore, updateStore, listRegisters, createRegister, updateRegister,
-  openShift, closeShift, shiftSummary, recordCashMovement,
-  taxPreview, createSale, listSales, getSale, postSale, voidSale, refundSale, receiptData,
-  createOrder, listOrders, markOrderPaid, fulfillOrderToSale,
-  createReturn, approveReturn, rejectReturn, receiveReturn,
-  createRefund, approveRefund, postRefund,
-  listPromotions, createPromotion, updatePromotion, applyPromotionPreview,
-  listCoupons, createCoupon, validateCoupon,
-  getLoyalty, adjustLoyalty, getStoreCredit, adjustStoreCredit,
-  recordCashCount, createCashDeposit, registerDevice, syncOfflineBatch, syncStatus,
-  initializePayment, confirmPayment, refundPayment, recordPaymentWebhook, paymentStatus,
-  dailySalesReport, productSalesReport, paymentReconciliationReport, taxSummaryReport,
-  categorySalesReport, grossMarginReport, refundsReturnsReport, discountsReport, customerSalesReport, ecommerceOrdersReport
+  listProducts: wrap(listProducts), getProduct: wrap(getProduct), listCustomers: wrap(listCustomers), customerPurchaseHistory: wrap(customerPurchaseHistory),
+  listPriceLists: wrap(listPriceLists), createPriceList: wrap(createPriceList), updatePriceList: wrap(updatePriceList), upsertPriceListItem: wrap(upsertPriceListItem), catalogPrices: wrap(catalogPrices),
+  listStores: wrap(listStores), createStore: wrap(createStore), updateStore: wrap(updateStore), listRegisters: wrap(listRegisters), createRegister: wrap(createRegister), updateRegister: wrap(updateRegister),
+  openShift: wrap(openShift), closeShift: wrap(closeShift), listShifts: wrap(listShifts), shiftSummary: wrap(shiftSummary), recordCashMovement: wrap(recordCashMovement),
+  listCashMovements: wrap(listCashMovements), listCashCounts: wrap(listCashCounts), listCashDeposits: wrap(listCashDeposits), cashShiftSummary: wrap(cashShiftSummary),
+  taxPreview: wrap(taxPreview), createSale: wrap(createSale), completeSale: wrap(completeSale), listSales: wrap(listSales), getSale: wrap(getSale), postSale: wrap(postSale), voidSale: wrap(voidSale), refundSale: wrap(refundSale), receiptData: wrap(receiptData), emailReceipt: wrap(emailReceipt), whatsappReceipt: wrap(whatsappReceipt),
+  createOrder: wrap(createOrder), listOrders: wrap(listOrders), getOrder: wrap(getOrder), markOrderPaid: wrap(markOrderPaid), fulfillOrderToSale: wrap(fulfillOrderToSale), createCart: wrap(createCart), addCartItem: wrap(addCartItem), checkout: wrap(checkout), cancelOrder: wrap(cancelOrder), refundOrder: wrap(refundOrder),
+  createReturn: wrap(createReturn), listReturns: wrap(listReturns), approveReturn: wrap(approveReturn), rejectReturn: wrap(rejectReturn), receiveReturn: wrap(receiveReturn),
+  createRefund: wrap(createRefund), listRefunds: wrap(listRefunds), approveRefund: wrap(approveRefund), postRefund: wrap(postRefund),
+  listPromotions: wrap(listPromotions), createPromotion: wrap(createPromotion), updatePromotion: wrap(updatePromotion), applyPromotionPreview: wrap(applyPromotionPreview),
+  listCoupons: wrap(listCoupons), createCoupon: wrap(createCoupon), validateCoupon: wrap(validateCoupon),
+  getLoyalty: wrap(getLoyalty), adjustLoyalty: wrap(adjustLoyalty), getStoreCredit: wrap(getStoreCredit), adjustStoreCredit: wrap(adjustStoreCredit),
+  recordCashCount: wrap(recordCashCount), createCashDeposit: wrap(createCashDeposit), registerDevice: wrap(registerDevice), listDevices: wrap(listDevices), syncOfflineBatch: wrap(syncOfflineBatch), syncStatus: wrap(syncStatus),
+  initializePayment: wrap(initializePayment), confirmPayment: wrap(confirmPayment), refundPayment: wrap(refundPayment), recordPaymentWebhook: wrap(recordPaymentWebhook), paymentStatus: wrap(paymentStatus),
+  listPaymentMethods: wrap(listPaymentMethods), listPaymentProviders: wrap(listPaymentProviders), savePaymentProvider: wrap(savePaymentProvider), listAccountingProfiles: wrap(listAccountingProfiles), saveAccountingProfile: wrap(saveAccountingProfile),
+  dailySalesReport: wrap(dailySalesReport), productSalesReport: wrap(productSalesReport), paymentReconciliationReport: wrap(paymentReconciliationReport), taxSummaryReport: wrap(taxSummaryReport),
+  categorySalesReport: wrap(categorySalesReport), grossMarginReport: wrap(grossMarginReport), refundsReturnsReport: wrap(refundsReturnsReport), discountsReport: wrap(discountsReport), customerSalesReport: wrap(customerSalesReport), ecommerceOrdersReport: wrap(ecommerceOrdersReport), shiftSummaryReport: wrap(shiftSummaryReport), cashierSalesReport: wrap(cashierSalesReport)
 };
