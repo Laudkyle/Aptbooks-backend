@@ -84,12 +84,12 @@ const coaUpdateSchema = z.object({
 const journalCreateSchema = z.object({
   periodId: uuid,
   entryDate: isoDate,
-  memo: z.string().max(500).optional(),
+  memo: z.string().trim().min(1, "Memo is required").max(500),
   idempotencyKey: z.string().max(120).optional(),
   typeCode: z.enum(["GENERAL", "ADJUSTMENT", "CLOSING"]).optional(),
   lines: z.array(z.object({
     accountId: uuid,
-    description: z.string().max(300).optional(),
+    description: z.string().trim().min(1, "Line description is required").max(300),
     debit: moneyAmount.optional(),
     credit: moneyAmount.optional()
   })).min(2)
@@ -108,14 +108,14 @@ const journalHeaderUpdateSchema = z
   .object({
     periodId: uuid.optional(),
     entryDate: isoDate.optional(),
-    memo: z.string().max(500).nullable().optional(),
+    memo: z.string().trim().min(1, "Memo is required").max(500).optional(),
     typeCode: z.enum(["GENERAL", "ADJUSTMENT", "CLOSING"]).optional()
   })
   .refine((v) => Object.keys(v).length > 0, "No fields provided");
 
 const journalLineSchema = z.object({
   accountId: uuid,
-  description: z.string().max(300).optional().nullable(),
+  description: z.string().trim().min(1, "Line description is required").max(300),
   debit: moneyAmount.optional(),
   credit: moneyAmount.optional()
 });
@@ -133,7 +133,7 @@ const journalLineAddSchema = journalLineSchema;
 const journalLineUpdateSchema = z
   .object({
     accountId: uuid.optional(),
-    description: z.string().max(300).optional().nullable(),
+    description: z.string().trim().min(1, "Line description is required").max(300),
     debit: moneyAmount.optional(),
     credit: moneyAmount.optional()
   })

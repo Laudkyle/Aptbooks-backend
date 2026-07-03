@@ -54,22 +54,41 @@ async function fetchTbMap({ orgId, periodId, mode }) {
     if (!periodIds.length) return new Map();
     const { rows } = await pool.query(
       `
+      WITH posted_activity AS (
+        SELECT
+          jel.account_id,
+          SUM(jel.debit) AS debit_total,
+          SUM(jel.credit) AS credit_total
+        FROM journal_entries je
+        JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
+        WHERE je.organization_id = $1
+          AND je.status = 'posted'
+          AND je.period_id = ANY($2::uuid[])
+        GROUP BY jel.account_id
+      ),
+      gl_activity AS (
+        SELECT
+          account_id,
+          SUM(debit_total) AS debit_total,
+          SUM(credit_total) AS credit_total
+        FROM general_ledger_balances
+        WHERE organization_id = $1
+          AND period_id = ANY($2::uuid[])
+        GROUP BY account_id
+      )
       SELECT
         coa.id AS account_id,
         coa.code,
         coa.name,
         at.code AS account_type,
         at.normal_balance,
-        SUM(COALESCE(glb.debit_total,0)) AS debit_total,
-        SUM(COALESCE(glb.credit_total,0)) AS credit_total
+        COALESCE(gl.debit_total, pa.debit_total, 0) AS debit_total,
+        COALESCE(gl.credit_total, pa.credit_total, 0) AS credit_total
       FROM chart_of_accounts coa
       JOIN account_types at ON at.id = coa.account_type_id
-      LEFT JOIN general_ledger_balances glb
-        ON glb.organization_id = coa.organization_id
-       AND glb.account_id = coa.id
-       AND glb.period_id = ANY($2::uuid[])
+      LEFT JOIN gl_activity gl ON gl.account_id = coa.id
+      LEFT JOIN posted_activity pa ON pa.account_id = coa.id
       WHERE coa.organization_id = $1
-      GROUP BY coa.id, coa.code, coa.name, at.code, at.normal_balance
       ORDER BY coa.code
       `,
       [orgId, periodIds]

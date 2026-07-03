@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "entity_type": "journal_entry",
+  "entity_id": "920813ec-2e1e-4134-aa8a-dfda1e12cc50",
+  "snapshot_at": "2026-07-03T14:03:01.372Z",
+  "header": {
+    "id": "920813ec-2e1e-4134-aa8a-dfda1e12cc50",
+    "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+    "entry_no": "4",
+    "journal_entry_type_id": "909b7a5f-d80f-419a-aef2-fee5b24f143b",
+    "period_id": "6b190796-e3d4-41f8-b60a-66fc236a460d",
+    "entry_date": "2026-07-01T00:00:00.000Z",
+    "memo": "testing journals",
+    "status": "draft",
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "idempotency_key": null,
+    "created_at": "2026-07-03T14:01:51.225Z",
+    "updated_at": "2026-07-03T14:01:51.225Z",
+    "created_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "canceled_at": null,
+    "canceled_by": null,
+    "workflow_document_id": null,
+    "updated_by": "15307c7c-9a6f-4711-87f9-81c80464a451"
+  },
+  "lines": [
+    {
+      "id": "11bfa341-afe3-44a5-961c-7e0789db6c52",
+      "journal_entry_id": "920813ec-2e1e-4134-aa8a-dfda1e12cc50",
+      "line_no": 1,
+      "account_id": "00b9592a-bdbd-48a9-bb0e-0c3440622451",
+      "description": "cash banked",
+      "debit": "2000.00",
+      "credit": "0.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "2000.00"
+    },
+    {
+      "id": "ecd6d72f-85c3-491e-988e-33f7f5ed98e1",
+      "journal_entry_id": "920813ec-2e1e-4134-aa8a-dfda1e12cc50",
+      "line_no": 2,
+      "account_id": "0cf49a1c-fb01-4242-b773-ae2749f9f31c",
+      "description": "cash banked",
+      "debit": "0.00",
+      "credit": "2000.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "2000.00"
+    },
+    {
+      "id": "2195ee1a-2148-42dc-827d-b05624760b32",
+      "journal_entry_id": "920813ec-2e1e-4134-aa8a-dfda1e12cc50",
+      "line_no": 3,
+      "account_id": "af5987b2-e531-4b75-8bc7-9af04e339d86",
+      "description": "payment of utility",
+      "debit": "230.00",
+      "credit": "0.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "230.00"
+    },
+    {
+      "id": "afb51fb1-4362-4bf4-8bd3-6cb7322c99c1",
+      "journal_entry_id": "920813ec-2e1e-4134-aa8a-dfda1e12cc50",
+      "line_no": 4,
+      "account_id": "00b9592a-bdbd-48a9-bb0e-0c3440622451",
+      "description": "payment of utility",
+      "debit": "0.00",
+      "credit": "230.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "230.00"
+    }
+  ],
+  "totals": {
+    "debit_base": "2230.00",
+    "credit_base": "2230.00"
+  },
+  "meta": {
+    "status": "draft",
+    "period_id": "6b190796-e3d4-41f8-b60a-66fc236a460d",
+    "entry_date": "2026-07-01T00:00:00.000Z"
+  }
+}
