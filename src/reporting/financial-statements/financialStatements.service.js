@@ -56,22 +56,10 @@ async function fetchTbMap({ orgId, periodId, mode }) {
       `
       WITH posted_activity AS (
         SELECT
-          jel.account_id,
-          SUM(jel.debit) AS debit_total,
-          SUM(jel.credit) AS credit_total
-        FROM journal_entries je
-        JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
-        WHERE je.organization_id = $1
-          AND je.status = 'posted'
-          AND je.period_id = ANY($2::uuid[])
-        GROUP BY jel.account_id
-      ),
-      gl_activity AS (
-        SELECT
           account_id,
           SUM(debit_total) AS debit_total,
           SUM(credit_total) AS credit_total
-        FROM general_ledger_balances
+        FROM accounting_posted_ledger_totals
         WHERE organization_id = $1
           AND period_id = ANY($2::uuid[])
         GROUP BY account_id
@@ -82,11 +70,10 @@ async function fetchTbMap({ orgId, periodId, mode }) {
         coa.name,
         at.code AS account_type,
         at.normal_balance,
-        COALESCE(gl.debit_total, pa.debit_total, 0) AS debit_total,
-        COALESCE(gl.credit_total, pa.credit_total, 0) AS credit_total
+        COALESCE(pa.debit_total, 0) AS debit_total,
+        COALESCE(pa.credit_total, 0) AS credit_total
       FROM chart_of_accounts coa
       JOIN account_types at ON at.id = coa.account_type_id
-      LEFT JOIN gl_activity gl ON gl.account_id = coa.id
       LEFT JOIN posted_activity pa ON pa.account_id = coa.id
       WHERE coa.organization_id = $1
       ORDER BY coa.code
@@ -608,7 +595,7 @@ async function cashFlowStatement({ orgId, periodId, comparePeriodId }) {
       FROM journal_entries je
       JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
       WHERE je.organization_id=$1
-        AND je.status='posted'
+        AND je.status IN ('posted','voided')
         AND je.entry_date BETWEEN $2::date AND $3::date
         AND jel.account_id = ANY($4::uuid[])
       ORDER BY je.entry_date, je.entry_no, jel.line_no
@@ -729,7 +716,7 @@ async function getPreviousPeriodId({ orgId, periodId }) {
 }
 
 async function equityBalanceAsOf({ orgId, periodId }) {
-  // Uses the same underlying source as other statements (general_ledger_balances via trialBalance).
+  // Uses the same canonical posted/voided journal-line source as the other statements.
   const tb = await trialBalanceSvc({ orgId, periodId });
   let equity = 0;
   for (const r of tb) {
@@ -750,7 +737,7 @@ async function equityMovements({ orgId, fromDate, toDate }) {
     JOIN journal_entries je ON je.id = jel.journal_entry_id
     JOIN journal_entry_types jet ON jet.id = je.journal_entry_type_id
     WHERE je.organization_id=$1
-      AND je.status='posted'
+      AND je.status IN ('posted','voided')
       AND je.entry_date BETWEEN $2::date AND $3::date
       AND (rem.journal_entry_type_code IS NULL OR rem.journal_entry_type_code = jet.code)
     GROUP BY rem.movement_code

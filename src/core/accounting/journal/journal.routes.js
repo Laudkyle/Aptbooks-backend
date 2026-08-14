@@ -116,12 +116,12 @@ router.post("/:id/lines", requirePermission("accounting.journal.edit"), async (r
     const lines = (current.lines || []).map((l) => ({
       accountId: l.account_id,
       description: l.description,
-      debit: Number(l.debit),
-      credit: Number(l.credit)
+      debit: l.debit,
+      credit: l.credit
     }));
     lines.push(line);
 
-    const out = await journalAPI.replaceDraftLines({ orgId, journalId: req.params.id, actorUserId, lines });
+    const out = await journalAPI.replaceDraftLines({ orgId, journalId: req.params.id, actorUserId, lines, requireBalanced: false });
     const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
 
     await writeAudit({
@@ -155,8 +155,8 @@ router.patch("/:id/lines/:lineNo", requirePermission("accounting.journal.edit"),
     const lines = (current.lines || []).map((l) => ({
       accountId: l.account_id,
       description: l.description,
-      debit: Number(l.debit),
-      credit: Number(l.credit)
+      debit: l.debit,
+      credit: l.credit
     }));
 
     if (lineNo > lines.length) throw new AppError(404, "Line not found");
@@ -165,7 +165,7 @@ router.patch("/:id/lines/:lineNo", requirePermission("accounting.journal.edit"),
       ...patch
     };
 
-    const out = await journalAPI.replaceDraftLines({ orgId, journalId: req.params.id, actorUserId, lines });
+    const out = await journalAPI.replaceDraftLines({ orgId, journalId: req.params.id, actorUserId, lines, requireBalanced: false });
     const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
 
     await writeAudit({
@@ -200,12 +200,12 @@ router.delete("/:id/lines/:lineNo", requirePermission("accounting.journal.edit")
       .map((l) => ({
         accountId: l.account_id,
         description: l.description,
-        debit: Number(l.debit),
-        credit: Number(l.credit)
+        debit: l.debit,
+        credit: l.credit
       }))
       .filter((_, idx) => idx !== lineNo - 1);
 
-    const out = await journalAPI.replaceDraftLines({ orgId, journalId: req.params.id, actorUserId, lines });
+    const out = await journalAPI.replaceDraftLines({ orgId, journalId: req.params.id, actorUserId, lines, requireBalanced: false });
     const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
 
     await writeAudit({

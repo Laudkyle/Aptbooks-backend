@@ -133,7 +133,7 @@ const journalLineAddSchema = journalLineSchema;
 const journalLineUpdateSchema = z
   .object({
     accountId: uuid.optional(),
-    description: z.string().trim().min(1, "Line description is required").max(300),
+    description: z.string().trim().min(1, "Line description is required").max(300).optional(),
     debit: moneyAmount.optional(),
     credit: moneyAmount.optional()
   })

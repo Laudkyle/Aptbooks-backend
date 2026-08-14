@@ -1,6 +1,6 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
-const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
+const { parseDecimalToBigInt, bigIntToDecimalString, divideAndRoundHalfUp } = require("../../../shared/utils/money");
 const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 
@@ -24,8 +24,9 @@ function parseRateToMicro(rate) {
 }
 
 function computeBaseCents({ amountCents, rateMicro }) {
-  // baseCents = (amountCents * rateMicro) / 1e6
-  return (amountCents * rateMicro) / 1000000n;
+  // Explicit accounting policy: convert to base-currency minor units using
+  // round-half-up. Plain BigInt division would truncate fractional cents.
+  return divideAndRoundHalfUp(amountCents * rateMicro, 1000000n);
 }
 
 async function lookupFxRateMicro(client, { orgId, rateTypeCode = "SPOT", fromCurrency, toCurrency, asOfDate }) {
@@ -71,8 +72,8 @@ async function lookupFxRateMicro(client, { orgId, rateTypeCode = "SPOT", fromCur
   if (inv.rows.length) {
     const baseMicro = parseRateToMicro(inv.rows[0].rate);
     if (baseMicro <= 0n) throw new AppError(400, "Invalid stored FX rate");
-    // invert: 1 / r. keep micro precision: (1e12 / baseMicro) gives micro
-    return (1000000n * 1000000n) / baseMicro;
+    // Invert using the same explicit half-up policy at 6dp precision.
+    return divideAndRoundHalfUp(1000000n * 1000000n, baseMicro);
   }
 
   throw new AppError(404, `No FX rate found for ${from}/${to} as of ${asOfDate}`);
@@ -213,7 +214,7 @@ async function validateAccountIsUsable(client, { orgId, accountId }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
 }
 
-async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency, payloadRateTypeCode = "SPOT" }) {
+async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency, payloadRateTypeCode = "SPOT", requireBalanced = true }) {
   const preparedLines = [];
 
   for (const l of lines || []) {
@@ -268,7 +269,7 @@ async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency
     { debit: 0n, credit: 0n }
   );
 
-  if (totals.debit !== totals.credit) {
+  if (requireBalanced && totals.debit !== totals.credit) {
     throw new AppError(400, "Journal not balanced in base currency");
   }
 
@@ -441,7 +442,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       `,
       [orgId, journalId]
     );
-    if (!lines.length) throw new AppError(400, "Journal has no lines");
+    if (lines.length < 2) throw new AppError(400, "Journal must contain at least two lines before posting");
 
     // Validate accounts and ensure amount_base/fx_rate are present and correct.
     for (const l of lines) {
@@ -941,8 +942,13 @@ async function getJournalWithLines({ orgId, journalId }) {
   if (!j.length) throw new AppError(404, "Journal not found");
 
   const { rows: lines } = await pool.query(
-    `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
-    [journalId]
+    `SELECT jel.*, coa.code AS account_code, coa.name AS account_name
+       FROM journal_entry_lines jel
+       JOIN chart_of_accounts coa
+         ON coa.id=jel.account_id AND coa.organization_id=$1
+      WHERE jel.journal_entry_id=$2
+      ORDER BY jel.line_no`,
+    [orgId, journalId]
   );
 
   return { journal: j[0], lines };
@@ -1039,7 +1045,7 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
   }
 }
 
-async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
+async function replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced = true }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -1057,6 +1063,7 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
       lines,
       baseCurrency,
       payloadRateTypeCode: "SPOT",
+      requireBalanced,
     });
 
     const { rows: existingLines } = await client.query(
@@ -1141,7 +1148,7 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
     assertEntryDateWithinPeriod(j.entry_date, period);
 
     const totals = sum2(snapshot.lines);
-    if (!snapshot.lines.length) throw new AppError(400, "Journal has no lines");
+    if (snapshot.lines.length < 2) throw new AppError(400, "Journal must contain at least two lines before submission");
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
     await documentableSvc.submitEntityForApproval({
@@ -1417,7 +1424,9 @@ async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
 
   const { rows } = await pool.query(
     `
-    SELECT id, journal_entry_type_id, period_id, entry_date, memo, status,
+    SELECT id, entry_no, journal_entry_type_id,
+           (SELECT code FROM journal_entry_types jet WHERE jet.id=journal_entries.journal_entry_type_id) AS journal_entry_type,
+           period_id, entry_date, memo, status,
            created_by, submitted_at, submitted_by, approved_at, approved_by,
            rejected_at, rejected_by, rejection_reason,
            canceled_at, canceled_by,

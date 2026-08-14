@@ -56,6 +56,27 @@ function parseDecimalToBigInt(value, scale = 2) {
   return sign * bi;
 }
 
+/**
+ * Divide two BigInts using round-half-up semantics.
+ *
+ * This is intended for monetary/rate conversions where plain BigInt division
+ * would silently truncate fractional minor units. Denominator must be positive.
+ */
+function divideAndRoundHalfUp(numerator, denominator) {
+  if (typeof numerator !== "bigint" || typeof denominator !== "bigint") {
+    throw new Error("divideAndRoundHalfUp expects BigInt values");
+  }
+  if (denominator <= 0n) throw new Error("Denominator must be positive");
+
+  if (numerator === 0n) return 0n;
+  const negative = numerator < 0n;
+  const absolute = negative ? -numerator : numerator;
+  const quotient = absolute / denominator;
+  const remainder = absolute % denominator;
+  const rounded = remainder * 2n >= denominator ? quotient + 1n : quotient;
+  return negative ? -rounded : rounded;
+}
+
 function bigIntToDecimalString(valueBigInt, scale = 2) {
   let v = valueBigInt;
   const sign = v < 0n ? "-" : "";
@@ -95,5 +116,6 @@ function multiplyQtyByUnitPriceToMoney(qty, unitPrice, qtyScale = 6, moneyScale 
 module.exports = {
   parseDecimalToBigInt,
   bigIntToDecimalString,
-  multiplyQtyByUnitPriceToMoney
+  multiplyQtyByUnitPriceToMoney,
+  divideAndRoundHalfUp
 };

@@ -54,10 +54,11 @@ test("rejects unbalanced journal", async () => {
     .send({
       periodId,
       entryDate: "2026-01-10",
+      memo: "Unbalanced journal validation test",
       typeCode: "GENERAL",
       lines: [
-        { accountId: cashAccountId, debit: 100 },
-        { accountId: revenueAccountId, credit: 90 }
+        { accountId: cashAccountId, description: "Cash", debit: 100 },
+        { accountId: revenueAccountId, description: "Revenue", credit: 90 }
       ]
     });
   expect(res.status).toBe(400);
@@ -70,11 +71,12 @@ test("posts balanced journal and updates trial balance", async () => {
     .send({
       periodId,
       entryDate: "2026-01-11",
+      memo: "Balanced posting test",
       typeCode: "GENERAL",
       idempotencyKey: "abc-123",
       lines: [
-        { accountId: cashAccountId, debit: 100 },
-        { accountId: revenueAccountId, credit: 100 }
+        { accountId: cashAccountId, description: "Cash", debit: 100 },
+        { accountId: revenueAccountId, description: "Revenue", credit: 100 }
       ]
     });
 
@@ -106,10 +108,11 @@ test("idempotency returns existing journal", async () => {
     .send({
       periodId,
       entryDate: "2026-01-12",
+      memo: "Idempotency test",
       idempotencyKey: "same-key",
       lines: [
-        { accountId: cashAccountId, debit: 10 },
-        { accountId: revenueAccountId, credit: 10 }
+        { accountId: cashAccountId, description: "Cash", debit: 10 },
+        { accountId: revenueAccountId, description: "Revenue", credit: 10 }
       ]
     });
   const create2 = await request(app)
@@ -118,10 +121,11 @@ test("idempotency returns existing journal", async () => {
     .send({
       periodId,
       entryDate: "2026-01-12",
+      memo: "Idempotency test",
       idempotencyKey: "same-key",
       lines: [
-        { accountId: cashAccountId, debit: 10 },
-        { accountId: revenueAccountId, credit: 10 }
+        { accountId: cashAccountId, description: "Cash", debit: 10 },
+        { accountId: revenueAccountId, description: "Revenue", credit: 10 }
       ]
     });
 
@@ -144,9 +148,10 @@ test("closing period blocks posting", async () => {
     .send({
       periodId,
       entryDate: "2026-01-13",
+      memo: "Closed period validation test",
       lines: [
-        { accountId: cashAccountId, debit: 5 },
-        { accountId: revenueAccountId, credit: 5 }
+        { accountId: cashAccountId, description: "Cash", debit: 5 },
+        { accountId: revenueAccountId, description: "Revenue", credit: 5 }
       ]
     });
 

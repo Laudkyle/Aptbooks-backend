@@ -2,6 +2,7 @@ const { pool } = require("../../../db/pool");
 const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
+const { parseDecimalToBigInt, bigIntToDecimalString, divideAndRoundHalfUp } = require("../../../shared/utils/money");
 
 function norm(v) {
   return String(v ?? "").trim().toUpperCase();
@@ -11,6 +12,17 @@ function assertCurrency(code) {
   const c = norm(code);
   if (c.length !== 3) throw new AppError(400, "currencyCode must be 3 letters");
   return c;
+}
+
+function normalizePositiveRate(rate) {
+  let units;
+  try {
+    units = parseDecimalToBigInt(rate, 6);
+  } catch (_err) {
+    throw new AppError(400, "rate must be a positive decimal with at most 6 decimal places");
+  }
+  if (units <= 0n) throw new AppError(400, "rate must be greater than zero");
+  return { units, decimal: bigIntToDecimalString(units, 6) };
 }
 
 async function getRateTypeId({ code }) {
@@ -49,8 +61,7 @@ async function upsertRate({ orgId, rateTypeCode = "SPOT", fromCurrency, toCurren
   const from = assertCurrency(fromCurrency);
   const to = assertCurrency(toCurrency);
   if (from === to) throw new AppError(400, "fromCurrency and toCurrency cannot be the same");
-  const r = Number(rate);
-  if (!Number.isFinite(r) || r <= 0) throw new AppError(400, "rate must be a positive number");
+  const { decimal: r } = normalizePositiveRate(rate);
   if (!effectiveDate) throw new AppError(400, "effectiveDate is required");
 
   const rateTypeId = await getRateTypeId({ code: rateTypeCode });
@@ -62,7 +73,7 @@ async function upsertRate({ orgId, rateTypeCode = "SPOT", fromCurrency, toCurren
 
   let row;
   if (existing.rows.length) {
-    const oldRate = Number(existing.rows[0].rate);
+    const oldRate = existing.rows[0].rate;
     const upd = await pool.query(
       "UPDATE exchange_rates SET rate=$1 WHERE id=$2 RETURNING *",
       [r, existing.rows[0].id]
@@ -132,7 +143,7 @@ async function listRates({ orgId, rateTypeCode, fromCurrency, toCurrency, fromDa
 async function getEffectiveRate({ orgId, rateTypeCode = "SPOT", fromCurrency, toCurrency, asOfDate }) {
   const from = assertCurrency(fromCurrency);
   const to = assertCurrency(toCurrency);
-  if (from === to) return { rate: 1, inverted: false };
+  if (from === to) return { rate: "1.000000", inverted: false };
   if (!asOfDate) throw new AppError(400, "asOfDate is required");
   const rateTypeId = await getRateTypeId({ code: rateTypeCode });
 
@@ -141,7 +152,7 @@ async function getEffectiveRate({ orgId, rateTypeCode = "SPOT", fromCurrency, to
     [orgId, rateTypeId, from, to, asOfDate]
   );
   if (direct.rows.length) {
-    return { rate: Number(direct.rows[0].rate), inverted: false, effectiveDate: direct.rows[0].effective_date };
+    return { rate: String(direct.rows[0].rate), inverted: false, effectiveDate: direct.rows[0].effective_date };
   }
 
   const inv = await pool.query(
@@ -149,9 +160,9 @@ async function getEffectiveRate({ orgId, rateTypeCode = "SPOT", fromCurrency, to
     [orgId, rateTypeId, to, from, asOfDate]
   );
   if (inv.rows.length) {
-    const base = Number(inv.rows[0].rate);
-    if (base <= 0) throw new AppError(400, "Invalid stored FX rate");
-    return { rate: 1 / base, inverted: true, effectiveDate: inv.rows[0].effective_date };
+    const { units: baseUnits } = normalizePositiveRate(inv.rows[0].rate);
+    const inverseUnits = divideAndRoundHalfUp(1000000n * 1000000n, baseUnits);
+    return { rate: bigIntToDecimalString(inverseUnits, 6), inverted: true, effectiveDate: inv.rows[0].effective_date };
   }
 
   throw new AppError(404, `No FX rate found for ${from}/${to} (${rateTypeCode}) as of ${asOfDate}`);

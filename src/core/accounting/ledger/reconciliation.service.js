@@ -132,17 +132,9 @@ async function buildReconciliationData({ orgId, periodId, onlyMismatches = false
 
   const jl = await client.query(
     `
-    SELECT
-      jel.account_id,
-      SUM(CASE WHEN COALESCE(jel.debit,0) > 0 THEN COALESCE(jel.amount_base, jel.debit, 0) ELSE 0 END) AS debit_total,
-      SUM(CASE WHEN COALESCE(jel.credit,0) > 0 THEN COALESCE(jel.amount_base, jel.credit, 0) ELSE 0 END) AS credit_total,
-      COUNT(*) AS line_count
-    FROM journal_entry_lines jel
-    JOIN journal_entries je ON je.id = jel.journal_entry_id
-    WHERE je.organization_id=$1
-      AND je.period_id=$2
-      AND je.status='posted'
-    GROUP BY jel.account_id
+    SELECT account_id, debit_total, credit_total, line_count
+    FROM accounting_posted_ledger_totals
+    WHERE organization_id=$1 AND period_id=$2
     `,
     [orgId, periodId]
   );
@@ -349,7 +341,7 @@ async function getDiscrepancyDetails({ orgId, periodId, accountId }) {
     JOIN journal_entries je ON je.id = jel.journal_entry_id
     WHERE je.organization_id=$1
       AND je.period_id=$2
-      AND je.status='posted'
+      AND je.status IN ('posted','voided')
       AND jel.account_id=$3
     ORDER BY je.entry_date ASC, je.entry_no ASC, jel.line_no ASC
     `,
@@ -508,16 +500,9 @@ async function rebuildBalances({ orgId, actorUserId, periodId, dryRun = true, au
 
   const recomputed = await pool.query(
     `
-    SELECT
-      jel.account_id,
-      SUM(CASE WHEN COALESCE(jel.debit,0) > 0 THEN COALESCE(jel.amount_base, jel.debit, 0) ELSE 0 END) AS debit_total,
-      SUM(CASE WHEN COALESCE(jel.credit,0) > 0 THEN COALESCE(jel.amount_base, jel.credit, 0) ELSE 0 END) AS credit_total
-    FROM journal_entry_lines jel
-    JOIN journal_entries je ON je.id = jel.journal_entry_id
-    WHERE je.organization_id=$1
-      AND je.period_id=$2
-      AND je.status='posted'
-    GROUP BY jel.account_id
+    SELECT account_id, debit_total, credit_total
+    FROM accounting_posted_ledger_totals
+    WHERE organization_id=$1 AND period_id=$2
     `,
     [orgId, periodId]
   );
@@ -540,7 +525,7 @@ async function rebuildBalances({ orgId, actorUserId, periodId, dryRun = true, au
         await client.query(
           `INSERT INTO general_ledger_balances(organization_id, period_id, account_id, debit_total, credit_total)
            VALUES ($1,$2,$3,$4,$5)`,
-          [orgId, periodId, row.account_id, num(row.debit_total), num(row.credit_total)]
+          [orgId, periodId, row.account_id, row.debit_total, row.credit_total]
         );
       }
       await saveHistory({

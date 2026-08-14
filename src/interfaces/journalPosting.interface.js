@@ -38,8 +38,8 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
   return journalSvc.updateDraftHeader({ orgId, journalId, actorUserId, payload });
 }
 
-async function replaceDraftLines({ orgId, journalId, actorUserId, lines }) {
-  return journalSvc.replaceDraftLines({ orgId, journalId, actorUserId, lines });
+async function replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced = true }) {
+  return journalSvc.replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced });
 }
 
 async function submitDraftJournal({ orgId, journalId, actorUserId }) {
