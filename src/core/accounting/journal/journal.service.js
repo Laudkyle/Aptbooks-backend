@@ -529,7 +529,9 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     );
 
     // Feed bank_transactions ledger for any bank accounts hit by this journal.
-    // This is best-effort; it will skip unsupported currency cases rather than failing posting.
+    // Keep this best-effort work behind a savepoint: a SQL failure would otherwise
+    // abort the entire PostgreSQL transaction even if JavaScript catches it.
+    await client.query("SAVEPOINT bank_enrichment");
     try {
       await bankTransactionsRepo.upsertFromPostedJournal(client, {
         orgId,
@@ -537,9 +539,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
         entryDate: journal.entry_date,
         actorUserId,
       });
+      await client.query("RELEASE SAVEPOINT bank_enrichment");
     } catch (e) {
-      // Never block posting for cashbook enrichment.
+      await client.query("ROLLBACK TO SAVEPOINT bank_enrichment");
+      await client.query("RELEASE SAVEPOINT bank_enrichment");
       await enqueueEvent({
+        client,
         orgId,
         eventType: "banking.bank_transactions.enrichment_failed",
         payload: { journalId, error: String(e && e.message ? e.message : e) },
@@ -547,6 +552,7 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     }
 
     await enqueueEvent({
+      client,
       orgId,
       eventType: "accounting.journal.posted",
       payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date }
@@ -707,6 +713,7 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
     );
 
     await enqueueEvent({
+      client,
       orgId,
       eventType: "accounting.journal.voided",
       payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id }
@@ -864,6 +871,7 @@ async function reversePostedJournal({
 
     // 8) IMPORTANT: Do NOT modify original journal status
     await enqueueEvent({
+      client,
       orgId,
       eventType: "accounting.journal.reversed",
       payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate }
@@ -1236,6 +1244,7 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
 
     if (isFinalApproval && settings.notify_creator_on_approval && j.created_by) {
       await enqueueEvent({
+        client,
         orgId,
         eventType: "accounting.journal.approved",
         payload: {
@@ -1304,6 +1313,7 @@ async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason })
 
     if (settings.notify_creator_on_rejection && j.created_by) {
       await enqueueEvent({
+        client,
         orgId,
         eventType: "accounting.journal.rejected",
         payload: {

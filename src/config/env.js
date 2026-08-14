@@ -42,6 +42,10 @@ const env = {
   COOKIE_DOMAIN: process.env.COOKIE_DOMAIN || "",
 
   BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS || "12", 10),
+
+  // Application-managed encryption for secrets stored in the database (SMTP, TOTP, etc.).
+  // Production must set a distinct 32-byte key (hex or base64).
+  APP_SECRETS_ENCRYPTION_KEY: process.env.APP_SECRETS_ENCRYPTION_KEY || "",
   // Public bootstrap / self-serve provisioning
 PUBLIC_REGISTRATION_ENABLED: (process.env.PUBLIC_REGISTRATION_ENABLED || "true").toLowerCase() === "true",
 
@@ -120,6 +124,24 @@ function validateRuntimeEnv() {
     }
     if (env.JWT_REFRESH_SECRET === env.JWT_SECRET) {
       throw new Error("JWT_REFRESH_SECRET must be different from JWT_SECRET in production");
+    }
+    if (!env.APP_SECRETS_ENCRYPTION_KEY) {
+      throw new Error("APP_SECRETS_ENCRYPTION_KEY must be set in production");
+    }
+    const encryptionKeyRaw = String(env.APP_SECRETS_ENCRYPTION_KEY).trim();
+    let encryptionKeyBytes = null;
+    try {
+      encryptionKeyBytes = /^[0-9a-fA-F]{64}$/.test(encryptionKeyRaw)
+        ? Buffer.from(encryptionKeyRaw, "hex")
+        : Buffer.from(encryptionKeyRaw, "base64");
+    } catch (_) {
+      encryptionKeyBytes = null;
+    }
+    if (!encryptionKeyBytes || encryptionKeyBytes.length !== 32) {
+      throw new Error("APP_SECRETS_ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars or base64)");
+    }
+    if (encryptionKeyRaw === String(env.JWT_SECRET)) {
+      throw new Error("APP_SECRETS_ENCRYPTION_KEY must be distinct from JWT_SECRET");
     }
     if (env.RATE_LIMIT_STORE !== "memory" && env.RATE_LIMIT_STORE !== "postgres") {
       throw new Error("RATE_LIMIT_STORE must be either 'memory' or 'postgres'");

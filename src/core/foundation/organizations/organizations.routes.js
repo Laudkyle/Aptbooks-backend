@@ -7,50 +7,6 @@ const { writeAudit } = require("../audit-logs/audit.service");
 const { parseMultipart } = require("../../../shared/http/multipart");
 const docsRepo = require("../../../workflow/documents/documents.repository");
 const docsSvc = require("../../../workflow/documents/documents.service");
-const initializeOrganizationDefaults = require('./organizations.service')
-
-
-
-router.post("/", async (req, res, next) => {
- const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    
-    // 1. Create the organization
-    const { rows: orgRows } = await client.query(
-      `INSERT INTO organizations(name, base_currency_code) 
-       VALUES ($1, $2) RETURNING id`,
-      [req.body.name, req.body.baseCurrencyCode || "GHS"]
-    );
-    const orgId = orgRows[0].id;
-    
-    // 2. Initialize all organization defaults
-    const defaults = await initializeOrganizationDefaults({
-      client,
-      orgId,
-      adminEmail: req.body.adminEmail,
-      adminPassword: req.body.adminPassword,
-      baseCurrencyCode: req.body.baseCurrencyCode || "GHS"
-    });
-    
-    await client.query("COMMIT");
-    
-    res.status(201).json({
-      message: "Organization created successfully",
-      organization: {
-        id: orgId,
-        name: req.body.name,
-        ...defaults
-      }
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    next(error);
-  } finally {
-    client.release();
-  }
-})
-
 // Org-scoped reads should be authenticated
 router.get("/me", authRequired, async (req, res, next) => {
   try {

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "entity_type": "payment_in",
+  "entity_id": "18198875-6392-466f-aee3-cbbd7412a13e",
+  "snapshot_at": "2026-08-13T22:23:18.167Z",
+  "header": {
+    "id": "18198875-6392-466f-aee3-cbbd7412a13e",
+    "organization_id": "68dd63e3-e3a5-4c6a-81cf-a693f1fa1133",
+    "customer_id": "c6aaddda-2f9d-46df-8ae1-d1dbce62f23f",
+    "receipt_no": "RCPT-000001",
+    "receipt_date": "2026-08-13T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "payment_method_id": "9aaefac0-13dd-4562-b269-2c365685aab2",
+    "cash_account_id": "9358aec8-6d78-4892-8970-ccbd6de3ec5e",
+    "amount_total": "4000.00",
+    "status": "draft",
+    "memo": "Payment for drugs",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_at": "2026-08-13T22:22:56.161Z",
+    "updated_at": "2026-08-13T22:22:56.161Z",
+    "unapplied_amount": "0.00",
+    "discount_total": "0.00",
+    "settlement_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null
+  },
+  "allocations": [],
+  "totals": {
+    "amount_total": "4000.00",
+    "unapplied_amount": "0.00",
+    "settlement_amount": null,
+    "discount_amount": null
+  },
+  "meta": {
+    "status": "draft",
+    "journal_entry_id": null,
+    "period_id": null
+  }
+}

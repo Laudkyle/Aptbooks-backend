@@ -58,6 +58,16 @@ async function findIntentByProviderReference({ providerCode, reference }) {
   return rows[0] || null;
 }
 
+async function findIntentByProviderTransactionId({ providerCode, providerTransactionId }) {
+  const { rows } = await pool.query(
+    `SELECT * FROM payment_intents
+      WHERE provider_code=$1 AND provider_transaction_id=$2
+      ORDER BY created_at DESC LIMIT 1`,
+    [providerCode, providerTransactionId]
+  );
+  return rows[0] || null;
+}
+
 async function insertIntentLinks({ intentId, links }) {
   if (!Array.isArray(links) || links.length === 0) return;
   for (const l of links) {
@@ -108,6 +118,7 @@ module.exports = {
   updateIntentStatus,
   getIntentById,
   findIntentByProviderReference,
+  findIntentByProviderTransactionId,
   insertIntentLinks,
   getIntentLinks,
   recordWebhookEvent,

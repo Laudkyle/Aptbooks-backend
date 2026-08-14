@@ -10,6 +10,7 @@ const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../audit-logs/audit.service");
+const { encryptSecret, decryptSecret, isEncryptedSecret } = require("../../../shared/security/secrets");
 const {
   verifyTotp,
   generateSecretBase32,
@@ -21,8 +22,7 @@ const {
   persistRefreshToken,
   rotateRefreshToken,
   revokeRefreshTokenByJti,
-  revokeRefreshTokenFamily,
-  revokeAllRefreshTokensForUser,
+  revokeAllRefreshTokensAcrossOrganizations,
 } = require("./tokens.service");
 
 // Minimal in-memory rate limiter (per IP + email) for the login endpoint.
@@ -90,7 +90,7 @@ function setRefreshCookie(res, token) {
     httpOnly: true,
     secure: env.COOKIE_SECURE,
     sameSite: env.COOKIE_SAMESITE,
-    path: "/auth/refresh",
+    path: "/auth",
   };
   if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
 
@@ -100,7 +100,7 @@ function setRefreshCookie(res, token) {
 
 function clearRefreshCookie(res) {
   if (!env.REFRESH_TOKEN_USE_COOKIE) return;
-  const opts = { path: "/auth/refresh" };
+  const opts = { path: "/auth" };
   if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
   res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, opts);
 }
@@ -179,7 +179,10 @@ router.post("/login", async (req, res, next) => {
     if (user.two_factor_enabled) {
       const otp = req.body?.otp;
       if (!otp) throw new AppError(401, "2FA code required");
-      const secret = user.two_factor_secret;
+      const storedSecret = user.two_factor_secret;
+      const secret = storedSecret
+        ? decryptSecret(storedSecret, { context: `totp:${user.organization_id}:${user.id}`, allowPlaintextLegacy: true })
+        : null;
       if (!secret || !verifyTotp(secret, otp, { window: 1 })) {
         await pool
           .query(
@@ -196,6 +199,14 @@ router.post("/login", async (req, res, next) => {
           )
           .catch(() => {});
         throw new AppError(401, "Invalid 2FA code");
+      }
+
+      // Opportunistically migrate legacy plaintext TOTP secrets after a valid OTP.
+      if (storedSecret && !isEncryptedSecret(storedSecret)) {
+        await pool.query(
+          `UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+          [user.organization_id, user.id, encryptSecret(secret, { context: `totp:${user.organization_id}:${user.id}` })],
+        );
       }
     }
 
@@ -288,7 +299,7 @@ router.post(
       // store as pending secret (two_factor_secret) until enabled
       await pool.query(
         `UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-        [orgId, userId, secret],
+        [orgId, userId, encryptSecret(secret, { context: `totp:${orgId}:${userId}` })],
       );
       res.json({ secret, otpauth });
     } catch (e) {
@@ -315,11 +326,15 @@ router.post(
       if (rows[0].two_factor_enabled)
         throw new AppError(409, "2FA already enabled");
       if (!rows[0].two_factor_secret) throw new AppError(409, "Enroll first");
-      if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 }))
+      const secret = decryptSecret(rows[0].two_factor_secret, {
+        context: `totp:${orgId}:${userId}`,
+        allowPlaintextLegacy: true,
+      });
+      if (!verifyTotp(secret, otp, { window: 1 }))
         throw new AppError(400, "Invalid otp");
       await pool.query(
-        `UPDATE users SET two_factor_enabled=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-        [orgId, userId],
+        `UPDATE users SET two_factor_enabled=TRUE, two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+        [orgId, userId, encryptSecret(secret, { context: `totp:${orgId}:${userId}` })],
       );
       res.json({ ok: true });
     } catch (e) {
@@ -349,7 +364,11 @@ router.post(
         throw new AppError(409, "2FA not enabled");
       const ok = await bcrypt.compare(password, rows[0].password_hash);
       if (!ok) throw new AppError(401, "Invalid credentials");
-      if (!verifyTotp(rows[0].two_factor_secret, otp, { window: 1 }))
+      const secret = decryptSecret(rows[0].two_factor_secret, {
+        context: `totp:${orgId}:${userId}`,
+        allowPlaintextLegacy: true,
+      });
+      if (!verifyTotp(secret, otp, { window: 1 }))
         throw new AppError(400, "Invalid otp");
       await pool.query(
         `UPDATE users SET two_factor_enabled=FALSE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
@@ -367,8 +386,10 @@ router.post(
  * NOTE: In production you may want to gate this (invite-only) via env.PUBLIC_REGISTRATION_ENABLED=false.
  */
 router.post("/register", async (req, res, next) => {
-  const client = await pool.connect();
+  let client = null;
+  let inTransaction = false;
   try {
+    client = await pool.connect();
     if (env.PUBLIC_REGISTRATION_ENABLED === false)
       throw new AppError(403, "Public registration disabled");
 
@@ -388,6 +409,7 @@ router.post("/register", async (req, res, next) => {
     if (!cRows.length) throw new AppError(400, "Invalid baseCurrencyCode");
 
     await client.query("BEGIN");
+    inTransaction = true;
 
     // 1) Create org
     const { rows: orgRows } = await client.query(
@@ -477,9 +499,33 @@ router.post("/register", async (req, res, next) => {
       [user.id, org.id],
     );
 
-    await client.query("COMMIT");
+    // Mint/persist the initial session inside the same transaction as the
+    // organization bootstrap. A failed token insert therefore cannot leave a
+    // half-successful registration that returns an unusable session.
+    const accessToken = signAccessToken({
+      userId: user.id,
+      organizationId: org.id,
+      email: user.email,
+    });
+    const refresh = signRefreshToken({
+      userId: user.id,
+      organizationId: org.id,
+      email: user.email,
+    });
+    await persistRefreshToken({
+      organizationId: org.id,
+      userId: user.id,
+      token: refresh.token,
+      tokenJti: refresh.jti,
+      familyId: refresh.familyId,
+      expiresAt: refresh.expiresAt,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+      client,
+    });
 
-    // Fetch the created document types for audit/response
+    // Fetch document types before commit while all bootstrap data is guaranteed
+    // to be part of this transaction.
     const { rows: documentTypes } = await client.query(
       `SELECT id, code, name FROM document_types WHERE organization_id = $1`,
       [org.id],
@@ -506,29 +552,15 @@ router.post("/register", async (req, res, next) => {
           documentTypes: documentTypes,
         },
       },
+      client,
     });
 
-    // Auto-login after registration
-    const accessToken = signAccessToken({
-      userId: user.id,
-      organizationId: org.id,
-      email: user.email,
-    });
-    const refresh = signRefreshToken({
-      userId: user.id,
-      organizationId: org.id,
-      email: user.email,
-    });
-    await persistRefreshToken({
-      organizationId: org.id,
-      userId: user.id,
-      token: refresh.token,
-      tokenJti: refresh.jti,
-      familyId: refresh.familyId,
-      expiresAt: refresh.expiresAt,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-    });
+    await client.query("COMMIT");
+    inTransaction = false;
+
+    // Auto-login after registration. In cookie mode the refresh token never
+    // appears in the JSON response.
+    setRefreshCookie(res, refresh.token);
 
     // Return enhanced response with defaults info including document types
     res.status(201).json({
@@ -538,7 +570,10 @@ router.post("/register", async (req, res, next) => {
         email: user.email,
         organization_id: user.organization_id,
       },
-      tokens: { accessToken, refreshToken: refresh.token },
+      tokens: {
+        accessToken,
+        refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : refresh.token,
+      },
       defaults: {
         accounts: defaults.accounts,
         periodId: defaults.periodId,
@@ -550,10 +585,12 @@ router.post("/register", async (req, res, next) => {
       },
     });
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (client && inTransaction) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     next(e);
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
@@ -673,10 +710,10 @@ router.post("/reset-password", async (req, res, next) => {
       );
 
       // Revoke all refresh tokens so a stolen refresh token cannot be used after reset.
-      await revokeAllRefreshTokensForUser({
-        organizationId: rec.organization_id,
+      await revokeAllRefreshTokensAcrossOrganizations({
         userId: rec.user_id,
-        reason: "User forot password",
+        reason: "password_reset",
+        client,
       });
 
       await client.query("COMMIT");
@@ -708,7 +745,11 @@ router.post("/refresh", async (req, res, next) => {
     const rt = getRefreshTokenFromRequest(req);
     if (!rt) throw new AppError(400, "refreshToken required");
 
-    const rotated = await rotateRefreshToken({ token: rt });
+    const rotated = await rotateRefreshToken({
+      token: rt,
+      ip: req.audit?.ip,
+      userAgent: req.audit?.userAgent,
+    });
 
     setRefreshCookie(res, rotated.refreshToken);
 
@@ -825,7 +866,7 @@ router.post("/logout-all", async (req, res, next) => {
     if (!userId || !organizationId || !familyId)
       throw new AppError(401, "Invalid refresh token");
 
-    await revokeRefreshTokenFamily({ familyId, organizationId, userId });
+    await revokeAllRefreshTokensAcrossOrganizations({ userId, reason: "logout_all" });
 
     clearRefreshCookie(res);
 

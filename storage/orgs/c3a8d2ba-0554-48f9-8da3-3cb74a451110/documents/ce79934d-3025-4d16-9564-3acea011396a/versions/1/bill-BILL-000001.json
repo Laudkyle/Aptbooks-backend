@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "c7a453fd-0f77-4109-aaa0-11ebfc7f7355",
+  "snapshot_at": "2026-07-03T17:12:12.180Z",
+  "header": {
+    "id": "c7a453fd-0f77-4109-aaa0-11ebfc7f7355",
+    "organization_id": "c3a8d2ba-0554-48f9-8da3-3cb74a451110",
+    "vendor_id": "dfc685b1-c5d5-4e98-bea8-39751417fc47",
+    "bill_no": "BILL-000001",
+    "bill_date": "2026-07-03T00:00:00.000Z",
+    "due_date": "2026-07-04T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "Detergent supplied",
+    "subtotal": "500.00",
+    "total": "500.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "15307c7c-9a6f-4711-87f9-81c80464a451",
+    "created_at": "2026-07-03T17:10:35.368Z",
+    "updated_at": "2026-07-03T17:10:35.368Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "500.00"
+  },
+  "lines": [
+    {
+      "id": "0200dbf3-1616-49b8-a5bc-e25bf4e3a257",
+      "bill_id": "c7a453fd-0f77-4109-aaa0-11ebfc7f7355",
+      "line_no": 1,
+      "description": "Being 50gallons of liquid soap and 20 gallons of breach supplied",
+      "quantity": "1.0000",
+      "unit_price": "500.00",
+      "line_total": "500.00",
+      "expense_account_id": "af5987b2-e531-4b75-8bc7-9af04e339d86",
+      "created_at": "2026-07-03T17:10:35.368Z",
+      "tax_code_id": "1f8f41f0-f487-4ea1-8b6e-1c7b27aa8605",
+      "tax_amount": "0.00",
+      "taxable_amount": "500.00",
+      "tax_snapshot_json": {
+        "context": {
+          "partnerId": "dfc685b1-c5d5-4e98-bea8-39751417fc47",
+          "partnerType": "vendor",
+          "documentDate": "2026-07-03",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "6040e92d-287d-4f6b-9491-657c3fb47524",
+          "transactionScope": "purchases"
+        },
+        "taxAmount": 0,
+        "components": [
+          {
+            "rate": 0,
+            "boxCode": "EXEMPT",
+            "taxCode": "GH_VAT_EXEMPT_0",
+            "taxType": "VAT",
+            "metadata": {
+              "explicit": true,
+              "itemTaxCategory": null,
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "exempt",
+            "direction": "both",
+            "taxAmount": 0,
+            "taxCodeId": "1f8f41f0-f487-4ea1-8b6e-1c7b27aa8605",
+            "taxCodeName": "VAT Exempt Supply 0%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": 500,
+            "exemptionReason": null,
+            "sourceTaxCodeId": "1f8f41f0-f487-4ea1-8b6e-1c7b27aa8605",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "1f8f41f0-f487-4ea1-8b6e-1c7b27aa8605",
+            "recoverablePercent": 1,
+            "exemptionReasonCode": null
+          }
+        ],
+        "taxableAmount": 500,
+        "selectedTaxCodeId": "1f8f41f0-f487-4ea1-8b6e-1c7b27aa8605",
+        "withholdingTaxAmount": 0,
+        "grossComputedTaxAmount": 0
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "500.00",
+    "tax_total": "0.00",
+    "total": "500.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

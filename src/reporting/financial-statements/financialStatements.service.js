@@ -189,6 +189,74 @@ function rollupTree(node, childResults, ctx) {
 }
 
 
+
+function accountTypeForStatementSection(sectionCode, label, statementType) {
+  const section = String(sectionCode || "").toUpperCase();
+  const text = String(label || "").toUpperCase();
+  if (statementType === "income_statement") {
+    if (section.includes("REVENUE") || text.includes("REVENUE") || text.includes("SALES")) return { accountType: "REVENUE", normal: "credit" };
+    if (section.includes("EXPENSE") || section.includes("COGS") || text.includes("EXPENSE") || text.includes("COST")) return { accountType: "EXPENSE", normal: "debit" };
+  }
+  if (statementType === "balance_sheet") {
+    if (section.includes("ASSET") || text.includes("ASSET")) return { accountType: "ASSET", normal: "debit" };
+    if (section.includes("LIABIL") || text.includes("LIABIL")) return { accountType: "LIABILITY", normal: "credit" };
+    if (section.includes("EQUITY") || text.includes("EQUITY") || text.includes("CAPITAL") || text.includes("RETAINED")) return { accountType: "EQUITY", normal: "credit" };
+  }
+  return null;
+}
+
+function normalizeLookup(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function buildLineAccountMap({ lines, mappings, tbMap, statementType }) {
+  const lineAccounts = new Map();
+  for (const m of mappings) {
+    if (!lineAccounts.has(m.line_id)) lineAccounts.set(m.line_id, []);
+    lineAccounts.get(m.line_id).push(m);
+  }
+  if (mappings.length) return lineAccounts;
+
+  // Fallback for older/default templates whose line-account rows were never created.
+  // This is intentionally used only when no explicit mappings exist for the selected template.
+  const tbRows = Array.from(tbMap.values());
+  const byExact = new Map();
+  for (const row of tbRows) {
+    byExact.set(normalizeLookup(row.code), row);
+    byExact.set(normalizeLookup(row.name), row);
+    byExact.set(normalizeLookup(`${row.code} ${row.name}`), row);
+    byExact.set(normalizeLookup(`${row.code} - ${row.name}`), row);
+    byExact.set(normalizeLookup(`${row.code} — ${row.name}`), row);
+  }
+
+  for (const line of lines) {
+    if (line.line_type !== "account") continue;
+    const matched = [];
+    const exact = byExact.get(normalizeLookup(line.label));
+    if (exact) matched.push(exact);
+
+    if (!matched.length) {
+      const sectionRule = accountTypeForStatementSection(line.section_code, line.label, statementType);
+      const isAggregateLine = /TOTAL|REVENUE|SALES|EXPENSE|COST|ASSET|LIABIL|EQUITY|CAPITAL/i.test(String(line.label || ""));
+      if (sectionRule && isAggregateLine) {
+        matched.push(...tbRows.filter((row) => String(row.account_type || "").toUpperCase() === sectionRule.accountType));
+      }
+    }
+
+    if (matched.length) {
+      lineAccounts.set(line.id, matched.map((row) => ({
+        line_id: line.id,
+        account_id: row.account_id,
+        weight: 1,
+        sign_override: accountTypeForStatementSection(line.section_code, line.label, statementType)?.normal || row.normal_balance || null,
+        normal_balance: row.normal_balance,
+        account_type: row.account_type
+      })));
+    }
+  }
+  return lineAccounts;
+}
+
 function normalizeCategoryName(name, fallback) {
   const raw = String(name || "").trim();
   if (!raw) return fallback;
@@ -218,9 +286,12 @@ function shouldRebuildDetailedBalanceSheet(lines) {
 async function ensureDefaultTemplate({ orgId, statementType }) {
   let existing = await repo.getDefaultTemplate({ orgId, statementType });
 
-  if (existing && statementType === "balance_sheet") {
+  if (existing && ["income_statement", "balance_sheet"].includes(statementType)) {
     const graph = await repo.getTemplateGraph({ orgId, templateId: existing.id });
-    if (shouldRebuildDetailedBalanceSheet(graph.lines)) {
+    const isSystemDefault = String(existing.name || "").toLowerCase().startsWith("default ") || String(existing.description || "") === "System-generated default template";
+    const shouldRebuildForMissingMappings = isSystemDefault && graph.lines.length > 0 && graph.mappings.length === 0;
+    const shouldRebuildForShape = statementType === "balance_sheet" && shouldRebuildDetailedBalanceSheet(graph.lines);
+    if (shouldRebuildForMissingMappings || shouldRebuildForShape) {
       await pool.query(`DELETE FROM statement_line_accounts WHERE line_id IN (SELECT id FROM statement_lines WHERE template_id=$1)`, [existing.id]);
       await pool.query(`DELETE FROM statement_lines WHERE template_id=$1`, [existing.id]);
       await pool.query(`DELETE FROM statement_templates WHERE id=$1`, [existing.id]);
@@ -422,16 +493,11 @@ async function buildTemplateStatement({ orgId, statementType, periodId, compareP
   const tpl = await ensureDefaultTemplate({ orgId, statementType });
 
   const { lines, mappings } = await repo.getTemplateGraph({ orgId, templateId: tpl.id });
-  const lineAccounts = new Map();
-  for (const m of mappings) {
-    if (!lineAccounts.has(m.line_id)) lineAccounts.set(m.line_id, []);
-    lineAccounts.get(m.line_id).push(m);
-  }
-
   const tree = buildTree(lines);
 
   const tbMap = await fetchTbMap({ orgId, periodId, mode });
   const cmpTbMap = comparePeriodId ? await fetchTbMap({ orgId, periodId: comparePeriodId, mode }) : null;
+  const lineAccounts = buildLineAccountMap({ lines, mappings, tbMap, statementType });
 
   const ctx = {};
   const childResults = new Map();

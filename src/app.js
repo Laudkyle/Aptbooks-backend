@@ -8,7 +8,8 @@ const { notFoundMiddleware } = require("./middleware/notFound.middleware");
 const { auditMiddleware } = require("./middleware/audit.middleware");
 const { requestIdMiddleware } = require("./middleware/requestId.middleware");
 const { globalRateLimit, authRateLimit } = require("./middleware/rateLimit.middleware");
-const { env } = require("./config/env");
+const { env, validateRuntimeEnv } = require("./config/env");
+validateRuntimeEnv();
 
 const authRoutes = require("./core/foundation/users/auth.routes");
 const orgRoutes = require("./core/foundation/organizations/organizations.routes");

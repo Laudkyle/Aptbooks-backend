@@ -9,9 +9,11 @@ async function writeAudit({
   ip,
   userAgent,
   before,
-  after
+  after,
+  client = null
 }) {
-  await pool.query(
+  const db = client || pool;
+  await db.query(
     `
     INSERT INTO audit_logs
       (organization_id, actor_user_id, action, entity_type, entity_id, ip, user_agent, before_json, after_json)

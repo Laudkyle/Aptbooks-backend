@@ -13,6 +13,7 @@ const {
 const svc = require("./payments.service");
 const repo = require("./payments.repository");
 const paystack = require("./providers/paystack.provider");
+const mtnMomo = require("./providers/mtnMomo.provider");
 
 // Authenticated endpoints
 router.post("/paystack/initialize", authRequired, requirePermission("payments.integrations.manage"), async (req, res, next) => {
@@ -95,8 +96,50 @@ router.post("/webhooks/paystack", async (req, res, next) => {
 
 router.post("/webhooks/mtn", async (req, res, next) => {
   try {
-    const ev = await repo.recordWebhookEvent({ providerCode: "mtn_momo", externalEventId: req.body?.referenceId || null, signature: null, payload: req.body || {} });
-    await repo.markWebhookProcessed({ id: ev.id, error: null });
+    // MTN callbacks are not trusted as proof of payment. Treat the callback as
+    // a notification only, then verify the reference directly against MTN.
+    const referenceId = String(
+      req.body?.referenceId || req.header("x-reference-id") || ""
+    ).trim();
+    if (!referenceId) throw new AppError(400, "Missing MTN reference id");
+
+    // Reject arbitrary callback probes before making an outbound provider call.
+    const intent = await repo.findIntentByProviderTransactionId({
+      providerCode: "mtn_momo",
+      providerTransactionId: referenceId,
+    });
+    if (!intent) throw new AppError(404, "Unknown MTN payment reference");
+
+    const verified = await mtnMomo.getRequestToPayStatus({ referenceId });
+    const providerStatus = String(verified?.status || "").toUpperCase();
+    const mappedStatus = providerStatus === "SUCCESSFUL"
+      ? "success"
+      : (providerStatus === "FAILED" ? "failed" : "pending");
+
+    const ev = await repo.recordWebhookEvent({
+      providerCode: "mtn_momo",
+      externalEventId: referenceId,
+      signature: null,
+      payload: {
+        callback: req.body || {},
+        verifiedProviderStatus: verified || {},
+      },
+    });
+
+    try {
+      await repo.updateIntentStatus({
+        id: intent.id,
+        orgId: intent.organization_id,
+        status: mappedStatus,
+        rawLastResponse: verified,
+        providerTransactionId: referenceId,
+      });
+      await repo.markWebhookProcessed({ id: ev.id, error: null });
+    } catch (inner) {
+      await repo.markWebhookProcessed({ id: ev.id, error: inner.message || String(inner) });
+      throw inner;
+    }
+
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

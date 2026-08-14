@@ -6,8 +6,25 @@ const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../audit-logs/audit.service");
-const { signAccessToken, signRefreshToken, persistRefreshToken } = require("./tokens.service");
+const {
+  signAccessToken,
+  signRefreshToken,
+  persistRefreshToken,
+  revokeAllRefreshTokensAcrossOrganizations,
+} = require("./tokens.service");
 router.use(authRequired);
+
+function setRefreshCookie(res, token) {
+  if (!env.REFRESH_TOKEN_USE_COOKIE) return;
+  const opts = {
+    httpOnly: true,
+    secure: env.COOKIE_SECURE,
+    sameSite: env.COOKIE_SAMESITE,
+    path: "/auth",
+  };
+  if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
+  res.cookie(env.REFRESH_TOKEN_COOKIE_NAME, token, opts);
+}
 
 function normalizeSignaturePayload(body = {}) {
   const displayName = body.signature_display_name ?? body.display_name ?? body.displayName ?? null;
@@ -689,28 +706,65 @@ router.get("/me/organizations", async (req, res, next) => {
 });
 
 router.post("/me/switch-organization", async (req, res, next) => {
+  let client = null;
+  let inTransaction = false;
   try {
+    client = await pool.connect();
     const userId = req.user.id;
     const { organizationId } = req.body || {};
     if (!organizationId) throw new AppError(400, "organizationId required");
 
-    // Ensure membership exists
-    const { rows: mem } = await pool.query(
-      `SELECT 1 FROM user_organizations WHERE user_id=$1 AND organization_id=$2`,
+    await client.query("BEGIN");
+    inTransaction = true;
+
+    // Lock the user context so concurrent organization switches cannot interleave.
+    const { rows: users } = await client.query(
+      `SELECT id, email, organization_id, status, is_system
+         FROM users
+        WHERE id=$1
+        FOR UPDATE`,
+      [userId]
+    );
+    if (!users.length || users[0].status !== "active" || users[0].is_system) {
+      throw new AppError(403, "User is not active");
+    }
+
+    const { rows: mem } = await client.query(
+      `SELECT 1
+         FROM user_organizations
+        WHERE user_id=$1 AND organization_id=$2
+        FOR UPDATE`,
       [userId, organizationId]
     );
     if (!mem.length) throw new AppError(403, "Not a member of that organization");
 
-    // Update current org context
-    const { rows: updated } = await pool.query(
-      `UPDATE users SET organization_id=$1, updated_at=NOW() WHERE id=$2 RETURNING id, email, organization_id`,
+    const { rows: updated } = await client.query(
+      `UPDATE users
+          SET organization_id=$1, updated_at=NOW()
+        WHERE id=$2
+        RETURNING id, email, organization_id`,
       [organizationId, userId]
     );
-
-    // Issue fresh tokens scoped to the selected organization
     const user = updated[0];
-    const accessToken = signAccessToken({ userId: user.id, organizationId: user.organization_id, email: user.email });
-    const refresh = signRefreshToken({ userId: user.id, organizationId: user.organization_id, email: user.email });
+
+    // A refresh token is scoped to an organization context. Revoke every prior
+    // refresh session so an old token cannot become valid again after switching back.
+    await revokeAllRefreshTokensAcrossOrganizations({
+      userId,
+      reason: "organization_switch",
+      client,
+    });
+
+    const accessToken = signAccessToken({
+      userId: user.id,
+      organizationId: user.organization_id,
+      email: user.email,
+    });
+    const refresh = signRefreshToken({
+      userId: user.id,
+      organizationId: user.organization_id,
+      email: user.email,
+    });
 
     await persistRefreshToken({
       organizationId: user.organization_id,
@@ -720,7 +774,8 @@ router.post("/me/switch-organization", async (req, res, next) => {
       token: refresh.token,
       expiresAt: refresh.expiresAt,
       ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent
+      userAgent: req.audit?.userAgent,
+      client,
     });
 
     await writeAudit({
@@ -731,14 +786,30 @@ router.post("/me/switch-organization", async (req, res, next) => {
       entityId: userId,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
-      after: { organizationId: user.organization_id }
+      before: { organizationId: users[0].organization_id },
+      after: { organizationId: user.organization_id },
+      client,
     });
 
+    await client.query("COMMIT");
+    inTransaction = false;
+
+    setRefreshCookie(res, refresh.token);
     res.json({
       user: { id: user.id, email: user.email, organization_id: user.organization_id },
-      tokens: { accessToken, refreshToken: refresh.token }
+      tokens: {
+        accessToken,
+        refreshToken: env.REFRESH_TOKEN_USE_COOKIE ? undefined : refresh.token,
+      },
     });
-  } catch (e) { next(e); }
+  } catch (e) {
+    if (inTransaction) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
+    next(e);
+  } finally {
+    if (client) client.release();
+  }
 });
 
 module.exports = router;

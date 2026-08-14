@@ -51,10 +51,11 @@ function signRefreshToken({ userId, organizationId, email, familyId }) {
   return { token, jti, familyId: fid, expiresAt: new Date(expMs) };
 }
 
-async function persistRefreshToken({ organizationId, userId, familyId, tokenJti, token, expiresAt, ip, userAgent }) {
+async function persistRefreshToken({ organizationId, userId, familyId, tokenJti, token, expiresAt, ip, userAgent, client = null }) {
   const tokenHash = sha256(token);
+  const db = client || pool;
 
-  await pool.query(
+  await db.query(
     `INSERT INTO refresh_tokens
       (organization_id, user_id, family_id, token_jti, token_hash, expires_at, ip, user_agent)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -64,23 +65,26 @@ async function persistRefreshToken({ organizationId, userId, familyId, tokenJti,
   return { tokenHash };
 }
 
-async function revokeRefreshTokenByJti({ jti, organizationId, userId, reason = null }) {
-  // reason reserved for future audit/fields
-  const { rowCount } = await pool.query(
+async function revokeRefreshTokenByJti({ jti, organizationId, userId, reason = null, client = null }) {
+  const db = client || pool;
+  const { rowCount } = await db.query(
     `UPDATE refresh_tokens
-       SET revoked_at = now()
+       SET revoked_at = now(),
+           revoke_reason = COALESCE($4, revoke_reason)
      WHERE token_jti=$1 AND organization_id=$2 AND user_id=$3 AND revoked_at IS NULL`,
-    [jti, organizationId, userId]
+    [jti, organizationId, userId, reason]
   );
   return rowCount > 0;
 }
 
-async function revokeRefreshTokenFamily({ familyId, organizationId, userId }) {
-  const { rowCount } = await pool.query(
+async function revokeRefreshTokenFamily({ familyId, organizationId, userId, reason = null, client = null }) {
+  const db = client || pool;
+  const { rowCount } = await db.query(
     `UPDATE refresh_tokens
-       SET revoked_at = now()
+       SET revoked_at = now(),
+           revoke_reason = COALESCE($4, revoke_reason)
      WHERE family_id=$1 AND organization_id=$2 AND user_id=$3 AND revoked_at IS NULL`,
-    [familyId, organizationId, userId]
+    [familyId, organizationId, userId, reason]
   );
   return rowCount;
 }
@@ -89,8 +93,9 @@ async function revokeRefreshTokenFamily({ familyId, organizationId, userId }) {
  * Revoke all refresh tokens for a specific user in an organization
  * Useful for logout all devices, security incidents, or account deactivation
  */
-async function revokeAllRefreshTokensForUser({ organizationId, userId, reason = null }) {
-  const { rowCount } = await pool.query(
+async function revokeAllRefreshTokensForUser({ organizationId, userId, reason = null, client = null }) {
+  const db = client || pool;
+  const { rowCount } = await db.query(
     `UPDATE refresh_tokens
        SET revoked_at = now(),
            revoke_reason = $3
@@ -98,6 +103,19 @@ async function revokeAllRefreshTokensForUser({ organizationId, userId, reason = 
     [organizationId, userId, reason || null]
   );
   
+  return rowCount;
+}
+
+async function revokeAllRefreshTokensAcrossOrganizations({ userId, reason = null, client = null }) {
+  const db = client || pool;
+  const { rowCount } = await db.query(
+    `UPDATE refresh_tokens
+       SET revoked_at = now(),
+           revoke_reason = $2
+     WHERE user_id=$1 AND revoked_at IS NULL`,
+    [userId, reason || null]
+  );
+
   return rowCount;
 }
 
@@ -171,7 +189,7 @@ async function cleanupExpiredRefreshTokens(batchSize = 1000) {
 }
 
 
-async function rotateRefreshToken({ token }) {
+async function rotateRefreshToken({ token, ip = null, userAgent = null }) {
   let payload;
   try {
     payload = jwt.verify(token, env.JWT_REFRESH_SECRET, jwtOptions());
@@ -183,72 +201,145 @@ async function rotateRefreshToken({ token }) {
 
   const userId = payload.sub;
   const organizationId = payload.organization_id;
-  const email = payload.email;
   const jti = payload.jti;
   const familyId = payload.fid;
 
-  if (!userId || !organizationId || !jti || !familyId) throw new AppError(401, "Invalid refresh token");
-
-  // Fetch token record by jti
-  const { rows } = await pool.query(
-    `SELECT token_jti, family_id, revoked_at, replaced_by_jti, expires_at
-       FROM refresh_tokens
-      WHERE token_jti=$1 AND organization_id=$2 AND user_id=$3`,
-    [jti, organizationId, userId]
-  );
-
-  if (!rows.length) throw new AppError(401, "Invalid refresh token");
-
-  const rec = rows[0];
-
-  // Expired?
-  if (new Date(rec.expires_at).getTime() <= Date.now()) {
-    throw new AppError(401, "Refresh token expired");
+  if (!userId || !organizationId || !jti || !familyId) {
+    throw new AppError(401, "Invalid refresh token");
   }
-
-  // If token already rotated/replaced, this is likely reuse -> revoke the whole family
-  if (rec.replaced_by_jti) {
-    await revokeRefreshTokenFamily({ familyId, organizationId, userId });
-    throw new AppError(401, "Refresh token reuse detected");
-  }
-
-  if (rec.revoked_at) throw new AppError(401, "Refresh token revoked");
-
-  // Rotate: mint new refresh token (same family) + revoke old token and mark replacement
-   // Rotate: mint new refresh token (same family) + revoke old token and mark replacement
-  const next = signRefreshToken({ userId, organizationId, email, familyId });
 
   const client = await pool.connect();
+  let inTransaction = false;
   try {
     await client.query("BEGIN");
-    
-    // Insert new token
-    await client.query(
-      `INSERT INTO refresh_tokens
-        (organization_id, user_id, family_id, token_jti, token_hash, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [organizationId, userId, next.familyId, next.jti, sha256(next.token), next.expiresAt]
+    inTransaction = true;
+
+    // Lock the exact token before checking rotation/reuse state. This makes two
+    // concurrent refresh requests serialize instead of both minting successors.
+    const { rows } = await client.query(
+      `SELECT token_jti, family_id, token_hash, revoked_at, replaced_by_jti, expires_at
+         FROM refresh_tokens
+        WHERE token_jti=$1 AND organization_id=$2 AND user_id=$3
+        FOR UPDATE`,
+      [jti, organizationId, userId]
     );
 
-    // Mark old token as replaced and revoke it (prevents reuse)
+    if (!rows.length) throw new AppError(401, "Invalid refresh token");
+    const rec = rows[0];
+
+    if (rec.family_id !== familyId) throw new AppError(401, "Invalid refresh token");
+    if (rec.token_hash !== sha256(token)) throw new AppError(401, "Invalid refresh token");
+    if (new Date(rec.expires_at).getTime() <= Date.now()) {
+      throw new AppError(401, "Refresh token expired");
+    }
+
+    // Reuse of an already-rotated token invalidates the entire token family.
+    if (rec.replaced_by_jti) {
+      await client.query(
+        `UPDATE refresh_tokens
+            SET revoked_at=COALESCE(revoked_at, now()),
+                revoke_reason=COALESCE(revoke_reason, 'refresh_token_reuse')
+          WHERE family_id=$1 AND organization_id=$2 AND user_id=$3`,
+        [familyId, organizationId, userId]
+      );
+      await client.query("COMMIT");
+      inTransaction = false;
+      throw new AppError(401, "Refresh token reuse detected");
+    }
+
+    if (rec.revoked_at) throw new AppError(401, "Refresh token revoked");
+
+    // Re-check account and organization membership at refresh time so disabling
+    // a user takes effect without waiting for the refresh token to expire.
+    const { rows: userRows } = await client.query(
+      `SELECT u.id, u.organization_id, u.email, u.status, u.is_system
+         FROM users u
+         JOIN user_organizations uo
+           ON uo.user_id=u.id AND uo.organization_id=$2
+        WHERE u.id=$1 AND u.organization_id=$2
+        FOR UPDATE OF u, uo`,
+      [userId, organizationId]
+    );
+
+    const user = userRows[0];
+    if (!user || user.is_system || user.status !== "active") {
+      await client.query(
+        `UPDATE refresh_tokens
+            SET revoked_at=COALESCE(revoked_at, now()),
+                revoke_reason=COALESCE(revoke_reason, 'account_inactive')
+          WHERE family_id=$1 AND organization_id=$2 AND user_id=$3`,
+        [familyId, organizationId, userId]
+      );
+      await client.query("COMMIT");
+      inTransaction = false;
+      throw new AppError(401, "Session is no longer active");
+    }
+
+    const next = signRefreshToken({
+      userId,
+      organizationId,
+      email: user.email,
+      familyId,
+    });
+
     await client.query(
+      `INSERT INTO refresh_tokens
+        (organization_id, user_id, family_id, token_jti, token_hash, expires_at, ip, user_agent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        organizationId,
+        userId,
+        next.familyId,
+        next.jti,
+        sha256(next.token),
+        next.expiresAt,
+        ip || null,
+        userAgent || null,
+      ]
+    );
+
+    const updated = await client.query(
       `UPDATE refresh_tokens
-          SET replaced_by_jti=$1, revoked_at=now()
-        WHERE token_jti=$2 AND organization_id=$3 AND user_id=$4 AND revoked_at IS NULL`,
+          SET replaced_by_jti=$1,
+              revoked_at=now(),
+              revoke_reason='rotated'
+        WHERE token_jti=$2
+          AND organization_id=$3
+          AND user_id=$4
+          AND revoked_at IS NULL
+          AND replaced_by_jti IS NULL`,
       [next.jti, jti, organizationId, userId]
     );
 
+    if (updated.rowCount !== 1) {
+      throw new AppError(409, "Refresh token rotation conflict");
+    }
+
     await client.query("COMMIT");
+    inTransaction = false;
+
+    const accessToken = signAccessToken({
+      userId,
+      organizationId,
+      email: user.email,
+    });
+
+    return {
+      accessToken,
+      refreshToken: next.token,
+      organizationId,
+      userId,
+      email: user.email,
+      familyId: next.familyId,
+    };
   } catch (e) {
-    await client.query("ROLLBACK");
+    if (inTransaction) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     throw e;
   } finally {
     client.release();
   }
-
-  const accessToken = signAccessToken({ userId, organizationId, email });
-
-  return { accessToken, refreshToken: next.token, organizationId, userId, email, familyId: next.familyId };
 }
 
 module.exports = {
@@ -259,8 +350,9 @@ module.exports = {
   persistRefreshToken,
   revokeRefreshTokenByJti,
   revokeRefreshTokenFamily, 
-   revokeAllRefreshTokensForUser,
-    revokeAllOtherRefreshTokens,
+  revokeAllRefreshTokensForUser,
+  revokeAllRefreshTokensAcrossOrganizations,
+  revokeAllOtherRefreshTokens,
   getActiveRefreshTokens,
   cleanupExpiredRefreshTokens,
   rotateRefreshToken

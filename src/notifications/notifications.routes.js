@@ -4,6 +4,7 @@ const { requirePermission } = require("../middleware/permission.middleware");
 const { writeAudit } = require("../core/foundation/audit-logs/audit.service");
 const { pool } = require("../db/pool");
 const { AppError } = require("../shared/errors/AppError");
+const { encryptSecret, decryptSecret } = require("../shared/security/secrets");
 
 const svc = require("./notifications.service");
 
@@ -81,26 +82,60 @@ router.get("/smtp", requirePermission("settings.read"), async (req, res, next) =
       `SELECT value_json FROM system_settings WHERE organization_id=$1 AND key='smtp' LIMIT 1`,
       [orgId]
     );
-    res.json(rows[0]?.value_json || null);
+    if (!rows.length) return res.json(null);
+
+    // Never return the SMTP credential. The UI only needs to know whether one exists.
+    const stored = rows[0].value_json || {};
+    const { appPassword, ...safe } = stored;
+    res.json({ ...safe, hasPassword: Boolean(appPassword) });
   } catch (e) { next(e); }
 });
 
 router.put("/smtp", requirePermission("settings.manage"), async (req, res, next) => {
+  let client = null;
   try {
+    client = await pool.connect();
     const orgId = req.user.organization_id;
-    const cfg = req.body || {};
-    // minimal validation for Gmail SMTP
-    if (!cfg.host) cfg.host = "smtp.gmail.com";
-    if (!cfg.port) cfg.port = 587;
+    const incoming = { ...(req.body || {}) };
+    await client.query("BEGIN");
+
+    const { rows: existingRows } = await client.query(
+      `SELECT value_json FROM system_settings WHERE organization_id=$1 AND key='smtp' LIMIT 1 FOR UPDATE`,
+      [orgId]
+    );
+    const existing = existingRows[0]?.value_json || {};
+
+    const cfg = {
+      host: String(incoming.host || "smtp.gmail.com").trim(),
+      port: Number(incoming.port || 587),
+      from: String(incoming.from || "").trim(),
+      username: String(incoming.username || "").trim(),
+    };
+
     if (!cfg.from) throw new AppError(400, "from required");
     if (!cfg.username) throw new AppError(400, "username required");
-    if (!cfg.appPassword) throw new AppError(400, "appPassword required");
+    if (!Number.isInteger(cfg.port) || cfg.port < 1 || cfg.port > 65535) {
+      throw new AppError(400, "port must be between 1 and 65535");
+    }
 
-    await pool.query(
+    const suppliedPassword = typeof incoming.appPassword === "string" ? incoming.appPassword.trim() : "";
+    const storedPassword = suppliedPassword
+      ? encryptSecret(suppliedPassword, { context: `smtp:${orgId}` })
+      : existing.appPassword;
+    if (!storedPassword) throw new AppError(400, "appPassword required");
+
+    // Opportunistically migrate a legacy plaintext credential even when the user
+    // edits only non-secret fields.
+    cfg.appPassword = encryptSecret(
+      decryptSecret(storedPassword, { context: `smtp:${orgId}`, allowPlaintextLegacy: true }),
+      { context: `smtp:${orgId}` }
+    );
+
+    await client.query(
       `INSERT INTO system_settings(organization_id, key, value_json)
        VALUES ($1,'smtp',$2::jsonb)
        ON CONFLICT (organization_id, key)
-       DO UPDATE SET value_json=EXCLUDED.value_json, updated_at=NOW()`,
+       DO UPDATE SET value_json=EXCLUDED.value_json`,
       [orgId, JSON.stringify(cfg)]
     );
 
@@ -109,14 +144,23 @@ router.put("/smtp", requirePermission("settings.manage"), async (req, res, next)
       actorUserId: req.user.id,
       action: "smtp.updated",
       entityType: "system_settings",
-      entityId: "smtp",
+      entityId: null,
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
-      after: { ...cfg, appPassword: "***" }
+      after: { host: cfg.host, port: cfg.port, from: cfg.from, username: cfg.username, hasPassword: true },
+      client,
     });
 
-    res.json({ ok: true });
-  } catch (e) { next(e); }
+    await client.query("COMMIT");
+    res.json({ ok: true, hasPassword: true });
+  } catch (e) {
+    if (client) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
+    next(e);
+  } finally {
+    if (client) client.release();
+  }
 });
 
 // SMTP test endpoint (configuration only). The repo does not ship an SMTP client dependency.
@@ -130,6 +174,10 @@ router.post("/smtp/test", requirePermission("settings.manage"), async (req, res,
       [orgId]
     );
     if (!rows.length) throw new AppError(409, "SMTP not configured");
+    const storedPassword = rows[0]?.value_json?.appPassword;
+    if (!storedPassword) throw new AppError(409, "SMTP password not configured");
+    // Ensure the stored credential can be decrypted without ever returning it.
+    decryptSecret(storedPassword, { context: `smtp:${orgId}`, allowPlaintextLegacy: true });
     // Return a placeholder response; integrate nodemailer or Gmail API in deployment.
     res.json({ ok: true, message: "SMTP configuration found. Test delivery is not executed in this build.", to });
   } catch (e) { next(e); }
