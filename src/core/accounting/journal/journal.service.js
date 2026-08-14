@@ -144,7 +144,12 @@ async function getWorkflowSettings(client, { orgId }) {
       notify_creator_on_rejection
     FROM document_workflow_statics
     WHERE organization_id = $1
-    ORDER BY updated_at DESC, created_at DESC
+      AND (entity_type = 'journal_entry' OR entity_type IS NULL)
+    ORDER BY
+      CASE WHEN entity_type = 'journal_entry' THEN 0 ELSE 1 END,
+      CASE WHEN document_type_id IS NOT NULL THEN 0 ELSE 1 END,
+      updated_at DESC,
+      created_at DESC
     LIMIT 1
     `,
     [orgId]
@@ -322,6 +327,9 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
       INSERT INTO journal_entries
         (organization_id, journal_entry_type_id, period_id, entry_date, memo, status, idempotency_key, created_by, updated_by)
       VALUES ($1,$2,$3,$4,$5,'draft',$6,$7,$7)
+      ON CONFLICT (organization_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+      DO NOTHING
       RETURNING id, status
       `,
       [
@@ -334,6 +342,20 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
         actorUserId
       ]
     );
+
+    // Concurrent callers can both pass the initial lookup. The unique partial
+    // index serializes the insert; the loser resolves to the committed journal
+    // instead of surfacing a unique-violation/500 to the client.
+    if (!jRows.length && payload.idempotencyKey) {
+      const { rows: raced } = await client.query(
+        `SELECT id, status FROM journal_entries WHERE organization_id=$1 AND idempotency_key=$2`,
+        [orgId, payload.idempotencyKey]
+      );
+      if (!raced.length) throw new AppError(409, "Idempotent journal creation conflicted; retry request");
+      if (managesTx) await client.query("COMMIT");
+      return { journalId: raced[0].id, status: raced[0].status, idempotent: true };
+    }
+
     const journalId = jRows[0].id;
 
     for (let i = 0; i < preparedLines.length; i++) {
@@ -936,7 +958,10 @@ async function assertJournalApprovalStateAllowsPost({ orgId, journal, client }) 
 }
 async function getJournalWithLines({ orgId, journalId }) {
   const { rows: j } = await pool.query(
-    `SELECT * FROM journal_entries WHERE organization_id=$1 AND id=$2`,
+    `SELECT je.*, o.base_currency_code
+       FROM journal_entries je
+       JOIN organizations o ON o.id=je.organization_id
+      WHERE je.organization_id=$1 AND je.id=$2`,
     [orgId, journalId]
   );
   if (!j.length) throw new AppError(404, "Journal not found");
@@ -951,7 +976,23 @@ async function getJournalWithLines({ orgId, journalId }) {
     [orgId, journalId]
   );
 
-  return { journal: j[0], lines };
+  const approvalContext = await documentableSvc.getApprovalContext({
+    orgId,
+    entityType: "journal_entry",
+    client: null
+  });
+  const rules = approvalContext.rules || {};
+
+  return {
+    journal: j[0],
+    lines,
+    workflow: {
+      approvalRequired: Boolean(approvalContext.approvalRequired),
+      creatorCanApprove: Boolean(rules.creator_can_approve || rules.allow_self_approval),
+      creatorCanPost: Boolean(rules.creator_can_post),
+      requireCommentOnRejection: rules.require_comment_on_rejection !== false
+    }
+  };
 }
 
 async function assertEditableJournal(client, { orgId, journalId }) {

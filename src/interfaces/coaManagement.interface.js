@@ -17,6 +17,10 @@ async function getAccount({ orgId, accountId }) {
   return coaSvc.getAccount({ orgId, accountId });
 }
 
+async function getAccountReport({ orgId, accountId, months }) {
+  return coaSvc.getAccountReport({ orgId, accountId, months });
+}
+
 async function updateAccount({ orgId, accountId, payload }) {
   return coaSvc.updateAccount({ orgId, accountId, payload });
 }
@@ -29,6 +33,7 @@ module.exports = {
   createAccount,
   listAccounts,
   getAccount,
+  getAccountReport,
   updateAccount,
   archiveAccount
 };

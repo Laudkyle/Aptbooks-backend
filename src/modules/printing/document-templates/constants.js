@@ -53,6 +53,7 @@ const PRESET_TEMPLATE_LIBRARY = [
 ];
 
 const SUPPORTED_TRANSACTION_ENTITY_TYPES = [
+  "journal_entry",
   "invoice",
   "bill",
   "receipt",

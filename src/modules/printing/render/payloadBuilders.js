@@ -1,6 +1,7 @@
 const { pool } = require('../../../db/pool');
 const { AppError } = require('../../../shared/errors/AppError');
 const opsRepo = require('../../transactions/_shared/opsDocs.repository');
+const { parseDecimalToBigInt, bigIntToDecimalString } = require('../../../shared/utils/money');
 
 function addressFromJson(addressJson) {
   if (!addressJson) return null;
@@ -531,6 +532,73 @@ async function buildDebitNotePayload({ orgId, documentId }) {
   }});
 }
 
+
+async function buildJournalPayload({ orgId, documentId }) {
+  const { rows } = await pool.query(
+    `SELECT je.*, jet.code AS journal_type_code
+       FROM journal_entries je
+       LEFT JOIN journal_entry_types jet ON jet.id=je.journal_entry_type_id
+      WHERE je.organization_id=$1 AND je.id=$2
+      LIMIT 1`,
+    [orgId, documentId]
+  );
+  if (!rows.length) throw new AppError(404, 'Journal entry not found');
+  const doc = rows[0];
+  const { rows: lines } = await pool.query(
+    `SELECT jel.*, coa.code AS account_code, coa.name AS account_name
+       FROM journal_entry_lines jel
+       JOIN chart_of_accounts coa
+         ON coa.id=jel.account_id AND coa.organization_id=$1
+      WHERE jel.journal_entry_id=$2
+      ORDER BY jel.line_no`,
+    [orgId, documentId]
+  );
+  const organization = await getOrganization(orgId);
+  const debitTotalCents = lines.reduce((sum, line) => sum + (parseDecimalToBigInt(line.debit || 0, 2) > 0n ? parseDecimalToBigInt(line.amount_base || 0, 2) : 0n), 0n);
+  const creditTotalCents = lines.reduce((sum, line) => sum + (parseDecimalToBigInt(line.credit || 0, 2) > 0n ? parseDecimalToBigInt(line.amount_base || 0, 2) : 0n), 0n);
+  const debitTotal = bigIntToDecimalString(debitTotalCents, 2);
+  const creditTotal = bigIntToDecimalString(creditTotalCents, 2);
+  const difference = bigIntToDecimalString(debitTotalCents >= creditTotalCents ? debitTotalCents - creditTotalCents : creditTotalCents - debitTotalCents, 2);
+  const payload = {
+    organization,
+    meta: makeMeta({
+      entityType: 'journal_entry',
+      documentNo: doc.entry_no || doc.id,
+      documentDate: doc.entry_date,
+      status: doc.status,
+      reference: doc.journal_type_code || null,
+      currencyCode: organization.base_currency_code,
+      workflowStatus: doc.status
+    }),
+    counterparty: null,
+    summary: {
+      subtotal: debitTotal,
+      total: debitTotal,
+      debitTotal,
+      creditTotal,
+      balanced: debitTotalCents === creditTotalCents,
+      difference,
+      memo: doc.memo || null
+    },
+    lines: lines.map((line, idx) => ({
+      lineId: line.id,
+      lineNo: line.line_no || idx + 1,
+      accountId: line.account_id,
+      accountCode: line.account_code,
+      accountName: line.account_name,
+      description: line.description || null,
+      debit: parseDecimalToBigInt(line.debit || 0, 2) > 0n ? String(line.amount_base || '0.00') : '0.00',
+      credit: parseDecimalToBigInt(line.credit || 0, 2) > 0n ? String(line.amount_base || '0.00') : '0.00',
+      transactionDebit: String(line.debit || '0.00'),
+      transactionCredit: String(line.credit || '0.00'),
+      currencyCode: line.currency_code || organization.base_currency_code,
+      fxRate: line.fx_rate == null ? null : String(line.fx_rate),
+      amountBase: String(line.amount_base || '0.00')
+    }))
+  };
+  return attachSignatureBlocks({ orgId, row: doc, payload });
+}
+
 const OPS_MODULE_MAP = {
   quotation: 'quotations',
   sales_order: 'sales_orders',
@@ -563,6 +631,7 @@ async function buildOpsDocPayload({ orgId, documentId, entityType }) {
 
 async function buildPayload({ orgId, entityType, documentId }) {
   switch (entityType) {
+    case 'journal_entry': return buildJournalPayload({ orgId, documentId });
     case 'invoice': return buildInvoicePayload({ orgId, documentId });
     case 'bill': return buildBillPayload({ orgId, documentId });
     case 'receipt': return buildCustomerReceiptPayload({ orgId, documentId });

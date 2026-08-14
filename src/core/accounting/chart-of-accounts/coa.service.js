@@ -1,6 +1,7 @@
 const { pool } = require("../../../db/pool");
 const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 const { AppError } = require("../../../shared/errors/AppError");
+const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 
 async function getAccountTypeIdByCode(code) {
   const { rows } = await pool.query(`SELECT id FROM account_types WHERE code=$1`, [code]);
@@ -183,4 +184,121 @@ async function archiveAccount({ orgId, accountId, actorUserId }) {
   return { id: accountId, before: beforeRows[0], after: afterRows[0] };
 }
 
-module.exports = { createAccount, listAccounts, getAccount, updateAccount, archiveAccount };
+
+async function getAccountReport({ orgId, accountId, months = 6 }) {
+  const monthCount = Math.max(3, Math.min(Number.parseInt(String(months || 6), 10) || 6, 12));
+  const { rows: accounts } = await pool.query(
+    `SELECT coa.id, coa.code, coa.name, at.code AS account_type_code, at.normal_balance,
+            o.base_currency_code
+       FROM chart_of_accounts coa
+       JOIN account_types at ON at.id=coa.account_type_id
+       JOIN organizations o ON o.id=coa.organization_id
+      WHERE coa.organization_id=$1 AND coa.id=$2
+      LIMIT 1`,
+    [orgId, accountId]
+  );
+  if (!accounts.length) throw new AppError(404, "Account not found");
+  const account = accounts[0];
+
+  const { rows: summaryRows } = await pool.query(
+    `SELECT
+       COALESCE(SUM(CASE WHEN jel.debit > 0 THEN jel.amount_base ELSE 0 END),0)::NUMERIC(18,2) AS debit_total,
+       COALESCE(SUM(CASE WHEN jel.credit > 0 THEN jel.amount_base ELSE 0 END),0)::NUMERIC(18,2) AS credit_total,
+       COUNT(DISTINCT je.id)::BIGINT AS journal_count,
+       MAX(je.entry_date) AS last_activity_date
+     FROM journal_entry_lines jel
+     JOIN journal_entries je ON je.id=jel.journal_entry_id
+     WHERE je.organization_id=$1
+       AND jel.account_id=$2
+       AND je.status IN ('posted','voided')`,
+    [orgId, accountId]
+  );
+  const summary = summaryRows[0];
+
+  const { rows: trend } = await pool.query(
+    `WITH month_series AS (
+       SELECT generate_series(
+         date_trunc('month', CURRENT_DATE) - (($3::int - 1) * interval '1 month'),
+         date_trunc('month', CURRENT_DATE),
+         interval '1 month'
+       )::date AS month_start
+     ), activity AS (
+       SELECT date_trunc('month', je.entry_date)::date AS month_start,
+              SUM(CASE WHEN jel.debit > 0 THEN jel.amount_base ELSE 0 END)::NUMERIC(18,2) AS debit_total,
+              SUM(CASE WHEN jel.credit > 0 THEN jel.amount_base ELSE 0 END)::NUMERIC(18,2) AS credit_total,
+              COUNT(DISTINCT je.id)::BIGINT AS journal_count
+         FROM journal_entry_lines jel
+         JOIN journal_entries je ON je.id=jel.journal_entry_id
+        WHERE je.organization_id=$1
+          AND jel.account_id=$2
+          AND je.status IN ('posted','voided')
+          AND je.entry_date >= date_trunc('month', CURRENT_DATE) - (($3::int - 1) * interval '1 month')
+        GROUP BY 1
+     )
+     SELECT ms.month_start,
+            TO_CHAR(ms.month_start, 'Mon') AS month_label,
+            COALESCE(a.debit_total,0)::NUMERIC(18,2) AS debit_total,
+            COALESCE(a.credit_total,0)::NUMERIC(18,2) AS credit_total,
+            CASE WHEN $4='credit'
+              THEN (COALESCE(a.credit_total,0)-COALESCE(a.debit_total,0))::NUMERIC(18,2)
+              ELSE (COALESCE(a.debit_total,0)-COALESCE(a.credit_total,0))::NUMERIC(18,2)
+            END AS net_movement,
+            COALESCE(a.journal_count,0)::BIGINT AS journal_count
+       FROM month_series ms
+       LEFT JOIN activity a ON a.month_start=ms.month_start
+      ORDER BY ms.month_start`,
+    [orgId, accountId, monthCount, account.normal_balance]
+  );
+
+  const { rows: recent } = await pool.query(
+    `SELECT je.id AS journal_id, je.entry_no, je.entry_date, je.status,
+            jel.line_no, jel.description,
+            CASE WHEN jel.debit > 0 THEN jel.amount_base ELSE 0 END::NUMERIC(18,2) AS debit,
+            CASE WHEN jel.credit > 0 THEN jel.amount_base ELSE 0 END::NUMERIC(18,2) AS credit,
+            CASE WHEN $3='credit'
+              THEN (CASE WHEN jel.credit > 0 THEN jel.amount_base ELSE 0 END) - (CASE WHEN jel.debit > 0 THEN jel.amount_base ELSE 0 END)
+              ELSE (CASE WHEN jel.debit > 0 THEN jel.amount_base ELSE 0 END) - (CASE WHEN jel.credit > 0 THEN jel.amount_base ELSE 0 END)
+            END::NUMERIC(18,2) AS natural_movement
+       FROM journal_entry_lines jel
+       JOIN journal_entries je ON je.id=jel.journal_entry_id
+      WHERE je.organization_id=$1
+        AND jel.account_id=$2
+        AND je.status IN ('posted','voided')
+      ORDER BY je.entry_date DESC, je.created_at DESC, jel.line_no DESC
+      LIMIT 8`,
+    [orgId, accountId, account.normal_balance]
+  );
+
+  const debitCents = parseDecimalToBigInt(summary.debit_total || 0, 2);
+  const creditCents = parseDecimalToBigInt(summary.credit_total || 0, 2);
+  const naturalBalanceCents = account.normal_balance === 'credit' ? creditCents - debitCents : debitCents - creditCents;
+  const periodDebitCents = trend.reduce((sum, row) => sum + parseDecimalToBigInt(row.debit_total || 0, 2), 0n);
+  const periodCreditCents = trend.reduce((sum, row) => sum + parseDecimalToBigInt(row.credit_total || 0, 2), 0n);
+  const periodNetCents = trend.reduce((sum, row) => sum + parseDecimalToBigInt(row.net_movement || 0, 2), 0n);
+
+  return {
+    account: {
+      id: account.id,
+      code: account.code,
+      name: account.name,
+      accountTypeCode: account.account_type_code,
+      normalBalance: account.normal_balance,
+      currencyCode: account.base_currency_code
+    },
+    summary: {
+      currentBalance: bigIntToDecimalString(naturalBalanceCents, 2),
+      debitTotal: bigIntToDecimalString(debitCents, 2),
+      creditTotal: bigIntToDecimalString(creditCents, 2),
+      journalCount: Number(summary.journal_count || 0),
+      lastActivityDate: summary.last_activity_date || null,
+      periodDebit: bigIntToDecimalString(periodDebitCents, 2),
+      periodCredit: bigIntToDecimalString(periodCreditCents, 2),
+      periodNet: bigIntToDecimalString(periodNetCents, 2),
+      months: monthCount
+    },
+    trend,
+    recent
+  };
+}
+
+module.exports = { createAccount, listAccounts, getAccount, getAccountReport, updateAccount, archiveAccount };

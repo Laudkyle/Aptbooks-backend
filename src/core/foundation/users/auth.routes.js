@@ -413,7 +413,7 @@ router.post("/register", async (req, res, next) => {
 
     // 1) Create org
     const { rows: orgRows } = await client.query(
-      `INSERT INTO organizations(name, base_currency_code) VALUES ($1,$2) RETURNING id, name, base_currency_code`,
+      `INSERT INTO organizations(name, base_currency_code, onboarding_required) VALUES ($1,$2,TRUE) RETURNING id, name, base_currency_code, onboarding_required`,
       [organizationName, currencyCode],
     );
     const org = orgRows[0];

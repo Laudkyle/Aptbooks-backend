@@ -357,7 +357,7 @@ async function initializeOrganizationDefaults({
   };
 
   const ensureInventoryCostMethodDefault = async (orgId) => {
-    await upsertSystemSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_VERAGE", locked: false });
+    await upsertSystemSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_AVERAGE", locked: false });
   };
 
   const ensureInventoryMasterData = async ({

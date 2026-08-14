@@ -37,6 +37,17 @@ router.get("/", requirePermission("accounting.coa.read"), async (req, res, next)
   } catch (e) { next(e); }
 });
 
+router.get("/:id/report", requirePermission("accounting.coa.read"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    res.json(await coaAPI.getAccountReport({
+      orgId,
+      accountId: req.params.id,
+      months: req.query.months
+    }));
+  } catch (e) { next(e); }
+});
+
 router.get("/:id", requirePermission("accounting.coa.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

@@ -3,9 +3,32 @@ const { AppError } = require('../../../shared/errors/AppError');
 const templatesRepo = require('../document-templates/documentTemplates.repository');
 const templatesSvc = require('../document-templates/documentTemplates.service');
 const { buildPayload, samplePayload } = require('./payloadBuilders');
-const { renderClassic, renderModern, renderCompact, renderCorporate } = require('./htmlTemplates');
+const { renderClassic, renderModern, renderCompact, renderCorporate, renderJournalLedger } = require('./htmlTemplates');
 const { getDocumentable } = require('../../../workflow/documents/documentable.registry');
 const { withTransaction } = require('../../../db/tx');
+const { pool } = require('../../../db/pool');
+
+async function getPrintActor({ orgId, actorUserId }) {
+  const { rows } = await pool.query(
+    `SELECT email, first_name, last_name, full_name
+       FROM users
+      WHERE organization_id=$1 AND id=$2
+      LIMIT 1`,
+    [orgId, actorUserId]
+  );
+  const user = rows[0] || {};
+  const combined = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
+  const fullName = String(user.full_name || combined || '').trim();
+  if (fullName.length < 2) {
+    throw new AppError(409, 'Set your full name in your profile before printing documents');
+  }
+  return {
+    userId: actorUserId,
+    fullName,
+    email: user.email || null,
+    printedAt: new Date().toISOString()
+  };
+}
 
 function resolveRenderer(baseTemplateKey) {
   switch (baseTemplateKey) {
@@ -68,8 +91,9 @@ async function previewSample({ orgId, actorUserId, entityType, templateId = null
   if (!docInfo) throw new AppError(400, 'Unsupported entity type');
   const template = await resolveTemplate({ orgId, entityType, templateId });
   const payload = samplePayload(entityType);
-  const renderer = resolveRenderer(template.baseTemplateKey);
-  const html = renderer({ title: docInfo.documentTypeName, payload, layout: template.layoutConfig, branding: template.brandingConfig, fields: template.fieldConfig });
+  payload.printContext = await getPrintActor({ orgId, actorUserId });
+  const renderer = entityType === 'journal_entry' ? renderJournalLedger : resolveRenderer(template.baseTemplateKey);
+  const html = renderer({ title: docInfo.documentTypeName, payload, layout: template.layoutConfig, branding: template.brandingConfig, fields: template.fieldConfig, themeKey: template.baseTemplateKey });
   await withTransaction(async (client) => templatesRepo.insertRenderLog(client, {
     orgId,
     entityType,
@@ -86,8 +110,9 @@ async function renderDocument({ orgId, actorUserId, entityType, documentId, temp
   if (!docInfo) throw new AppError(400, 'Unsupported entity type');
   const template = await resolveTemplate({ orgId, entityType, templateId });
   const payload = await buildPayload({ orgId, entityType, documentId });
-  const renderer = resolveRenderer(template.baseTemplateKey);
-  const html = renderer({ title: docInfo.documentTypeName, payload, layout: template.layoutConfig, branding: template.brandingConfig, fields: template.fieldConfig });
+  payload.printContext = await getPrintActor({ orgId, actorUserId });
+  const renderer = entityType === 'journal_entry' ? renderJournalLedger : resolveRenderer(template.baseTemplateKey);
+  const html = renderer({ title: docInfo.documentTypeName, payload, layout: template.layoutConfig, branding: template.brandingConfig, fields: template.fieldConfig, themeKey: template.baseTemplateKey });
   await withTransaction(async (client) => templatesRepo.insertRenderLog(client, {
     orgId,
     entityType,
