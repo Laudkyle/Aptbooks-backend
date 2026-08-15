@@ -131,9 +131,9 @@ router.get("/me", async (req, res, next) => {
 
     const { rows: uRows } = await pool.query(
       `
-      SELECT id, organization_id, email, status, created_at, updated_at, first_name, last_name, full_name, phone
+      SELECT id, organization_id, email, status, created_at, updated_at, first_name, last_name, full_name, phone, two_factor_enabled
       FROM users
-      WHERE organization_id=$1 AND id=$2
+      WHERE organization_id=$1 AND id=$2 AND COALESCE(is_system,FALSE)=FALSE
       LIMIT 1
       `,
       [orgId, userId]
@@ -334,6 +334,8 @@ router.get("/", requirePermission("users.read"), async (req, res, next) => {
          FROM users u
     LEFT JOIN user_organizations uo ON uo.user_id = u.id AND uo.organization_id = u.organization_id
         WHERE u.organization_id=$1
+          AND COALESCE(u.is_system,FALSE)=FALSE
+          AND LOWER(u.email) <> 'system@aptbooks.local'
         ORDER BY u.created_at DESC`,
       [orgId]
     );
@@ -402,7 +404,7 @@ router.get("/:id", requirePermission("users.read"), async (req, res, next) => {
     const { rows: uRows } = await pool.query(
       `SELECT id, organization_id, email, status, first_name, last_name, phone, full_name, created_at, updated_at
        FROM users
-       WHERE organization_id=$1 AND id=$2
+       WHERE organization_id=$1 AND id=$2 AND COALESCE(is_system,FALSE)=FALSE
        LIMIT 1`,
       [orgId, userId]
     );

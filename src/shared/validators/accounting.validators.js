@@ -81,20 +81,33 @@ const coaUpdateSchema = z.object({
   status: z.enum(["active", "inactive"]).optional()
 }).refine(v => Object.keys(v).length > 0, "No fields provided");
 
+const journalDraftLineSchema = z.object({
+  accountId: uuid.nullable().optional(),
+  description: z.string().trim().max(300).optional().default(""),
+  debit: moneyAmount.optional(),
+  credit: moneyAmount.optional()
+}).superRefine((line, ctx) => {
+  let debit = 0n;
+  let credit = 0n;
+  try {
+    debit = amountToMinorUnits(line.debit);
+    credit = amountToMinorUnits(line.credit);
+  } catch (_err) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid amount", path: [] });
+    return;
+  }
+  if (debit > 0n && credit > 0n) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "A draft line cannot contain both debit and credit", path: [] });
+  }
+});
+
 const journalCreateSchema = z.object({
   periodId: uuid,
   entryDate: isoDate,
-  memo: z.string().trim().min(1, "Memo is required").max(500),
+  memo: z.string().trim().max(500).optional().default(""),
   idempotencyKey: z.string().max(120).optional(),
   typeCode: z.enum(["GENERAL", "ADJUSTMENT", "CLOSING"]).optional(),
-  lines: z.array(z.object({
-    accountId: uuid,
-    description: z.string().trim().min(1, "Line description is required").max(300),
-    debit: moneyAmount.optional(),
-    credit: moneyAmount.optional()
-  })).min(2)
-}).superRefine((v, ctx) => {
-  addLineBalanceIssues(v.lines, ctx);
+  lines: z.array(journalDraftLineSchema).max(500).optional().default([])
 });
 
 const voidSchema = z.object({
@@ -108,39 +121,29 @@ const journalHeaderUpdateSchema = z
   .object({
     periodId: uuid.optional(),
     entryDate: isoDate.optional(),
-    memo: z.string().trim().min(1, "Memo is required").max(500).optional(),
+    memo: z.string().trim().max(500).optional(),
     typeCode: z.enum(["GENERAL", "ADJUSTMENT", "CLOSING"]).optional()
   })
   .refine((v) => Object.keys(v).length > 0, "No fields provided");
 
-const journalLineSchema = z.object({
-  accountId: uuid,
-  description: z.string().trim().min(1, "Line description is required").max(300),
-  debit: moneyAmount.optional(),
-  credit: moneyAmount.optional()
+const journalLineSchema = journalDraftLineSchema;
+
+const journalLinesReplaceSchema = z.object({
+  lines: z.array(journalDraftLineSchema).max(500)
 });
 
-const journalLinesReplaceSchema = z
-  .object({
-    lines: z.array(journalLineSchema).min(2)
-  })
-  .superRefine((v, ctx) => {
-    addLineBalanceIssues(v.lines, ctx);
-  });
-
-const journalLineAddSchema = journalLineSchema;
+const journalLineAddSchema = journalDraftLineSchema;
 
 const journalLineUpdateSchema = z
   .object({
-    accountId: uuid.optional(),
-    description: z.string().trim().min(1, "Line description is required").max(300).optional(),
+    accountId: uuid.nullable().optional(),
+    description: z.string().trim().max(300).optional(),
     debit: moneyAmount.optional(),
     credit: moneyAmount.optional()
   })
   .refine((v) => Object.keys(v).length > 0, "No fields provided")
   .superRefine((v, ctx) => {
     if (v.debit === undefined && v.credit === undefined) return;
-
     let debit = 0n;
     let credit = 0n;
     try {
@@ -150,13 +153,8 @@ const journalLineUpdateSchema = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid amount", path: [] });
       return;
     }
-
-    if ((debit > 0n && credit > 0n) || (debit === 0n && credit === 0n)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Line must have either debit or credit",
-        path: []
-      });
+    if (debit > 0n && credit > 0n) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "A draft line cannot contain both debit and credit", path: [] });
     }
   });
 

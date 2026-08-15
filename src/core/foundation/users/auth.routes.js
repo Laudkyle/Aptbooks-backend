@@ -10,12 +10,10 @@ const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../audit-logs/audit.service");
-const { encryptSecret, decryptSecret, isEncryptedSecret } = require("../../../shared/security/secrets");
 const {
-  verifyTotp,
-  generateSecretBase32,
-  buildOtpauthUrl,
-} = require("../../../shared/security/totp");
+  issueEmailTwoFactorChallenge,
+  verifyEmailTwoFactorChallenge,
+} = require("./email2fa.service");
 const {
   signAccessToken,
   signRefreshToken,
@@ -121,7 +119,7 @@ router.post("/login", async (req, res, next) => {
     assertNotRateLimited(req, email);
 
     const { rows } = await pool.query(
-      `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled, two_factor_secret
+      `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled
          FROM users WHERE email=$1`,
       [email],
     );
@@ -175,38 +173,39 @@ router.post("/login", async (req, res, next) => {
       throw new AppError(401, "Invalid credentials");
     }
 
-    // 2FA check if enabled
+    // Email-based two-step verification. Password validation happens first;
+    // then a short-lived, one-time code is delivered to the user's email.
     if (user.two_factor_enabled) {
-      const otp = req.body?.otp;
-      if (!otp) throw new AppError(401, "2FA code required");
-      const storedSecret = user.two_factor_secret;
-      const secret = storedSecret
-        ? decryptSecret(storedSecret, { context: `totp:${user.organization_id}:${user.id}`, allowPlaintextLegacy: true })
-        : null;
-      if (!secret || !verifyTotp(secret, otp, { window: 1 })) {
+      const otp = String(req.body?.otp || '').trim();
+      const challengeId = String(req.body?.challengeId || '').trim();
+
+      if (!otp || !challengeId) {
+        const challenge = await issueEmailTwoFactorChallenge({
+          orgId: user.organization_id,
+          userId: user.id,
+          email,
+          purpose: 'login',
+        });
+        return res.status(202).json({ twoFactorRequired: true, ...challenge });
+      }
+
+      try {
+        await verifyEmailTwoFactorChallenge({
+          orgId: user.organization_id,
+          userId: user.id,
+          challengeId,
+          code: otp,
+          purpose: 'login',
+        });
+      } catch (verificationError) {
         await pool
           .query(
             `INSERT INTO login_history(organization_id, user_id, email, success, ip, user_agent, failure_reason)
-           VALUES ($1,$2,$3,FALSE,$4,$5,$6)`,
-            [
-              user.organization_id,
-              user.id,
-              email,
-              req.audit?.ip || null,
-              req.audit?.userAgent || null,
-              "bad_2fa",
-            ],
+             VALUES ($1,$2,$3,FALSE,$4,$5,$6)`,
+            [user.organization_id, user.id, email, req.audit?.ip || null, req.audit?.userAgent || null, 'bad_2fa'],
           )
           .catch(() => {});
-        throw new AppError(401, "Invalid 2FA code");
-      }
-
-      // Opportunistically migrate legacy plaintext TOTP secrets after a valid OTP.
-      if (storedSecret && !isEncryptedSecret(storedSecret)) {
-        await pool.query(
-          `UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-          [user.organization_id, user.id, encryptSecret(secret, { context: `totp:${user.organization_id}:${user.id}` })],
-        );
+        throw verificationError;
       }
     }
 
@@ -278,7 +277,8 @@ router.post("/login", async (req, res, next) => {
   }
 });
 
-// 2FA enrollment (generate secret)
+// Email two-step verification enrollment. The enrollment call sends the code;
+// verification consumes it and enables the account-level requirement.
 router.post(
   "/2fa/enroll",
   require("../../../middleware/auth.middleware").authRequired,
@@ -287,28 +287,19 @@ router.post(
       const orgId = req.user.organization_id;
       const userId = req.user.id;
       const { rows } = await pool.query(
-        `SELECT email, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`,
+        `SELECT email, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2 AND COALESCE(is_system,FALSE)=FALSE`,
         [orgId, userId],
       );
       if (!rows.length) throw new AppError(404, "User not found");
-      if (rows[0].two_factor_enabled)
-        throw new AppError(409, "2FA already enabled");
-      const secret = generateSecretBase32();
-      const issuer = env.APP_NAME || "ERP";
-      const otpauth = buildOtpauthUrl({ issuer, email: rows[0].email, secret });
-      // store as pending secret (two_factor_secret) until enabled
-      await pool.query(
-        `UPDATE users SET two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-        [orgId, userId, encryptSecret(secret, { context: `totp:${orgId}:${userId}` })],
-      );
-      res.json({ secret, otpauth });
+      if (rows[0].two_factor_enabled) throw new AppError(409, "Two-step verification already enabled");
+      const challenge = await issueEmailTwoFactorChallenge({ orgId, userId, email: rows[0].email, purpose: 'enable' });
+      res.json({ twoFactorRequired: true, ...challenge });
     } catch (e) {
       next(e);
     }
   },
 );
 
-// 2FA enable (verify TOTP)
 router.post(
   "/2fa/verify",
   require("../../../middleware/auth.middleware").authRequired,
@@ -316,34 +307,50 @@ router.post(
     try {
       const orgId = req.user.organization_id;
       const userId = req.user.id;
-      const otp = req.body?.otp;
-      if (!otp) throw new AppError(400, "otp required");
+      const otp = String(req.body?.otp || '').trim();
+      const challengeId = String(req.body?.challengeId || '').trim();
       const { rows } = await pool.query(
-        `SELECT two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`,
+        `SELECT two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2 AND COALESCE(is_system,FALSE)=FALSE`,
         [orgId, userId],
       );
       if (!rows.length) throw new AppError(404, "User not found");
-      if (rows[0].two_factor_enabled)
-        throw new AppError(409, "2FA already enabled");
-      if (!rows[0].two_factor_secret) throw new AppError(409, "Enroll first");
-      const secret = decryptSecret(rows[0].two_factor_secret, {
-        context: `totp:${orgId}:${userId}`,
-        allowPlaintextLegacy: true,
-      });
-      if (!verifyTotp(secret, otp, { window: 1 }))
-        throw new AppError(400, "Invalid otp");
+      if (rows[0].two_factor_enabled) throw new AppError(409, "Two-step verification already enabled");
+      await verifyEmailTwoFactorChallenge({ orgId, userId, challengeId, code: otp, purpose: 'enable' });
       await pool.query(
-        `UPDATE users SET two_factor_enabled=TRUE, two_factor_secret=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
-        [orgId, userId, encryptSecret(secret, { context: `totp:${orgId}:${userId}` })],
+        `UPDATE users SET two_factor_enabled=TRUE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
+        [orgId, userId],
       );
-      res.json({ ok: true });
+      res.json({ ok: true, method: 'email' });
     } catch (e) {
       next(e);
     }
   },
 );
 
-// 2FA disable (verify password + TOTP)
+router.post(
+  "/2fa/disable/request",
+  require("../../../middleware/auth.middleware").authRequired,
+  async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const userId = req.user.id;
+      const password = req.body?.password;
+      if (!password) throw new AppError(400, "password required");
+      const { rows } = await pool.query(
+        `SELECT email, password_hash, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2 AND COALESCE(is_system,FALSE)=FALSE`,
+        [orgId, userId],
+      );
+      if (!rows.length) throw new AppError(404, "User not found");
+      if (!rows[0].two_factor_enabled) throw new AppError(409, "Two-step verification not enabled");
+      if (!(await bcrypt.compare(password, rows[0].password_hash))) throw new AppError(401, "Invalid credentials");
+      const challenge = await issueEmailTwoFactorChallenge({ orgId, userId, email: rows[0].email, purpose: 'disable' });
+      res.json({ twoFactorRequired: true, ...challenge });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
+
 router.post(
   "/2fa/disable",
   require("../../../middleware/auth.middleware").authRequired,
@@ -352,24 +359,17 @@ router.post(
       const orgId = req.user.organization_id;
       const userId = req.user.id;
       const password = req.body?.password;
-      const otp = req.body?.otp;
-      if (!password || !otp)
-        throw new AppError(400, "password and otp required");
+      const otp = String(req.body?.otp || '').trim();
+      const challengeId = String(req.body?.challengeId || '').trim();
+      if (!password || !otp || !challengeId) throw new AppError(400, "password, challengeId and otp required");
       const { rows } = await pool.query(
-        `SELECT password_hash, two_factor_secret, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2`,
+        `SELECT password_hash, two_factor_enabled FROM users WHERE organization_id=$1 AND id=$2 AND COALESCE(is_system,FALSE)=FALSE`,
         [orgId, userId],
       );
       if (!rows.length) throw new AppError(404, "User not found");
-      if (!rows[0].two_factor_enabled)
-        throw new AppError(409, "2FA not enabled");
-      const ok = await bcrypt.compare(password, rows[0].password_hash);
-      if (!ok) throw new AppError(401, "Invalid credentials");
-      const secret = decryptSecret(rows[0].two_factor_secret, {
-        context: `totp:${orgId}:${userId}`,
-        allowPlaintextLegacy: true,
-      });
-      if (!verifyTotp(secret, otp, { window: 1 }))
-        throw new AppError(400, "Invalid otp");
+      if (!rows[0].two_factor_enabled) throw new AppError(409, "Two-step verification not enabled");
+      if (!(await bcrypt.compare(password, rows[0].password_hash))) throw new AppError(401, "Invalid credentials");
+      await verifyEmailTwoFactorChallenge({ orgId, userId, challengeId, code: otp, purpose: 'disable' });
       await pool.query(
         `UPDATE users SET two_factor_enabled=FALSE, two_factor_secret=NULL, updated_at=NOW() WHERE organization_id=$1 AND id=$2`,
         [orgId, userId],

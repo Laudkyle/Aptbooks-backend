@@ -219,27 +219,27 @@ async function validateAccountIsUsable(client, { orgId, accountId }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
 }
 
-async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency, payloadRateTypeCode = "SPOT", requireBalanced = true }) {
+async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency, payloadRateTypeCode = "SPOT", requireBalanced = false }) {
   const preparedLines = [];
 
   for (const l of lines || []) {
-    await validateAccountIsUsable(client, { orgId, accountId: l.accountId });
+    const accountId = l.accountId || null;
+    if (accountId) await validateAccountIsUsable(client, { orgId, accountId });
 
     const currencyCode = String(l.currencyCode || l.currency_code || baseCurrency).toUpperCase();
     const debitCents = parseDecimalToBigInt(l.debit || 0, 2);
     const creditCents = parseDecimalToBigInt(l.credit || 0, 2);
 
-    if ((debitCents > 0n && creditCents > 0n) || (debitCents === 0n && creditCents === 0n)) {
-      throw new AppError(400, "Each journal line must have either debit or credit");
+    if (debitCents > 0n && creditCents > 0n) {
+      throw new AppError(400, "A draft line cannot contain both debit and credit");
     }
 
     const amountCents = debitCents > 0n ? debitCents : creditCents;
-
     let rateMicro = 1000000n;
     if (currencyCode !== baseCurrency) {
       if (l.fxRate != null) {
         rateMicro = parseRateToMicro(l.fxRate);
-      } else {
+      } else if (amountCents > 0n) {
         rateMicro = await lookupFxRateMicro(client, {
           orgId,
           rateTypeCode: l.rateTypeCode || payloadRateTypeCode || "SPOT",
@@ -250,13 +250,16 @@ async function prepareDraftLines(client, { orgId, entryDate, lines, baseCurrency
       }
     }
 
-    const amountBaseCents =
-      currencyCode === baseCurrency
+    const amountBaseCents = amountCents === 0n
+      ? 0n
+      : currencyCode === baseCurrency
         ? amountCents
         : computeBaseCents({ amountCents, rateMicro });
 
     preparedLines.push({
       ...l,
+      accountId,
+      description: String(l.description || '').trim(),
       currencyCode,
       fxRateMicro: rateMicro,
       amountBaseCents,
@@ -320,6 +323,7 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
       lines: payload.lines || [],
       baseCurrency,
       payloadRateTypeCode: payload.rateTypeCode || "SPOT",
+      requireBalanced: false,
     });
 
     const { rows: jRows } = await client.query(
@@ -441,6 +445,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
     const period = await getPeriodForUpdate(client, orgId, journal.period_id);
     if (period.status !== "open") throw new AppError(409, "Period not open");
     assertEntryDateWithinPeriod(journal.entry_date, period);
+
+    const { rows: draftLines } = await client.query(
+      `SELECT * FROM journal_entry_lines WHERE journal_entry_id=$1 ORDER BY line_no`,
+      [journalId]
+    );
+    await assertJournalReadyForSubmission(client, { orgId, lines: draftLines });
 
     const { rows: lines } = await client.query(
       `
@@ -958,9 +968,10 @@ async function assertJournalApprovalStateAllowsPost({ orgId, journal, client }) 
 }
 async function getJournalWithLines({ orgId, journalId }) {
   const { rows: j } = await pool.query(
-    `SELECT je.*, o.base_currency_code
+    `SELECT je.*, o.base_currency_code, jet.code AS type_code
        FROM journal_entries je
        JOIN organizations o ON o.id=je.organization_id
+  LEFT JOIN journal_entry_types jet ON jet.id=je.journal_entry_type_id
       WHERE je.organization_id=$1 AND je.id=$2`,
     [orgId, journalId]
   );
@@ -969,7 +980,7 @@ async function getJournalWithLines({ orgId, journalId }) {
   const { rows: lines } = await pool.query(
     `SELECT jel.*, coa.code AS account_code, coa.name AS account_name
        FROM journal_entry_lines jel
-       JOIN chart_of_accounts coa
+  LEFT JOIN chart_of_accounts coa
          ON coa.id=jel.account_id AND coa.organization_id=$1
       WHERE jel.journal_entry_id=$2
       ORDER BY jel.line_no`,
@@ -1086,7 +1097,7 @@ async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
   }
 }
 
-async function replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced = true }) {
+async function replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced = false }) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -1171,6 +1182,21 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines, require
   }
 }
 
+async function assertJournalReadyForSubmission(client, { orgId, lines }) {
+  if (lines.length < 2) throw new AppError(400, "Journal must contain at least two lines before submission");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.account_id) throw new AppError(400, `Line ${i + 1} needs an account before submission`);
+    if (!String(line.description || '').trim()) throw new AppError(400, `Line ${i + 1} needs a description before submission`);
+    const debit = parseDecimalToBigInt(line.debit || 0, 2);
+    const credit = parseDecimalToBigInt(line.credit || 0, 2);
+    if ((debit > 0n && credit > 0n) || (debit === 0n && credit === 0n)) {
+      throw new AppError(400, `Line ${i + 1} must contain either a debit or a credit before submission`);
+    }
+    await validateAccountIsUsable(client, { orgId, accountId: line.account_id });
+  }
+}
+
 async function submitDraftJournal({ orgId, journalId, actorUserId }) {
   const client = await pool.connect();
   try {
@@ -1188,8 +1214,8 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
     if (period.status !== "open") throw new AppError(409, "Period not open");
     assertEntryDateWithinPeriod(j.entry_date, period);
 
+    await assertJournalReadyForSubmission(client, { orgId, lines: snapshot.lines });
     const totals = sum2(snapshot.lines);
-    if (snapshot.lines.length < 2) throw new AppError(400, "Journal must contain at least two lines before submission");
     if (totals.debit !== totals.credit) throw new AppError(400, "Journal not balanced");
 
     await documentableSvc.submitEntityForApproval({

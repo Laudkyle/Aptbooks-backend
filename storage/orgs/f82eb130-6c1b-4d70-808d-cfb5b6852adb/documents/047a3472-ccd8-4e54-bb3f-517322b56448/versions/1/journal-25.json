@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "entity_type": "journal_entry",
+  "entity_id": "cc40ef95-3444-4269-a84d-d61e97d45056",
+  "snapshot_at": "2026-08-14T17:09:43.872Z",
+  "header": {
+    "id": "cc40ef95-3444-4269-a84d-d61e97d45056",
+    "organization_id": "f82eb130-6c1b-4d70-808d-cfb5b6852adb",
+    "entry_no": "25",
+    "journal_entry_type_id": "909b7a5f-d80f-419a-aef2-fee5b24f143b",
+    "period_id": "53ac6c32-3fa6-4631-b992-931a345bce08",
+    "entry_date": "2026-08-14T00:00:00.000Z",
+    "memo": "lnm,mhhlkj",
+    "status": "draft",
+    "posted_at": null,
+    "posted_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "idempotency_key": null,
+    "created_at": "2026-08-14T17:09:40.599Z",
+    "updated_at": "2026-08-14T17:09:40.599Z",
+    "created_by": "c0c19b78-c862-4335-b76c-83edf17dabba",
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "canceled_at": null,
+    "canceled_by": null,
+    "workflow_document_id": null,
+    "updated_by": "c0c19b78-c862-4335-b76c-83edf17dabba"
+  },
+  "lines": [
+    {
+      "id": "6205f5c5-d1c9-4506-88a1-d3e84ff8feaa",
+      "journal_entry_id": "cc40ef95-3444-4269-a84d-d61e97d45056",
+      "line_no": 1,
+      "account_id": "51715594-f112-4062-853a-480ddc21f1ca",
+      "description": "fdsa",
+      "debit": "3334.00",
+      "credit": "0.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "3334.00"
+    },
+    {
+      "id": "6188c330-7fb1-4241-b6d3-7838c1304cc7",
+      "journal_entry_id": "cc40ef95-3444-4269-a84d-d61e97d45056",
+      "line_no": 2,
+      "account_id": "ab27abed-b660-4b65-92b7-3a040e1e5726",
+      "description": "fdsa",
+      "debit": "0.00",
+      "credit": "3334.00",
+      "currency_code": "GHS",
+      "fx_rate": "1.000000",
+      "amount_base": "3334.00"
+    }
+  ],
+  "totals": {
+    "debit_base": "3334.00",
+    "credit_base": "3334.00"
+  },
+  "meta": {
+    "status": "draft",
+    "period_id": "53ac6c32-3fa6-4631-b992-931a345bce08",
+    "entry_date": "2026-08-14T00:00:00.000Z"
+  }
+}

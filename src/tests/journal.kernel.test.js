@@ -47,8 +47,8 @@ afterAll(async () => {
   await pool.end();
 });
 
-test("rejects unbalanced journal", async () => {
-  const res = await request(app)
+test("persists an unbalanced draft but blocks submission", async () => {
+  const create = await request(app)
     .post("/core/accounting/journals")
     .set("Authorization", `Bearer ${token}`)
     .send({
@@ -61,7 +61,14 @@ test("rejects unbalanced journal", async () => {
         { accountId: revenueAccountId, description: "Revenue", credit: 90 }
       ]
     });
-  expect(res.status).toBe(400);
+  expect(create.status).toBe(201);
+  expect(create.body.status).toBe("draft");
+
+  const submit = await request(app)
+    .post(`/core/accounting/journals/${create.body.journalId}/submit`)
+    .set("Authorization", `Bearer ${token}`)
+    .send({});
+  expect(submit.status).toBe(400);
 });
 
 test("posts balanced journal and updates trial balance", async () => {

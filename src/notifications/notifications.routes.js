@@ -5,6 +5,7 @@ const { writeAudit } = require("../core/foundation/audit-logs/audit.service");
 const { pool } = require("../db/pool");
 const { AppError } = require("../shared/errors/AppError");
 const { encryptSecret, decryptSecret } = require("../shared/security/secrets");
+const { sendOrganizationEmail } = require("../shared/email/smtpMailer");
 
 const svc = require("./notifications.service");
 
@@ -163,23 +164,20 @@ router.put("/smtp", requirePermission("settings.manage"), async (req, res, next)
   }
 });
 
-// SMTP test endpoint (configuration only). The repo does not ship an SMTP client dependency.
+// SMTP test endpoint. Uses the same dependency-free SMTP transport as email verification.
 router.post("/smtp/test", requirePermission("settings.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const to = String(req.body?.to || "").trim();
     if (!to) throw new AppError(400, "to required");
-    const { rows } = await pool.query(
-      `SELECT value_json FROM system_settings WHERE organization_id=$1 AND key='smtp' LIMIT 1`,
-      [orgId]
-    );
-    if (!rows.length) throw new AppError(409, "SMTP not configured");
-    const storedPassword = rows[0]?.value_json?.appPassword;
-    if (!storedPassword) throw new AppError(409, "SMTP password not configured");
-    // Ensure the stored credential can be decrypted without ever returning it.
-    decryptSecret(storedPassword, { context: `smtp:${orgId}`, allowPlaintextLegacy: true });
-    // Return a placeholder response; integrate nodemailer or Gmail API in deployment.
-    res.json({ ok: true, message: "SMTP configuration found. Test delivery is not executed in this build.", to });
+    await sendOrganizationEmail({
+      orgId,
+      to,
+      subject: "AptBooks email delivery test",
+      text: "Your AptBooks SMTP configuration is working.",
+      html: '<div style="font-family:Arial,sans-serif"><h2>AptBooks email test</h2><p>Your SMTP configuration is working.</p></div>',
+    });
+    res.json({ ok: true, message: "Test email sent successfully.", to });
   } catch (e) { next(e); }
 });
 

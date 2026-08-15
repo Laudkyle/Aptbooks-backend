@@ -43,7 +43,7 @@ const env = {
 
   BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS || "12", 10),
 
-  // Application-managed encryption for secrets stored in the database (SMTP, TOTP, etc.).
+  // Application-managed encryption for secrets stored in the database (SMTP credentials, webhook secrets, etc.).
   // Production must set a distinct 32-byte key (hex or base64).
   APP_SECRETS_ENCRYPTION_KEY: process.env.APP_SECRETS_ENCRYPTION_KEY || "",
   // Public bootstrap / self-serve provisioning
