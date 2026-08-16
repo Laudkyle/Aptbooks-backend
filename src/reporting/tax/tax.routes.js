@@ -138,18 +138,12 @@ router.get('/recoverability', async (req, res, next) => {
     const orgId = getOrganizationId(req);
     const { from, to } = req.query;
     const data = await svc.taxTransactions({ orgId, fromDate: from, toDate: to, taxType: req.query.taxType || 'VAT' });
-    const rows = data.map((row) => {
-      const tax = new Decimal(String(row.signed_tax_amount || 0));
-      const pctRaw = row.recoverable_percent ?? 1;
-      const pct = new Decimal(String(pctRaw)).greaterThan(1) ? new Decimal(String(pctRaw)).div(100) : new Decimal(String(pctRaw));
-      const recoverable = tax.mul(pct).toDecimalPlaces(2);
-      return {
-        ...row,
-        recoverable_percent: pct.toString(),
-        recoverable_tax_amount: recoverable.toFixed(2),
-        non_recoverable_tax_amount: tax.minus(recoverable).toDecimalPlaces(2).toFixed(2)
-      };
-    });
+    const rows = data.map((row) => ({
+      ...row,
+      recoverable_tax_amount: row.signed_recoverable_amount,
+      non_recoverable_tax_amount: row.signed_nonrecoverable_amount,
+      recovery_basis: row.recovery_basis || 'not_applicable'
+    }));
     res.json({ data: rows });
   } catch (err) { next(err); }
 });
@@ -204,6 +198,14 @@ router.get('/ghana/vat-reconciliation', async (req, res, next) => {
     const orgId = getOrganizationId(req);
     const { from, to } = req.query;
     res.json({ data: await svc.ghanaVatReconciliation({ orgId, fromDate: from, toDate: to }) });
+  } catch (err) { next(err); }
+});
+
+router.get('/ghana/imported-services-summary', async (req, res, next) => {
+  try {
+    const orgId = getOrganizationId(req);
+    const { from, to } = req.query;
+    res.json({ data: await svc.importedServicesVatSummary({ orgId, fromDate: from, toDate: to }) });
   } catch (err) { next(err); }
 });
 

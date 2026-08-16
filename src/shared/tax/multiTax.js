@@ -1,8 +1,25 @@
 const { AppError } = require('../errors/AppError');
 const { determineTaxSelections } = require('./determination');
+const {
+  normalizeMoney,
+  normalizeRate,
+  addMoney,
+  computeTaxMoney,
+} = require('./taxMath');
+const { syncLineTaxDetailToLedger } = require('./taxLedger');
 
+const ALLOWED_DETAIL_TABLES = new Set([
+  'invoice_line_tax_details',
+  'bill_line_tax_details',
+  'credit_note_line_tax_details',
+  'debit_note_line_tax_details',
+  'operational_doc_line_tax_details',
+]);
+
+// Legacy compatibility for callers that still expect a JS number. Tax calculations
+// themselves never use this helper; they use fixed-point strings/BigInt in taxMath.
 function round2(n) {
-  return Number(Number(n || 0).toFixed(2));
+  return Number(normalizeMoney(n));
 }
 
 async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
@@ -20,7 +37,7 @@ async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
 
   const { rows: comps } = await client.query(
     `SELECT tcc.id, tcc.parent_tax_code_id, tcc.component_tax_code_id, tcc.sequence_no, tcc.rate_override,
-            tc.code, tc.name, tc.tax_type, tc.rate, tc.direction, tc.box_code, tc.status,
+            tc.id AS tax_code_id, tc.code, tc.name, tc.tax_type, tc.rate, tc.direction, tc.box_code, tc.status,
             tc.category_code, tc.tax_scope, tc.application_scope, tc.calculation_method, tc.exemption_reason_code, tc.exemption_reason,
             tc.reverse_charge, tc.recoverable_percent, tc.reporting_group, tc.posting_account_id, tc.metadata
        FROM tax_code_components tcc
@@ -33,37 +50,30 @@ async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
 }
 
 function computeTaxAmount({ taxableAmount, rate, calculationMethod = 'standard', explicitTaxAmount = null }) {
-  if (explicitTaxAmount != null) return round2(explicitTaxAmount);
-  if (!rate) return 0;
-  const numericRate = Number(rate || 0);
-  if (calculationMethod === 'inclusive') {
-    return round2(taxableAmount - (taxableAmount / (1 + numericRate)));
-  }
-  if (calculationMethod === 'deduction' || calculationMethod === 'withholding') {
-    return round2(taxableAmount * numericRate);
-  }
-  return round2(taxableAmount * numericRate);
+  return computeTaxMoney({ taxableAmount, rate, calculationMethod, explicitTaxAmount });
 }
 
-async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmount = 0 }) {
+async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmount = '0.00', context = {} }) {
   const bundle = await fetchTaxCodeBundle({ client, orgId, taxCodeId: selection.taxCodeId });
-  const taxableAmount = round2(selection.taxableAmount == null ? defaultTaxableAmount : selection.taxableAmount);
+  const taxableAmount = normalizeMoney(selection.taxableAmount == null ? defaultTaxableAmount : selection.taxableAmount);
 
   const shape = (taxCode, rate) => ({
     selectedTaxCodeId: bundle.code.id,
     sourceTaxCodeId: bundle.code.id,
     sourceRuleId: selection.sourceRuleId || null,
-    taxCodeId: taxCode.id,
+    taxCodeId: taxCode.id || taxCode.tax_code_id,
     taxCode: taxCode.code,
     taxCodeName: taxCode.name,
     taxType: taxCode.tax_type,
-    direction: taxCode.direction,
+    direction: taxCode.direction === 'both'
+      ? (context.transactionScope === 'purchases' ? 'input' : 'output')
+      : taxCode.direction,
     boxCode: taxCode.box_code,
-    rate,
+    rate: normalizeRate(rate),
     taxableAmount,
     taxScope: taxCode.tax_scope || null,
     categoryCode: taxCode.category_code || null,
-    recoverablePercent: selection.recoverablePercent == null ? Number(taxCode.recoverable_percent ?? 1) : Number(selection.recoverablePercent),
+    recoverablePercent: selection.recoverablePercent == null ? String(taxCode.recoverable_percent ?? 1) : String(selection.recoverablePercent),
     exemptionReasonCode: selection.exemptionReasonCode || taxCode.exemption_reason_code || null,
     exemptionReason: selection.exemptionReason || taxCode.exemption_reason || null,
     reverseCharge: selection.reverseCharge == null ? (taxCode.reverse_charge === true) : selection.reverseCharge === true,
@@ -72,9 +82,9 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
   });
 
   if (!bundle.code.is_compound || !bundle.components.length) {
-    const rate = selection.rateOverride == null ? Number(bundle.code.rate || 0) : Number(selection.rateOverride || 0);
+    const rate = selection.rateOverride == null ? bundle.code.rate || '0' : selection.rateOverride || '0';
     const component = shape(bundle.code, rate);
-    component.taxAmount = computeTaxAmount({ taxableAmount, rate, calculationMethod: bundle.code.calculation_method, explicitTaxAmount: selection.taxAmount });
+    component.taxAmount = computeTaxAmount({ taxableAmount, rate: component.rate, calculationMethod: bundle.code.calculation_method, explicitTaxAmount: selection.taxAmount });
     component.calculationMethod = bundle.code.calculation_method;
     return [component];
   }
@@ -84,82 +94,97 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
   }
 
   return bundle.components.map((componentTax) => {
-    const componentBaseRate = Number(componentTax.rate_override == null ? componentTax.rate : componentTax.rate_override) || 0;
-    const rate = selection.rateOverride == null ? componentBaseRate : Number(selection.rateOverride || 0);
+    const componentBaseRate = componentTax.rate_override == null ? componentTax.rate : componentTax.rate_override;
+    const rate = selection.rateOverride == null ? componentBaseRate || '0' : selection.rateOverride || '0';
     const component = shape(componentTax, rate);
-    component.taxAmount = computeTaxAmount({ taxableAmount, rate, calculationMethod: componentTax.calculation_method });
+    component.taxAmount = computeTaxAmount({ taxableAmount, rate: component.rate, calculationMethod: componentTax.calculation_method });
     component.calculationMethod = componentTax.calculation_method;
     return component;
   });
 }
 
-async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = 0, context = {} }) {
+async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = '0.00', context = {} }) {
   const selections = await determineTaxSelections({ client, orgId, line, context });
 
   const components = [];
   for (const selection of selections) {
     if (!selection?.taxCodeId) throw new AppError(400, 'Each tax selection must include taxCodeId');
-    const expanded = await expandTaxSelection({ client, orgId, selection, defaultTaxableAmount });
+    const expanded = await expandTaxSelection({ client, orgId, selection, defaultTaxableAmount, context });
     components.push(...expanded);
   }
 
-  const grossTax = components.reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
-  const nonWithholdingTax = components.filter((item) => item.taxType !== 'WITHHOLDING').reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
-  const withholdingTax = components.filter((item) => item.taxType === 'WITHHOLDING').reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+  const nonWithholding = components.filter((item) => item.taxType !== 'WITHHOLDING').map((item) => item.taxAmount || '0.00');
+  const withholding = components.filter((item) => item.taxType === 'WITHHOLDING').map((item) => item.taxAmount || '0.00');
+  const all = components.map((item) => item.taxAmount || '0.00');
+
+  const taxAmount = addMoney(nonWithholding);
+  const withholdingTaxAmount = addMoney(withholding);
+  const grossComputedTaxAmount = addMoney(all);
+  const taxableAmount = normalizeMoney(defaultTaxableAmount);
 
   return {
     selectedTaxCodeId: line.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
-    taxAmount: round2(nonWithholdingTax),
-    withholdingTaxAmount: round2(withholdingTax),
-    grossComputedTaxAmount: round2(grossTax),
-    taxableAmount: round2(defaultTaxableAmount),
+    taxAmount,
+    withholdingTaxAmount,
+    grossComputedTaxAmount,
+    taxableAmount,
     components,
     snapshot: {
       context,
       selectedTaxCodeId: line.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
-      taxAmount: round2(nonWithholdingTax),
-      withholdingTaxAmount: round2(withholdingTax),
-      grossComputedTaxAmount: round2(grossTax),
-      taxableAmount: round2(defaultTaxableAmount),
+      taxAmount,
+      withholdingTaxAmount,
+      grossComputedTaxAmount,
+      taxableAmount,
+      rateSemantics: 'percentage_points',
+      classification: {
+        supplyType: line.supplyType || context.supplyType || null,
+        taxCategory: line.itemTaxCategory || line.taxCategory || line.taxTreatment || null,
+        taxProfileId: line.taxProfileId || null
+      },
       components
     }
   };
 }
 
-
 function summarizeResolvedTaxes(components = []) {
-  const summary = {
-    inclusiveNonWithholdingTax: 0,
-    exclusiveNonWithholdingTax: 0,
-    withholdingTax: 0,
-    totalNonWithholdingTax: 0,
-    totalTax: 0
+  const buckets = {
+    inclusiveNonWithholdingTax: [],
+    exclusiveNonWithholdingTax: [],
+    withholdingTax: [],
+    totalNonWithholdingTax: [],
+    totalTax: [],
   };
 
   for (const component of components || []) {
-    const amount = round2(component.taxAmount || 0);
+    const amount = normalizeMoney(component.taxAmount || 0);
     const taxType = component.taxType || component.tax_type || null;
     const calculationMethod = component.calculationMethod || component.calculation_method || 'standard';
 
-    summary.totalTax = round2(summary.totalTax + amount);
+    buckets.totalTax.push(amount);
     if (taxType === 'WITHHOLDING') {
-      summary.withholdingTax = round2(summary.withholdingTax + amount);
+      buckets.withholdingTax.push(amount);
       continue;
     }
 
-    summary.totalNonWithholdingTax = round2(summary.totalNonWithholdingTax + amount);
-    if (calculationMethod === 'inclusive') {
-      summary.inclusiveNonWithholdingTax = round2(summary.inclusiveNonWithholdingTax + amount);
-    } else {
-      summary.exclusiveNonWithholdingTax = round2(summary.exclusiveNonWithholdingTax + amount);
-    }
+    buckets.totalNonWithholdingTax.push(amount);
+    if (calculationMethod === 'inclusive') buckets.inclusiveNonWithholdingTax.push(amount);
+    else buckets.exclusiveNonWithholdingTax.push(amount);
   }
 
-  return summary;
+  return {
+    inclusiveNonWithholdingTax: addMoney(buckets.inclusiveNonWithholdingTax),
+    exclusiveNonWithholdingTax: addMoney(buckets.exclusiveNonWithholdingTax),
+    withholdingTax: addMoney(buckets.withholdingTax),
+    totalNonWithholdingTax: addMoney(buckets.totalNonWithholdingTax),
+    totalTax: addMoney(buckets.totalTax),
+  };
 }
 
 async function insertLineTaxDetails({ client, tableName, lineId, details = [] }) {
   if (!details.length) return [];
+  if (!ALLOWED_DETAIL_TABLES.has(tableName)) throw new AppError(500, `Unsupported tax detail table: ${tableName}`);
+
   const inserted = [];
   for (let i = 0; i < details.length; i++) {
     const d = details[i];
@@ -174,9 +199,9 @@ async function insertLineTaxDetails({ client, tableName, lineId, details = [] })
         i + 1,
         d.sourceTaxCodeId || d.selectedTaxCodeId || d.taxCodeId || null,
         d.taxCodeId,
-        d.taxableAmount,
-        d.rate,
-        d.taxAmount,
+        normalizeMoney(d.taxableAmount),
+        normalizeRate(d.rate),
+        normalizeMoney(d.taxAmount),
         d.taxType || null,
         d.direction || null,
         d.boxCode || null,
@@ -191,12 +216,14 @@ async function insertLineTaxDetails({ client, tableName, lineId, details = [] })
       ]
     );
     inserted.push(rows[0]);
+    await syncLineTaxDetailToLedger({ client, tableName, lineId, detail: rows[0] });
   }
   return inserted;
 }
 
 async function loadLineTaxDetails({ client, tableName, lineIds = [] }) {
   if (!lineIds.length) return new Map();
+  if (!ALLOWED_DETAIL_TABLES.has(tableName)) throw new AppError(500, `Unsupported tax detail table: ${tableName}`);
   const { rows } = await client.query(
     `SELECT * FROM ${tableName} WHERE line_id = ANY($1::uuid[]) ORDER BY line_id, sequence_no`,
     [lineIds]
@@ -223,6 +250,7 @@ async function upsertDocumentTaxSnapshot({ client, orgId, sourceType, sourceId, 
 
 module.exports = {
   round2,
+  computeTaxAmount,
   resolveLineTaxes,
   insertLineTaxDetails,
   loadLineTaxDetails,

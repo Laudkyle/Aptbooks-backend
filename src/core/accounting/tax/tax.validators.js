@@ -15,6 +15,7 @@ const taxRuleConditionsSchema = z.record(z.string(), z.unknown()).optional();
 const createTaxRuleSchema = z.object({
   code: z.string().min(1).max(80).optional().nullable(),
   name: z.string().min(1).max(200),
+  ruleGroup: z.string().min(1).max(80).optional().nullable(),
   documentType: z.string().max(80).optional().nullable(),
   partnerType: z.string().max(80).optional().nullable(),
   supplyType: z.enum(["goods", "services", "mixed", "import", "export"]).optional().nullable(),
@@ -34,6 +35,39 @@ const createTaxRuleSchema = z.object({
 });
 
 const updateTaxRuleSchema = createTaxRuleSchema.partial();
+
+const taxCatalogScope = z.enum(["taxable", "zero_rated", "exempt", "relieved", "out_of_scope", "reverse_charge", "import", "export", "non_recoverable"]);
+
+const createTaxCatalogProfileSchema = z.object({
+  code: z.string().min(1).max(80),
+  name: z.string().min(1).max(200),
+  supplyType: z.enum(["goods", "services", "mixed", "import", "export"]).optional(),
+  taxCategory: z.string().max(80).optional().nullable(),
+  salesTaxScope: taxCatalogScope.optional(),
+  purchaseTaxScope: taxCatalogScope.optional(),
+  salesTaxCodeId: z.string().uuid().optional().nullable(),
+  purchaseTaxCodeId: z.string().uuid().optional().nullable(),
+  exemptionReasonCode: z.string().max(80).optional().nullable(),
+  exemptionReason: z.string().max(500).optional().nullable(),
+  hsCode: z.string().max(40).optional().nullable(),
+  fiscalClassificationCode: z.string().max(100).optional().nullable(),
+  purchaseRecoveryMode: z.enum(["direct_taxable", "direct_exempt", "mixed", "not_applicable"]).optional(),
+  defaultRecoverablePercent: z.coerce.number().min(0).max(1).optional().nullable(),
+  legalReference: z.string().max(500).optional().nullable(),
+  effectiveFrom: isoDate.optional(),
+  effectiveTo: isoDate.optional().nullable(),
+  status: z.enum(["active", "inactive"]).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+}).superRefine((val, ctx) => {
+  if (val.effectiveFrom && val.effectiveTo && val.effectiveTo < val.effectiveFrom) {
+    ctx.addIssue({ code: "custom", path: ["effectiveTo"], message: "effectiveTo must be on or after effectiveFrom" });
+  }
+  if ([val.salesTaxScope, val.purchaseTaxScope].includes("exempt") && !val.exemptionReasonCode && !val.exemptionReason) {
+    ctx.addIssue({ code: "custom", path: ["exemptionReasonCode"], message: "Exempt catalog profiles should include an exemption reason or reason code" });
+  }
+});
+
+const updateTaxCatalogProfileSchema = createTaxCatalogProfileSchema.partial();
 
 const createTaxCodeSchema = z.object({
   jurisdictionId: z.string().uuid().nullable().optional(),
@@ -127,7 +161,18 @@ const setTaxSettingsSchema = z.object({
   reverseChargeTaxAccountId: z.string().uuid().nullable().optional(),
   taxRoundingStrategy: z.enum(["line", "document", "total"]).optional(),
   enforcePartnerTaxProfile: z.coerce.boolean().optional(),
-  requireTaxJurisdiction: z.coerce.boolean().optional()
+  requireTaxJurisdiction: z.coerce.boolean().optional(),
+  mixedInputProvisionalPercent: z.coerce.number().min(0).max(1).optional(),
+  ghVatGoodsRegistrationThreshold: z.coerce.number().positive().optional(),
+  ghVatMonitorEnabled: z.coerce.boolean().optional(),
+  ghVatManualGoodsTurnover: z.coerce.number().nonnegative().optional().nullable(),
+  ghVatTurnoverBasis: z.enum(["taxable_goods_rolling_12m", "manual"]).optional(),
+  ghIncomeWhtAgentEnabled: z.coerce.boolean().optional(),
+  ghVatWithholdingAgentEnabled: z.coerce.boolean().optional(),
+  ghWhtAnnualThreshold: z.coerce.number().nonnegative().optional(),
+  ghVatWithholdingRate: z.coerce.number().min(0).max(100).optional(),
+  vatWithholdingPayableAccountId: z.string().uuid().nullable().optional(),
+  vatWithholdingReceivableAccountId: z.string().uuid().nullable().optional()
 });
 
 
@@ -167,6 +212,8 @@ const createPartnerTaxProfileSchema = z.object({
   certificateReference: z.string().max(100).optional().nullable(),
   certificateExpiry: isoDate.optional().nullable(),
   withholdingRateOverride: z.coerce.number().min(0).max(100).optional().nullable(),
+  residencyStatus: z.enum(["resident", "non_resident", "unknown"]).optional().nullable(),
+  economicActivityCode: z.string().max(80).optional().nullable(),
   withholdingCertificateNo: z.string().max(100).optional().nullable(),
   filingContactEmail: z.string().email().optional().nullable(),
   customerTaxIdentifierType: z.string().max(50).optional().nullable(),
@@ -176,6 +223,11 @@ const createPartnerTaxProfileSchema = z.object({
   registrationStatus: z.enum(["registered", "unregistered", "pending", "suspended"]).optional().nullable(),
   eInvoiceNetwork: z.string().max(100).optional().nullable(),
   eInvoiceEndpoint: z.string().max(255).optional().nullable(),
+  withholdingExempt: z.coerce.boolean().optional(),
+  withholdingExemptionReference: z.string().max(160).optional().nullable(),
+  withholdingExemptionExpiry: isoDate.optional().nullable(),
+  defaultWithholdingCategory: z.string().max(100).optional().nullable(),
+  vatWithholdingEligible: z.coerce.boolean().optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 
@@ -306,6 +358,122 @@ const postWithholdingCertificateSchema = z.object({
   memo: z.string().max(1000).optional().nullable()
 });
 
+const calculateInputApportionmentSchema = z.object({
+  periodStart: isoDate,
+  periodEnd: isoDate,
+  method: z.enum(["ghana_act1151_turnover", "manual_approved"]).optional(),
+  taxableSupplies: z.coerce.number().nonnegative().optional(),
+  exemptSupplies: z.coerce.number().nonnegative().optional(),
+  approvedRecoveryRatio: z.coerce.number().min(0).max(1).optional()
+}).superRefine((val, ctx) => {
+  if (val.periodEnd < val.periodStart) ctx.addIssue({ code: "custom", path: ["periodEnd"], message: "periodEnd must be on or after periodStart" });
+  if (val.method === "manual_approved" && val.approvedRecoveryRatio == null) ctx.addIssue({ code: "custom", path: ["approvedRecoveryRatio"], message: "approvedRecoveryRatio is required for manual_approved method" });
+});
+
+const postInputApportionmentSchema = z.object({
+  memo: z.string().max(500).optional().nullable()
+});
+const voidInputApportionmentSchema = z.object({ reason: z.string().min(2).max(500) });
+
+const recoveryBasisSchema = z.enum(["direct_taxable", "direct_exempt", "mixed", "not_applicable"]);
+
+const createImportedServiceSchema = z.object({
+  supplierId: z.string().uuid().optional().nullable(),
+  documentNo: z.string().max(120).optional().nullable(),
+  serviceDate: isoDate,
+  taxPeriodStart: isoDate.optional(),
+  taxPeriodEnd: isoDate.optional(),
+  description: z.string().min(2).max(500),
+  supplierCountryCode: z.string().length(2).optional().nullable(),
+  currencyCode: z.string().length(3).optional(),
+  foreignAmount: z.coerce.number().nonnegative().optional().nullable(),
+  exchangeRate: z.coerce.number().positive().optional().nullable(),
+  taxableAmount: z.coerce.number().positive(),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  recoveryBasis: recoveryBasisSchema.optional(),
+  recoverablePercent: z.coerce.number().min(0).max(1).optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  evidence: z.record(z.string(), z.unknown()).optional()
+}).superRefine((val, ctx) => {
+  if (val.taxPeriodStart && val.taxPeriodEnd && val.taxPeriodEnd < val.taxPeriodStart) ctx.addIssue({ code: "custom", path: ["taxPeriodEnd"], message: "taxPeriodEnd must be on or after taxPeriodStart" });
+});
+
+const updateImportedServiceSchema = createImportedServiceSchema.partial();
+const voidImportedServiceSchema = z.object({ reason: z.string().min(2).max(500) });
+
+
+const ghWithholdingPreviewSchema = z.object({
+  regime: z.enum(["income_wht", "vat_withholding"]),
+  partnerId: z.string().uuid(),
+  eventDate: isoDate.optional(),
+  paymentAmount: z.coerce.number().nonnegative().optional(),
+  taxableValue: z.coerce.number().nonnegative().optional(),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  categoryCode: z.string().max(100).optional().nullable(),
+  standardRatedSupply: z.coerce.boolean().optional()
+}).superRefine((v, ctx) => {
+  if (v.regime === "income_wht" && v.paymentAmount == null) ctx.addIssue({ code: "custom", path: ["paymentAmount"], message: "paymentAmount is required for income_wht" });
+  if (v.regime === "vat_withholding" && v.taxableValue == null) ctx.addIssue({ code: "custom", path: ["taxableValue"], message: "taxableValue is required for vat_withholding" });
+});
+
+const ghWithholdingEventSchema = ghWithholdingPreviewSchema.safeExtend({
+  direction: z.enum(["payable", "receivable"]).optional(),
+  eventDate: isoDate,
+  sourceType: z.string().min(2).max(80).optional(),
+  sourceId: z.string().uuid().optional().nullable(),
+  sourceLineId: z.string().uuid().optional().nullable(),
+  sourceDocumentNo: z.string().max(120).optional().nullable(),
+  eventKey: z.string().max(255).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
+
+const ghReceivedWithholdingCertificateSchema = z.object({
+  regime: z.enum(["income_wht", "vat_withholding"]),
+  partnerId: z.string().uuid(),
+  certificateNo: z.string().min(1).max(160),
+  certificateDate: isoDate,
+  eventDate: isoDate.optional(),
+  taxableBasis: z.coerce.number().positive(),
+  withheldAmount: z.coerce.number().positive(),
+  taxRate: z.coerce.number().positive().max(100),
+  taxCodeId: z.string().uuid().optional().nullable(),
+  categoryCode: z.string().max(100).optional().nullable(),
+  sourceType: z.string().min(2).max(80).optional(),
+  sourceId: z.string().uuid().optional().nullable(),
+  sourceDocumentNo: z.string().max(120).optional().nullable(),
+  graReference: z.string().max(160).optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+});
+
+const ghWithholdingReturnSchema = z.object({
+  regime: z.enum(["income_wht", "vat_withholding"]),
+  periodStart: isoDate,
+  periodEnd: isoDate,
+  amendsReturnId: z.string().uuid().optional().nullable(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+}).superRefine((v, ctx) => {
+  if (v.periodEnd < v.periodStart) ctx.addIssue({ code: "custom", path: ["periodEnd"], message: "periodEnd must be on or after periodStart" });
+});
+
+const ghWithholdingFiledSchema = z.object({ graReference: z.string().min(1).max(160) });
+
+const ghWithholdingRemittanceSchema = z.object({
+  regime: z.enum(["income_wht", "vat_withholding"]),
+  periodStart: isoDate,
+  periodEnd: isoDate,
+  remittanceDate: isoDate,
+  settlementAccountId: z.string().uuid().optional().nullable(),
+  reference: z.string().max(120).optional().nullable(),
+  memo: z.string().max(1000).optional().nullable(),
+  eventIds: z.array(z.string().uuid()).min(1)
+});
+
+const ghWithholdingPostRemittanceSchema = z.object({
+  settlementAccountId: z.string().uuid().optional().nullable(),
+  remittanceDate: isoDate.optional().nullable()
+});
+
 const voidWithholdingWorkflowSchema = z.object({
   reason: z.string().min(2).max(500)
 });
@@ -319,6 +487,8 @@ module.exports = {
   updateTaxCodeSchema,
   createTaxRuleSchema,
   updateTaxRuleSchema,
+  createTaxCatalogProfileSchema,
+  updateTaxCatalogProfileSchema,
   setTaxSettingsSchema,
   createTaxAdjustmentSchema,
   voidTaxAdjustmentSchema,
@@ -341,5 +511,18 @@ module.exports = {
   createWithholdingCertificateSchema,
   updateWithholdingCertificateSchema,
   postWithholdingCertificateSchema,
-  voidWithholdingWorkflowSchema
+  voidWithholdingWorkflowSchema,
+  calculateInputApportionmentSchema,
+  postInputApportionmentSchema,
+  voidInputApportionmentSchema,
+  createImportedServiceSchema,
+  updateImportedServiceSchema,
+  voidImportedServiceSchema,
+  ghWithholdingPreviewSchema,
+  ghWithholdingEventSchema,
+  ghReceivedWithholdingCertificateSchema,
+  ghWithholdingReturnSchema,
+  ghWithholdingFiledSchema,
+  ghWithholdingRemittanceSchema,
+  ghWithholdingPostRemittanceSchema
 };

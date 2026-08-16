@@ -24,7 +24,10 @@ async function createEmployee(orgId, payload) {
         expense_account_id, payable_account_id,
         compensation_band_id, base_salary_amount, base_salary_currency, base_salary_frequency,
         bank_name, bank_account_no, bank_branch,
-        tax_id, national_id
+        tax_id, national_id,
+        ghana_card_pin, ssnit_number, tier2_member_id, tier2_scheme_name,
+        tax_residency, worker_classification, qualifies_overtime_concession, pension_exempt,
+        approved_monthly_tax_relief, employment_end_date
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,
         $8,$9,
@@ -32,7 +35,10 @@ async function createEmployee(orgId, payload) {
         $14,$15,
         $16,$17,$18,$19,
         $20,$21,$22,
-        $23,$24
+        $23,$24,
+        $25,$26,$27,$28,
+        $29,$30,$31,$32,
+        $33,$34
       )
       RETURNING *
     `,
@@ -61,6 +67,16 @@ async function createEmployee(orgId, payload) {
       p.bank_branch || null,
       p.tax_id || null,
       p.national_id || null,
+      p.ghana_card_pin || null,
+      p.ssnit_number || null,
+      p.tier2_member_id || null,
+      p.tier2_scheme_name || null,
+      p.tax_residency || "resident",
+      p.worker_classification || "regular",
+      Boolean(p.qualifies_overtime_concession),
+      Boolean(p.pension_exempt),
+      p.approved_monthly_tax_relief ?? 0,
+      p.employment_end_date ? new Date(p.employment_end_date) : null,
     ]
   );
   return rows[0];
@@ -171,12 +187,23 @@ async function updateEmployee(orgId, id, payload) {
     bank_branch: "bank_branch",
     tax_id: "tax_id",
     national_id: "national_id",
+    ghana_card_pin: "ghana_card_pin",
+    ssnit_number: "ssnit_number",
+    tier2_member_id: "tier2_member_id",
+    tier2_scheme_name: "tier2_scheme_name",
+    tax_residency: "tax_residency",
+    worker_classification: "worker_classification",
+    qualifies_overtime_concession: "qualifies_overtime_concession",
+    pension_exempt: "pension_exempt",
+    approved_monthly_tax_relief: "approved_monthly_tax_relief",
+    employment_end_date: "employment_end_date",
   };
 
   for (const [k, col] of Object.entries(map)) {
     if (p[k] !== undefined) {
       fields.push(`${col}=$${i++}`);
       if (k === "hire_date") vals.push(p.hire_date ? new Date(p.hire_date) : null);
+      else if (k === "employment_end_date") vals.push(p.employment_end_date ? new Date(p.employment_end_date) : null);
       else vals.push(p[k]);
     }
   }

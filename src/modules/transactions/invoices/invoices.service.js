@@ -10,12 +10,14 @@ const partnerIF = require("../../../interfaces/partnerManagement.interface");
 
 const {
   multiplyQtyByUnitPriceToMoney,
-  bigIntToDecimalString
+  bigIntToDecimalString,
+  parseDecimalToBigInt
 } = require("../../../shared/utils/money");
 const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2, upsertDocumentTaxSnapshot, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
+const fiscalizationSvc = require("../../integrations/fiscalization/fiscalization.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -38,15 +40,15 @@ async function assertRevenueAccount({ orgId, accountId }) {
 
 async function prepareInvoiceLines({ client, orgId, payload, lines }) {
   let subtotalCents = 0n;
-  let taxTotal = 0;
-  let withholdingTotal = 0;
+  let taxTotalCents = 0n;
+  let withholdingTotalCents = 0n;
   const computed = [];
 
   for (const l of lines) {
     const qty = l.quantity ?? 1;
     const unitPrice = l.unitPrice ?? 0;
     const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
-    const enteredLineAmount = Number(bigIntToDecimalString(lineCents, 2));
+    const enteredLineAmount = bigIntToDecimalString(lineCents, 2);
     const tax = await resolveLineTaxes({
       client,
       orgId,
@@ -58,21 +60,27 @@ async function prepareInvoiceLines({ client, orgId, payload, lines }) {
         transactionScope: "sales",
         documentType: "invoice",
         documentDate: payload.invoiceDate,
-        jurisdictionId: payload.jurisdictionId || null
+        jurisdictionId: payload.jurisdictionId || null,
+        supplyType: l.supplyType || payload.supplyType || null,
+        placeOfSupplyCountryCode: l.placeOfSupplyCountryCode || payload.placeOfSupplyCountryCode || null,
+        industry: payload.industry || null,
+        partnerCountryCode: payload.placeOfSupplyCountryCode || null
       }
     });
     const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
-    const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
-    subtotalCents += BigInt(Math.round(taxableAmount * 100));
-    taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
-    withholdingTotal += Number(resolvedTaxSummary.withholdingTax || 0);
+    const inclusiveTaxCents = parseDecimalToBigInt(resolvedTaxSummary.inclusiveNonWithholdingTax, 2);
+    const taxableCents = lineCents - inclusiveTaxCents;
+    const taxableAmount = bigIntToDecimalString(taxableCents, 2);
+    subtotalCents += taxableCents;
+    taxTotalCents += parseDecimalToBigInt(resolvedTaxSummary.totalNonWithholdingTax, 2);
+    withholdingTotalCents += parseDecimalToBigInt(resolvedTaxSummary.withholdingTax, 2);
     computed.push({
       ...l,
       quantity: qty,
       unitPrice,
-      lineTotal: bigIntToDecimalString(lineCents, 2),
+      lineTotal: enteredLineAmount,
       taxableAmount,
-      taxAmount: round2(resolvedTaxSummary.totalNonWithholdingTax),
+      taxAmount: resolvedTaxSummary.totalNonWithholdingTax,
       taxCodeId: tax.selectedTaxCodeId || null,
       taxDetails: tax.components,
       taxSnapshot: tax.snapshot
@@ -80,9 +88,11 @@ async function prepareInvoiceLines({ client, orgId, payload, lines }) {
   }
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  const total = (Number(subtotal) + round2(taxTotal)).toFixed(2);
-  const netSettlementTotal = (Number(subtotal) + round2(taxTotal) - round2(withholdingTotal)).toFixed(2);
-  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), withholdingTotal: round2(withholdingTotal).toFixed(2), netSettlementTotal, total };
+  const taxTotal = bigIntToDecimalString(taxTotalCents, 2);
+  const withholdingTotal = bigIntToDecimalString(withholdingTotalCents, 2);
+  const total = bigIntToDecimalString(subtotalCents + taxTotalCents, 2);
+  const netSettlementTotal = bigIntToDecimalString(subtotalCents + taxTotalCents - withholdingTotalCents, 2);
+  return { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total };
 }
 
 async function nextInvoiceNo(client, orgId) {
@@ -459,6 +469,13 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       `,
       [orgId, invoiceId, period.id, posted.journalId, actorUserId]
     );
+
+    // GRA-5: when fiscalization is enabled, create the immutable fiscal snapshot
+    // in the same transaction as invoice issuance. Network transmission remains
+    // out-of-transaction via the durable fiscal queue.
+    await fiscalizationSvc.autoPrepareForSource({
+      db: client, orgId, actorUserId, sourceType: 'invoice', sourceId: invoiceId
+    });
 
     return afterRows[0];
   });

@@ -6,6 +6,7 @@ const { buildOperationalDocumentJournal } = require("./operationalDocPosting.ser
 const { runApprovalPostingHook } = require("./approvalPostingHooks");
 const repo = require("./opsDocs.repository");
 const { resolveLineTaxes, round2: roundTax2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
+const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 const { enrichLines, buildDetailMeta } = require("./detailEnrichment");
 
 async function getOrgBaseCurrency(client, orgId) {
@@ -49,26 +50,39 @@ function round2(n) {
   return Number((Number(n || 0)).toFixed(2));
 }
 
-async function computeLinesWithTax({ client, orgId, lines = [] }) {
-  let subtotal = 0;
-  let taxTotal = 0;
+async function computeLinesWithTax({ client, orgId, lines = [], context = {} }) {
+  let subtotalCents = 0n;
+  let taxTotalCents = 0n;
   const computed = [];
 
   for (const line of (lines || [])) {
-    const quantity = line.quantity == null ? 1 : Number(line.quantity);
-    const unitPrice = line.unitPrice == null ? 0 : Number(line.unitPrice);
-    const enteredLineAmount = line.lineTotal == null ? round2(quantity * unitPrice) : round2(line.lineTotal);
+    const quantity = line.quantity == null ? 1 : line.quantity;
+    const unitPrice = line.unitPrice == null ? 0 : line.unitPrice;
+    const enteredLineCents = line.lineTotal == null
+      ? multiplyQtyByUnitPriceToMoney(quantity, unitPrice, 4, 2)
+      : parseDecimalToBigInt(line.lineTotal, 2);
+    const enteredLineAmount = bigIntToDecimalString(enteredLineCents, 2);
 
-    const tax = await resolveLineTaxes({ client, orgId, line, defaultTaxableAmount: enteredLineAmount });
+    const tax = await resolveLineTaxes({
+      client,
+      orgId,
+      line,
+      defaultTaxableAmount: enteredLineAmount,
+      context: {
+        ...context,
+        supplyType: line.supplyType || context.supplyType || null,
+        placeOfSupplyCountryCode: line.placeOfSupplyCountryCode || context.placeOfSupplyCountryCode || null,
+      }
+    });
     const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
-    const taxableAmount = line.taxableAmount == null
-      ? round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax)
-      : round2(line.taxableAmount);
-    const taxAmount = roundTax2(resolvedTaxSummary.totalNonWithholdingTax);
-    const lineTotal = enteredLineAmount;
+    const taxableCents = line.taxableAmount == null
+      ? enteredLineCents - parseDecimalToBigInt(resolvedTaxSummary.inclusiveNonWithholdingTax, 2)
+      : parseDecimalToBigInt(line.taxableAmount, 2);
+    const taxableAmount = bigIntToDecimalString(taxableCents, 2);
+    const taxAmount = resolvedTaxSummary.totalNonWithholdingTax;
 
-    subtotal += taxableAmount;
-    taxTotal += taxAmount;
+    subtotalCents += taxableCents;
+    taxTotalCents += parseDecimalToBigInt(taxAmount, 2);
 
     computed.push({
       ...line,
@@ -78,15 +92,15 @@ async function computeLinesWithTax({ client, orgId, lines = [] }) {
       taxAmount,
       taxCodeId: tax.selectedTaxCodeId || null,
       taxDetails: tax.components,
-      lineTotal
+      lineTotal: enteredLineAmount
     });
   }
 
   return {
     lines: computed,
-    subtotal: round2(subtotal),
-    taxTotal: round2(taxTotal),
-    total: round2(subtotal + taxTotal)
+    subtotal: bigIntToDecimalString(subtotalCents, 2),
+    taxTotal: bigIntToDecimalString(taxTotalCents, 2),
+    total: bigIntToDecimalString(subtotalCents + taxTotalCents, 2)
   };
 }
 
@@ -123,8 +137,23 @@ function createOpsDocService(config) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const computed = await computeLinesWithTax({ client, orgId, lines: payload.lines || [] });
-    const amountTotal = payload.amountTotal == null ? computed.total : round2(payload.amountTotal);
+      const computed = await computeLinesWithTax({
+        client,
+        orgId,
+        lines: payload.lines || [],
+        context: {
+          partnerId: payload.partnerId || null,
+          partnerType: partnerRole || null,
+          transactionScope: partnerRole === 'customer' ? 'sales' : 'purchases',
+          documentType: moduleCode,
+          documentDate: payload.date || null,
+          jurisdictionId: payload.jurisdictionId || null,
+          supplyType: payload.supplyType || null,
+          placeOfSupplyCountryCode: payload.placeOfSupplyCountryCode || null,
+          industry: payload.industry || null
+        }
+      });
+      const amountTotal = payload.amountTotal == null ? computed.total : bigIntToDecimalString(parseDecimalToBigInt(payload.amountTotal, 2), 2);
       const baseCurrency = payload.currencyCode || await getOrgBaseCurrency(client, orgId);
       const documentNo = await repo.nextDocumentNo(client, orgId, moduleCode, prefix);
       const doc = await repo.insertDocument(client, {

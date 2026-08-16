@@ -10,6 +10,9 @@ const assignmentsRepo = require("../employee-components/employeeComponents.repos
 const componentsRepo = require("../components/components.repository");
 const statutoryRepo = require("../../statutory/statutory.repository");
 const benefitsRepo = require("../../benefits/benefits.repository");
+const ghPayrollSvc = require("../ghana/ghanaPayroll.service");
+const { computeBaseSalaryForPeriod: computeGhanaBase } = require("../ghana/ghanaPayroll");
+const { parseDecimalToBigInt, bigIntToDecimalString } = require("../../../../shared/utils/money");
 
 function computeDaysInclusive(startDate, endDate) {
   const ms = 24 * 60 * 60 * 1000;
@@ -229,8 +232,11 @@ async function calculateRun({ orgId, actorUserId, runId }) {
   const components = await componentsRepo.listComponents(orgId, { status: "active" });
   const componentById = new Map(components.map((c) => [String(c.id), c]));
 
-  // Statutory rules and benefits effective as of run pay date
-  const statutoryRules = await statutoryRepo.listRules(orgId, { status: "active" });
+  // Ghana payroll owns PAYE/SSNIT/Tier 2 when explicitly enabled. Generic statutory
+  // rules remain available for other jurisdictions and for non-Ghana-specific rules.
+  const ghanaContext = await ghPayrollSvc.getEngineContext({ orgId, payDate: run.pay_date });
+  const ghanaYtdBonus = ghanaContext ? await ghPayrollSvc.loadYtdBonusMap({ orgId, payDate: run.pay_date }) : new Map();
+  const statutoryRules = ghanaContext ? [] : await statutoryRepo.listRules(orgId, { status: "active", effective_on: run.pay_date });
   const employeeBenefits = await benefitsRepo.listEmployeeBenefitsEffective(orgId, run.pay_date);
   const benefitsByEmployee = new Map();
   for (const eb of employeeBenefits) {
@@ -241,8 +247,30 @@ async function calculateRun({ orgId, actorUserId, runId }) {
 
   const lines = [];
   for (const e of employees) {
-    const base = computeBaseSalaryForPeriod(e, period);
     const assignments = assignmentByEmployee.get(String(e.id)) || [];
+    const eBenefits = benefitsByEmployee.get(String(e.id)) || [];
+
+    if (ghanaContext) {
+      const base = computeGhanaBase({
+        amount: e.base_salary_amount || 0,
+        frequency: e.base_salary_frequency || "monthly",
+        startDate: period.start_date,
+        endDate: period.end_date,
+      });
+      lines.push(ghPayrollSvc.buildGhanaEmployeeLine({
+        employee: e,
+        baseSalary: base,
+        assignments,
+        componentById,
+        benefits: eBenefits,
+        context: ghanaContext,
+        ytdBonusBeforeCurrent: ghanaYtdBonus.get(String(e.id)) || "0.00",
+        currency: run.currency || e.base_salary_currency || "GHS",
+      }));
+      continue;
+    }
+
+    const base = computeBaseSalaryForPeriod(e, period);
 
     let earnings = 0;
     let deductions = 0;
@@ -317,7 +345,6 @@ async function calculateRun({ orgId, actorUserId, runId }) {
     }
 
     // Benefits (employee and employer rates)
-    const eBenefits = benefitsByEmployee.get(String(e.id)) || [];
     for (const b of eBenefits) {
       const baseOn = b.base_on || "base";
       const basis = baseOn === "gross" ? (base + earnings) : base;
@@ -360,14 +387,17 @@ async function calculateRun({ orgId, actorUserId, runId }) {
   }
 
   await runsRepo.replaceRunLines(orgId, runId, lines);
+  if (ghanaContext) {
+    await pool.query(
+      `UPDATE hr_payroll_runs SET statutory_country_code='GH', paye_rule_version_id=$3, pension_rule_version_id=$4, updated_at=NOW(), updated_by=$5 WHERE organization_id=$1 AND id=$2`,
+      [orgId, runId, ghanaContext.payeRule.id, ghanaContext.pensionRule.id, actorUserId]
+    );
+  }
   await runsRepo.setRunStatus(orgId, runId, "calculated", actorUserId);
 
   return { runId, status: "calculated", linesCount: lines.length };
 }
 
-function round2(n) {
-  return Number(Number(n).toFixed(2));
-}
 
 async function buildJournal({ orgId, actorUserId, runId, idempotencyKey }) {
   const run = await getRun({ orgId, runId });
@@ -406,10 +436,10 @@ async function buildJournal({ orgId, actorUserId, runId, idempotencyKey }) {
     if (!e.expense_account_id) throw new AppError(400, `Employee missing expense_account_id: ${e.employee_no}`);
     if (!e.payable_account_id) throw new AppError(400, `Employee missing payable_account_id: ${e.employee_no}`);
 
-    const totalExpense = Number(l.gross_pay || 0);
-    const net = Number(l.net_pay || 0);
-    debitByAccount.set(String(e.expense_account_id), (debitByAccount.get(String(e.expense_account_id)) || 0) + totalExpense);
-    creditByAccount.set(String(e.payable_account_id), (creditByAccount.get(String(e.payable_account_id)) || 0) + net);
+    const totalExpense = parseDecimalToBigInt(l.gross_pay || 0, 2);
+    const net = parseDecimalToBigInt(l.net_pay || 0, 2);
+    debitByAccount.set(String(e.expense_account_id), (debitByAccount.get(String(e.expense_account_id)) || 0n) + totalExpense);
+    creditByAccount.set(String(e.payable_account_id), (creditByAccount.get(String(e.payable_account_id)) || 0n) + net);
 
     // Deductions: credit liability accounts
     const b = l.breakdown_json || l.breakdown || null;
@@ -425,57 +455,57 @@ async function buildJournal({ orgId, actorUserId, runId, idempotencyKey }) {
       if (!liabilityAccountId) {
         throw new AppError(400, `Deduction ${code || '(unknown)'} missing liability_account_id`);
       }
-      creditByAccount.set(String(liabilityAccountId), (creditByAccount.get(String(liabilityAccountId)) || 0) + Number(d.amount || 0));
+      creditByAccount.set(String(liabilityAccountId), (creditByAccount.get(String(liabilityAccountId)) || 0n) + parseDecimalToBigInt(d.amount || 0, 2));
     }
 
     // Statutory and benefits: employee portion behaves like a deduction (credit liability)
     for (const s of statutory) {
-      const empAmt = Number(s.employee_amount || 0);
-      if (!empAmt) continue;
+      const empAmt = parseDecimalToBigInt(s.employee_amount || 0, 2);
+      if (empAmt === 0n) continue;
       if (!s.liability_account_id) throw new AppError(400, `Statutory ${s.code} missing liability_account_id`);
-      creditByAccount.set(String(s.liability_account_id), (creditByAccount.get(String(s.liability_account_id)) || 0) + empAmt);
+      creditByAccount.set(String(s.liability_account_id), (creditByAccount.get(String(s.liability_account_id)) || 0n) + empAmt);
     }
     for (const bn of benefits) {
-      const empAmt = Number(bn.employee_amount || 0);
-      if (!empAmt) continue;
+      const empAmt = parseDecimalToBigInt(bn.employee_amount || 0, 2);
+      if (empAmt === 0n) continue;
       if (!bn.liability_account_id) throw new AppError(400, `Benefit ${bn.code} missing liability_account_id`);
-      creditByAccount.set(String(bn.liability_account_id), (creditByAccount.get(String(bn.liability_account_id)) || 0) + empAmt);
+      creditByAccount.set(String(bn.liability_account_id), (creditByAccount.get(String(bn.liability_account_id)) || 0n) + empAmt);
     }
 
     // Employer contributions: debit expense, credit liability
     for (const s of statutory) {
-      const emprAmt = Number(s.employer_amount || 0);
-      if (!emprAmt) continue;
+      const emprAmt = parseDecimalToBigInt(s.employer_amount || 0, 2);
+      if (emprAmt === 0n) continue;
       if (!s.expense_account_id) throw new AppError(400, `Statutory ${s.code} missing expense_account_id`);
       if (!s.liability_account_id) throw new AppError(400, `Statutory ${s.code} missing liability_account_id`);
-      debitByAccount.set(String(s.expense_account_id), (debitByAccount.get(String(s.expense_account_id)) || 0) + emprAmt);
-      creditByAccount.set(String(s.liability_account_id), (creditByAccount.get(String(s.liability_account_id)) || 0) + emprAmt);
+      debitByAccount.set(String(s.expense_account_id), (debitByAccount.get(String(s.expense_account_id)) || 0n) + emprAmt);
+      creditByAccount.set(String(s.liability_account_id), (creditByAccount.get(String(s.liability_account_id)) || 0n) + emprAmt);
     }
     for (const bn of benefits) {
-      const emprAmt = Number(bn.employer_amount || 0);
-      if (!emprAmt) continue;
+      const emprAmt = parseDecimalToBigInt(bn.employer_amount || 0, 2);
+      if (emprAmt === 0n) continue;
       if (!bn.expense_account_id) throw new AppError(400, `Benefit ${bn.code} missing expense_account_id`);
       if (!bn.liability_account_id) throw new AppError(400, `Benefit ${bn.code} missing liability_account_id`);
-      debitByAccount.set(String(bn.expense_account_id), (debitByAccount.get(String(bn.expense_account_id)) || 0) + emprAmt);
-      creditByAccount.set(String(bn.liability_account_id), (creditByAccount.get(String(bn.liability_account_id)) || 0) + emprAmt);
+      debitByAccount.set(String(bn.expense_account_id), (debitByAccount.get(String(bn.expense_account_id)) || 0n) + emprAmt);
+      creditByAccount.set(String(bn.liability_account_id), (creditByAccount.get(String(bn.liability_account_id)) || 0n) + emprAmt);
     }
   }
 
   const journalLines = [];
   for (const [accountId, amount] of debitByAccount.entries()) {
-    if (round2(amount) === 0) continue;
-    journalLines.push({ accountId, debit: round2(amount), credit: 0, description: "Payroll expense" });
+    if (amount === 0n) continue;
+    journalLines.push({ accountId, debit: bigIntToDecimalString(amount, 2), credit: "0.00", description: "Payroll expense" });
   }
   for (const [accountId, amount] of creditByAccount.entries()) {
-    if (round2(amount) === 0) continue;
-    journalLines.push({ accountId, debit: 0, credit: round2(amount), description: "Payroll payable/liability" });
+    if (amount === 0n) continue;
+    journalLines.push({ accountId, debit: "0.00", credit: bigIntToDecimalString(amount, 2), description: "Payroll payable/liability" });
   }
 
-  // Ensure balanced
-  const sumD = round2(journalLines.reduce((a, x) => a + Number(x.debit || 0), 0));
-  const sumC = round2(journalLines.reduce((a, x) => a + Number(x.credit || 0), 0));
+  // Ensure balanced using integer minor units; payroll journals must never depend on IEEE-754 rounding.
+  const sumD = journalLines.reduce((a, x) => a + parseDecimalToBigInt(x.debit || 0, 2), 0n);
+  const sumC = journalLines.reduce((a, x) => a + parseDecimalToBigInt(x.credit || 0, 2), 0n);
   if (sumD !== sumC) {
-    throw new AppError(400, `Payroll journal not balanced (debit=${sumD}, credit=${sumC}). Check deduction configuration.`);
+    throw new AppError(400, `Payroll journal not balanced (debit=${bigIntToDecimalString(sumD,2)}, credit=${bigIntToDecimalString(sumC,2)}). Check deduction configuration.`);
   }
 
   const draft = await journalIF.createDraftJournal({

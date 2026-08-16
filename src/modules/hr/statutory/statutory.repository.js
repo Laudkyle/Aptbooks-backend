@@ -5,8 +5,8 @@ async function createRule(orgId, payload) {
     `
       INSERT INTO hr_statutory_rules
         (organization_id, code, name, description, rule_type, calculation_method, brackets_json, allowance_amount,
-         employee_rate, employer_rate, base_on, cap_amount, expense_account_id, liability_account_id, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'active')
+         employee_rate, employer_rate, base_on, cap_amount, expense_account_id, liability_account_id, effective_from, effective_to, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'active')
       RETURNING *
     `,
     [
@@ -24,6 +24,8 @@ async function createRule(orgId, payload) {
       payload.cap_amount ?? null,
       payload.expense_account_id,
       payload.liability_account_id,
+      payload.effective_from ? new Date(payload.effective_from) : new Date(),
+      payload.effective_to ? new Date(payload.effective_to) : null,
     ]
   );
   return r.rows[0];
@@ -35,7 +37,12 @@ async function listRules(orgId, query = {}) {
   let where = "WHERE organization_id=$1";
   if (query.status) { params.push(query.status); where += ` AND status=$${params.length}`; }
   if (query.rule_type) { params.push(query.rule_type); where += ` AND rule_type=$${params.length}`; }
-  const r = await pool.query(`SELECT * FROM hr_statutory_rules ${where} ORDER BY code ASC`, params);
+  const effectiveOn = query.effective_on || query.effectiveOn || null;
+  if (effectiveOn) {
+    params.push(effectiveOn);
+    where += ` AND effective_from <= $${params.length}::date AND (effective_to IS NULL OR effective_to >= $${params.length}::date)`;
+  }
+  const r = await pool.query(`SELECT * FROM hr_statutory_rules ${where} ORDER BY code ASC, effective_from DESC`, params);
   return r.rows;
 }
 
@@ -62,6 +69,8 @@ async function updateRule(orgId, id, payload) {
   if (payload.cap_amount !== undefined) set("cap_amount", payload.cap_amount);
   if (payload.expense_account_id !== undefined) set("expense_account_id", payload.expense_account_id);
   if (payload.liability_account_id !== undefined) set("liability_account_id", payload.liability_account_id);
+  if (payload.effective_from !== undefined) set("effective_from", payload.effective_from ? new Date(payload.effective_from) : null);
+  if (payload.effective_to !== undefined) set("effective_to", payload.effective_to ? new Date(payload.effective_to) : null);
   if (payload.status !== undefined) set("status", payload.status);
 
   if (!fields.length) return getRule(orgId, id);

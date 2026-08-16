@@ -13,6 +13,7 @@ const {
   bigIntToDecimalString
 } = require("../../../../shared/utils/money");
 const { buildDetailMeta, round2 } = require("../../_shared/detailEnrichment");
+const ghWithholdingSvc = require("../../../../core/accounting/tax/ghanaWithholding.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -518,6 +519,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
     // Re-validate allocations at post-time (race safety), compute discounts
     let cashAppliedCents = 0n;
     let discountCents = 0n;
+    let vatWithholdingCents = 0n;
     let settlementCents = 0n;
     for (const a of allocations) {
       const bill = await getBillForAllocation(orgId, a.bill_id, client);
@@ -539,17 +541,29 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
         billDate: bill.bill_date
       });
 
-      const settlement = Number((cashApplied + discount).toFixed(2));
-      if (settlement - 1e-9 > outstanding) throw new AppError(409, "Allocation (cash+discount) exceeds bill outstanding");
+      const whvat = await ghWithholdingSvc.computeVendorBillVatWithholding({
+        orgId,
+        partnerId: vp.vendor_id,
+        billId: a.bill_id,
+        cashAmount: bigIntToDecimalString(parseDecimalToBigInt(cashApplied, 2), 2),
+        client,
+      });
+      const whvatCents = parseDecimalToBigInt(whvat.withheldAmount || '0', 2);
+      const settlementCurrentCents = parseDecimalToBigInt(cashApplied, 2) + parseDecimalToBigInt(discount, 2) + whvatCents;
+      const outstandingCents = parseDecimalToBigInt(outstanding, 2);
+      if (settlementCurrentCents > outstandingCents) throw new AppError(409, "Allocation (cash + discount + VAT withholding) exceeds bill outstanding");
 
       await client.query(
-        `UPDATE vendor_payment_allocations SET discount_taken=$3 WHERE vendor_payment_id=$1 AND bill_id=$2`,
-        [id, a.bill_id, discount.toFixed(2)]
+        `UPDATE vendor_payment_allocations
+            SET discount_taken=$3,vat_withholding_basis=$4,vat_withholding_applied=$5
+          WHERE vendor_payment_id=$1 AND bill_id=$2`,
+        [id, a.bill_id, discount.toFixed(2), whvat.taxableBasis || '0.00', whvat.withheldAmount || '0.00']
       );
 
       cashAppliedCents += parseDecimalToBigInt(cashApplied, 2);
       discountCents += parseDecimalToBigInt(discount, 2);
-      settlementCents += parseDecimalToBigInt(settlement, 2);
+      vatWithholdingCents += whvatCents;
+      settlementCents += settlementCurrentCents;
     }
 
     const amountTotalCents = parseDecimalToBigInt(vp.amount_total, 2);
@@ -569,9 +583,19 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
       await assertPostableActiveAccount({ orgId, accountId: settings.ap_discount_income_account_id, errMsg: "Invalid apDiscountIncomeAccountId", client });
     }
 
+    let ghTaxSettings = null;
+    if (vatWithholdingCents > 0n) {
+      ghTaxSettings = await ghWithholdingSvc.getSettings({ orgId, client });
+      if (!ghTaxSettings.vat_withholding_payable_account_id) {
+        throw new AppError(409, 'VAT withholding payable account is not configured');
+      }
+      await assertPostableActiveAccount({ orgId, accountId: ghTaxSettings.vat_withholding_payable_account_id, errMsg: 'Invalid VAT withholding payable account', client });
+    }
+
     const cashApplied = bigIntToDecimalString(cashAppliedCents, 2);
     const discountTotal = bigIntToDecimalString(discountCents, 2);
     const settlementTotal = bigIntToDecimalString(settlementCents, 2);
+    const vatWithholdingTotal = bigIntToDecimalString(vatWithholdingCents, 2);
     const unappliedAmount = bigIntToDecimalString(unappliedCents, 2);
 
     const period = await periodIF.findOpenPeriodForDate({ orgId, date: vp.payment_date, client });
@@ -588,6 +612,9 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
     }
     if (discountCents > 0n) {
       journalLines.push({ accountId: settings.ap_discount_income_account_id, debit: "0.00", credit: discountTotal, description: `Early payment discount ${vp.payment_no}` });
+    }
+    if (vatWithholdingCents > 0n) {
+      journalLines.push({ accountId: ghTaxSettings.vat_withholding_payable_account_id, debit: "0.00", credit: vatWithholdingTotal, description: `VAT withholding payable ${vp.payment_no}` });
     }
     journalLines.push({ accountId: cashAccountId, debit: "0.00", credit: bigIntToDecimalString(amountTotalCents, 2), description: `Cash/Bank payment ${vp.payment_no}` });
 
@@ -633,14 +660,24 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
           settlement_total=$5,
           discount_total=$6,
           unapplied_amount=$7,
+          vat_withholding_total=$8,
           posted_at=NOW(),
-          posted_by=$8,
+          posted_by=$9,
           updated_at=NOW()
       WHERE organization_id=$1 AND id=$2
       RETURNING *
       `,
-      [orgId, id, period.id, posted.journalId, settlementTotal, discountTotal, unappliedAmount, actorUserId]
+      [orgId, id, period.id, posted.journalId, settlementTotal, discountTotal, unappliedAmount, vatWithholdingTotal, actorUserId]
     );
+
+    // Capture Ghana income-WHT / VAT-withholding events at the actual payment event.
+    // This is idempotent per vendor-payment/bill/regime and does not create a second event on retry.
+    await ghWithholdingSvc.captureVendorPaymentWithholding({
+      orgId,
+      actorUserId,
+      vendorPaymentId: id,
+      client,
+    });
 
     // Update each bill status to paid if fully settled (based on all posted allocations)
     for (const a of allocations) {
@@ -701,6 +738,8 @@ async function voidVendorPayment({ orgId, actorUserId, id, reason }) {
       `SELECT bill_id FROM vendor_payment_allocations WHERE vendor_payment_id=$1`,
       [id]
     );
+
+    await ghWithholdingSvc.voidVendorPaymentWithholding({ orgId, vendorPaymentId: id, client });
 
     for (const r of affectedBills) {
       const outstanding = await getBillOutstanding(orgId, r.bill_id, client);

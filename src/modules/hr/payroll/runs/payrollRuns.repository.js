@@ -114,8 +114,10 @@ async function replaceRunLines(orgId, runId, lines) {
           INSERT INTO hr_payroll_run_lines(
             organization_id, payroll_run_id, line_no, employee_id,
             base_salary, total_earnings, total_deductions, gross_pay, net_pay,
-            currency, breakdown_json
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            currency, breakdown_json,
+            taxable_earnings, chargeable_income, paye_tax, bonus_tax, overtime_tax,
+            insurable_earnings, ssnit_employee, ssnit_employer, ssnit_tier1_payable, tier2_payable, total_employer_cost
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
         `,
         [
           orgId,
@@ -129,6 +131,17 @@ async function replaceRunLines(orgId, runId, lines) {
           l.net_pay ?? 0,
           (l.currency || 'GHS').toUpperCase(),
           l.breakdown || {},
+          l.taxable_earnings ?? 0,
+          l.chargeable_income ?? 0,
+          l.paye_tax ?? 0,
+          l.bonus_tax ?? 0,
+          l.overtime_tax ?? 0,
+          l.insurable_earnings ?? 0,
+          l.ssnit_employee ?? 0,
+          l.ssnit_employer ?? 0,
+          l.ssnit_tier1_payable ?? 0,
+          l.tier2_payable ?? 0,
+          l.total_employer_cost ?? 0,
         ]
       );
     }

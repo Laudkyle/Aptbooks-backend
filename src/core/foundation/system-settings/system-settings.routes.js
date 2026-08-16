@@ -344,7 +344,6 @@ router.get(
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
-      console.log(orgId,"This -- is the orgId for listing settings")
       const prefix = (req.query.prefix || "").toString();
       const limit = Math.min(Number.parseInt(String(req.query.limit || "200"), 10) || 200, 500);
 

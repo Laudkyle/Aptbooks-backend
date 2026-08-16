@@ -1,5 +1,6 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
+const { addMoney, normalizeMoney, normalizeRate } = require("../../../shared/tax/taxMath");
 
 function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&apos;");
@@ -10,21 +11,22 @@ function groupTaxByCategory(lines = []) {
   for (const line of lines) {
     const taxes = Array.isArray(line.taxes) ? line.taxes : [];
     for (const tax of taxes) {
-      const key = `${tax.category_code || tax.categoryCode || 'S'}::${tax.tax_rate || tax.rate || 0}::${tax.tax_type || tax.taxType || 'VAT'}`;
+      const rate = normalizeRate(tax.tax_rate ?? tax.rate ?? 0);
+      const key = `${tax.category_code || tax.categoryCode || 'S'}::${rate}::${tax.tax_type || tax.taxType || 'VAT'}`;
       if (!map.has(key)) map.set(key, {
         categoryCode: tax.category_code || tax.categoryCode || 'S',
         taxType: tax.tax_type || tax.taxType || 'VAT',
-        rate: Number(tax.tax_rate || tax.rate || 0),
-        taxableAmount: 0,
-        taxAmount: 0,
+        rate,
+        taxableAmount: '0.00',
+        taxAmount: '0.00',
         exemptionReasonCode: tax.exemption_reason_code || tax.exemptionReasonCode || null
       });
       const bucket = map.get(key);
-      bucket.taxableAmount += Number(tax.taxable_amount || tax.taxableAmount || 0);
-      bucket.taxAmount += Number(tax.tax_amount || tax.taxAmount || 0);
+      bucket.taxableAmount = addMoney(bucket.taxableAmount, tax.taxable_amount ?? tax.taxableAmount ?? 0);
+      bucket.taxAmount = addMoney(bucket.taxAmount, tax.tax_amount ?? tax.taxAmount ?? 0);
     }
   }
-  return Array.from(map.values()).map((b) => ({ ...b, taxableAmount: Number(b.taxableAmount.toFixed(2)), taxAmount: Number(b.taxAmount.toFixed(2)) }));
+  return Array.from(map.values());
 }
 
 function buildInvoicePayload({ inv, org, customer, lines, taxTotals }) {
@@ -78,13 +80,13 @@ function buildUblInvoiceXml({ inv, org, customer, lines, taxTotals }) {
   const currency = inv.currency_code || org.base_currency_code || "GHS";
   const taxTotalXml = taxTotals.map((t) => `
   <cac:TaxTotal>
-    <cbc:TaxAmount currencyID="${esc(currency)}">${esc(t.taxAmount.toFixed(2))}</cbc:TaxAmount>
+    <cbc:TaxAmount currencyID="${esc(currency)}">${esc(normalizeMoney(t.taxAmount))}</cbc:TaxAmount>
     <cac:TaxSubtotal>
-      <cbc:TaxableAmount currencyID="${esc(currency)}">${esc(t.taxableAmount.toFixed(2))}</cbc:TaxableAmount>
-      <cbc:TaxAmount currencyID="${esc(currency)}">${esc(t.taxAmount.toFixed(2))}</cbc:TaxAmount>
+      <cbc:TaxableAmount currencyID="${esc(currency)}">${esc(normalizeMoney(t.taxableAmount))}</cbc:TaxableAmount>
+      <cbc:TaxAmount currencyID="${esc(currency)}">${esc(normalizeMoney(t.taxAmount))}</cbc:TaxAmount>
       <cac:TaxCategory>
         <cbc:ID>${esc(t.categoryCode)}</cbc:ID>
-        <cbc:Percent>${esc((t.rate * 100).toFixed(2))}</cbc:Percent>
+        <cbc:Percent>${esc(normalizeRate(t.rate))}</cbc:Percent>
         ${t.exemptionReasonCode ? `<cbc:TaxExemptionReasonCode>${esc(t.exemptionReasonCode)}</cbc:TaxExemptionReasonCode>` : ''}
         <cac:TaxScheme><cbc:ID>${esc(t.taxType)}</cbc:ID></cac:TaxScheme>
       </cac:TaxCategory>
@@ -107,7 +109,7 @@ function buildUblInvoiceXml({ inv, org, customer, lines, taxTotals }) {
         <cbc:Name>${esc(l.description || "Item")}</cbc:Name>
         <cac:ClassifiedTaxCategory>
           <cbc:ID>${esc(firstTax.category_code || 'S')}</cbc:ID>
-          <cbc:Percent>${esc((Number(firstTax.tax_rate || 0) * 100).toFixed(2))}</cbc:Percent>
+          <cbc:Percent>${esc(normalizeRate(firstTax.tax_rate || 0))}</cbc:Percent>
           <cac:TaxScheme><cbc:ID>${esc(firstTax.tax_type || 'VAT')}</cbc:ID></cac:TaxScheme>
         </cac:ClassifiedTaxCategory>
       </cac:Item>

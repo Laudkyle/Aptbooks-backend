@@ -1,76 +1,115 @@
+const {
+  moneyToMinorUnits,
+  minorUnitsToMoney,
+  applyRecoverablePercent,
+} = require('./taxMath');
+
+// Compatibility helper for consumers that still expect a Number at the API/UI
+// boundary. All aggregation in this module is performed in integer minor units.
 function round2(n) {
-  return Number(Number(n || 0).toFixed(2));
+  return Number(minorUnitsToMoney(moneyToMinorUnits(n)));
+}
+
+function emptyMinorBuckets() {
+  return {
+    recoverable: 0n,
+    nonRecoverable: 0n,
+    withholding: 0n,
+    reverseCharge: 0n,
+    total: 0n,
+  };
+}
+
+function bucketsToNumbers(buckets) {
+  return Object.fromEntries(
+    Object.entries(buckets).map(([key, value]) => [key, Number(minorUnitsToMoney(value))])
+  );
 }
 
 function summarizeLineTaxDetails(lines = []) {
-  const summary = {
-    totalTax: 0,
-    recoverableInputTax: 0,
-    nonRecoverableInputTax: 0,
-    reverseChargeTax: 0,
-    outputTax: 0,
-    withholdingReceivable: 0,
-    withholdingPayable: 0,
-    byPostingAccount: new Map(),
-    byLineId: new Map()
+  const minor = {
+    totalTax: 0n,
+    recoverableInputTax: 0n,
+    nonRecoverableInputTax: 0n,
+    reverseChargeTax: 0n,
+    outputTax: 0n,
+    withholdingReceivable: 0n,
+    withholdingPayable: 0n,
   };
+  const byPostingAccountMinor = new Map();
+  const byLineId = new Map();
 
   for (const line of lines) {
     const details = Array.isArray(line.taxDetails) ? line.taxDetails : [];
-    const buckets = {
-      recoverable: 0,
-      nonRecoverable: 0,
-      withholding: 0,
-      reverseCharge: 0,
-      total: 0
-    };
+    const buckets = emptyMinorBuckets();
+
     for (const d of details) {
-      const taxAmount = round2(d.taxAmount || d.tax_amount || 0);
-      const recoverablePercent = Number(d.recoverablePercent ?? d.recoverable_percent ?? 1);
+      const taxAmount = d.taxAmount ?? d.tax_amount ?? 0;
+      const taxMinor = moneyToMinorUnits(taxAmount);
+      const recoverablePercent = d.recoverablePercent ?? d.recoverable_percent ?? 1;
       const postingAccountId = d.postingAccountId || d.posting_account_id || null;
       const taxType = d.taxType || d.tax_type || null;
       const direction = d.direction || null;
       const reverseCharge = d.reverseCharge === true || d.reverse_charge === true;
-      const recoverablePortion = round2(taxAmount * Math.max(0, Math.min(1, recoverablePercent)));
-      const nonRecoverablePortion = round2(taxAmount - recoverablePortion);
+      const recovery = applyRecoverablePercent(taxAmount, recoverablePercent);
+      const recoverableMinor = moneyToMinorUnits(recovery.recoverableAmount);
+      const nonRecoverableMinor = moneyToMinorUnits(recovery.nonRecoverableAmount);
 
-      summary.totalTax = round2(summary.totalTax + taxAmount);
-      buckets.total = round2(buckets.total + taxAmount);
-      buckets.recoverable = round2(buckets.recoverable + recoverablePortion);
-      buckets.nonRecoverable = round2(buckets.nonRecoverable + nonRecoverablePortion);
+      minor.totalTax += taxMinor;
+      buckets.total += taxMinor;
+      buckets.recoverable += recoverableMinor;
+      buckets.nonRecoverable += nonRecoverableMinor;
 
-      if (direction === 'output') summary.outputTax = round2(summary.outputTax + taxAmount);
+      if (direction === 'output') minor.outputTax += taxMinor;
       if (direction === 'input' && taxType !== 'WITHHOLDING') {
-        summary.recoverableInputTax = round2(summary.recoverableInputTax + recoverablePortion);
-        summary.nonRecoverableInputTax = round2(summary.nonRecoverableInputTax + nonRecoverablePortion);
+        minor.recoverableInputTax += recoverableMinor;
+        minor.nonRecoverableInputTax += nonRecoverableMinor;
       }
       if (reverseCharge) {
-        summary.reverseChargeTax = round2(summary.reverseChargeTax + taxAmount);
-        buckets.reverseCharge = round2(buckets.reverseCharge + taxAmount);
+        minor.reverseChargeTax += taxMinor;
+        buckets.reverseCharge += taxMinor;
       }
       if (taxType === 'WITHHOLDING' && direction === 'input') {
-        summary.withholdingPayable = round2(summary.withholdingPayable + taxAmount);
-        buckets.withholding = round2(buckets.withholding + taxAmount);
+        minor.withholdingPayable += taxMinor;
+        buckets.withholding += taxMinor;
       }
       if (taxType === 'WITHHOLDING' && direction === 'output') {
-        summary.withholdingReceivable = round2(summary.withholdingReceivable + taxAmount);
-        buckets.withholding = round2(buckets.withholding + taxAmount);
+        minor.withholdingReceivable += taxMinor;
+        buckets.withholding += taxMinor;
       }
 
       if (postingAccountId) {
-        summary.byPostingAccount.set(
+        byPostingAccountMinor.set(
           postingAccountId,
-          round2((summary.byPostingAccount.get(postingAccountId) || 0) + taxAmount)
+          (byPostingAccountMinor.get(postingAccountId) || 0n) + taxMinor
         );
       }
     }
-    summary.byLineId.set(line.id, buckets);
+
+    byLineId.set(line.id, bucketsToNumbers(buckets));
   }
 
-  return summary;
+  const byPostingAccount = new Map(
+    Array.from(byPostingAccountMinor.entries()).map(([accountId, value]) => [
+      accountId,
+      Number(minorUnitsToMoney(value)),
+    ])
+  );
+
+  return {
+    totalTax: Number(minorUnitsToMoney(minor.totalTax)),
+    recoverableInputTax: Number(minorUnitsToMoney(minor.recoverableInputTax)),
+    nonRecoverableInputTax: Number(minorUnitsToMoney(minor.nonRecoverableInputTax)),
+    reverseChargeTax: Number(minorUnitsToMoney(minor.reverseChargeTax)),
+    outputTax: Number(minorUnitsToMoney(minor.outputTax)),
+    withholdingReceivable: Number(minorUnitsToMoney(minor.withholdingReceivable)),
+    withholdingPayable: Number(minorUnitsToMoney(minor.withholdingPayable)),
+    byPostingAccount,
+    byLineId,
+  };
 }
 
 module.exports = {
   round2,
-  summarizeLineTaxDetails
+  summarizeLineTaxDetails,
 };

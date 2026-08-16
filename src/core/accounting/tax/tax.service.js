@@ -5,6 +5,7 @@ const periodIF = require("../../../interfaces/periodManagement.interface");
 const { withTransaction } = require("../../../db/tx");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 const { propagateDocumentWorkflowToJournal } = require("../../../modules/transactions/_shared/workflowJournalAudit.service");
+const { upsertTaxAdjustmentLedgerEntry } = require("../../../shared/tax/taxLedger");
 
 function normalizeTaxCodeRow(row) {
   if (!row) return row;
@@ -157,7 +158,7 @@ async function updateJurisdiction({ orgId, jurisdictionId, payload }) {
     countryCode: "country_code",
   };
   for (const [k, col] of Object.entries(map)) {
-    if (normalizedPayload[k] !== undefined) {
+    if (payload[k] !== undefined) {
       columns.push(`${col}=$${i++}`);
       params.push(payload[k] === "" ? null : payload[k]);
     }
@@ -416,17 +417,18 @@ async function createTaxRule({ orgId, payload }) {
 
   const { rows } = await pool.query(
     `INSERT INTO tax_rules(
-        organization_id, code, name, document_type, partner_type, supply_type, place_of_supply_basis, transaction_scope,
+        organization_id, code, name, rule_group, document_type, partner_type, supply_type, place_of_supply_basis, transaction_scope,
         jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
      ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,COALESCE($8,'both'),
-        $9,$10,COALESCE($11,100),COALESCE($12,CURRENT_DATE),$13,COALESCE($14,'{}'::jsonb),COALESCE($15,'active')
+        $1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'both'),
+        $10,$11,COALESCE($12,100),COALESCE($13,CURRENT_DATE),$14,COALESCE($15,'{}'::jsonb),COALESCE($16,'active')
      )
      RETURNING *`,
     [
       orgId,
       payload.code || null,
       payload.name,
+      payload.ruleGroup || null,
       payload.documentType || null,
       payload.partnerType || null,
       payload.supplyType || null,
@@ -462,6 +464,7 @@ async function updateTaxRule({ orgId, ruleId, payload }) {
   const map = {
     code: "code",
     name: "name",
+    ruleGroup: "rule_group",
     documentType: "document_type",
     partnerType: "partner_type",
     supplyType: "supply_type",
@@ -504,6 +507,152 @@ async function deleteTaxRule({ orgId, ruleId }) {
   );
   if (!rowCount) throw new AppError(404, "Tax rule not found");
   return { deleted: true };
+}
+
+// ==================== TAX CATALOG PROFILES ====================
+async function getTaxCatalogProfileById({ orgId, profileId, client = pool }) {
+  const { rows } = await client.query(
+    `SELECT tcp.*,
+            stc.code AS sales_tax_code, stc.name AS sales_tax_code_name,
+            ptc.code AS purchase_tax_code, ptc.name AS purchase_tax_code_name
+       FROM tax_catalog_profiles tcp
+       LEFT JOIN tax_codes stc ON stc.id=tcp.sales_tax_code_id
+       LEFT JOIN tax_codes ptc ON ptc.id=tcp.purchase_tax_code_id
+      WHERE tcp.organization_id=$1 AND tcp.id=$2`,
+    [orgId, profileId]
+  );
+  if (!rows.length) throw new AppError(404, 'Tax catalog profile not found');
+  return rows[0];
+}
+
+async function listTaxCatalogProfiles({ orgId, query = {} }) {
+  const params = [orgId];
+  const where = ['tcp.organization_id=$1'];
+  let i = 2;
+  if (query.status) { where.push(`tcp.status=$${i++}`); params.push(query.status); }
+  if (query.supplyType) { where.push(`tcp.supply_type=$${i++}`); params.push(query.supplyType); }
+  if (query.taxCategory) { where.push(`tcp.tax_category=$${i++}`); params.push(query.taxCategory); }
+  if (query.activeOn) {
+    where.push(`tcp.effective_from <= $${i}::date AND (tcp.effective_to IS NULL OR tcp.effective_to >= $${i}::date)`);
+    params.push(query.activeOn); i += 1;
+  }
+  const { rows } = await pool.query(
+    `SELECT tcp.*,
+            stc.code AS sales_tax_code, stc.name AS sales_tax_code_name,
+            ptc.code AS purchase_tax_code, ptc.name AS purchase_tax_code_name,
+            (SELECT COUNT(*)::int FROM inventory_items i WHERE i.organization_id=tcp.organization_id AND i.tax_profile_id=tcp.id) AS item_count
+       FROM tax_catalog_profiles tcp
+       LEFT JOIN tax_codes stc ON stc.id=tcp.sales_tax_code_id
+       LEFT JOIN tax_codes ptc ON ptc.id=tcp.purchase_tax_code_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY tcp.code`,
+    params
+  );
+  return rows;
+}
+
+async function createTaxCatalogProfile({ orgId, payload }) {
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.salesTaxCodeId || null });
+  await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.purchaseTaxCodeId || null });
+  const { rows } = await pool.query(
+    `INSERT INTO tax_catalog_profiles(
+       organization_id, code, name, supply_type, tax_category,
+       sales_tax_scope, purchase_tax_scope, sales_tax_code_id, purchase_tax_code_id,
+       exemption_reason_code, exemption_reason, hs_code, fiscal_classification_code,
+       purchase_recovery_mode, default_recoverable_percent, legal_reference,
+       effective_from, effective_to, status, metadata
+     ) VALUES($1,$2,$3,COALESCE($4,'goods'),$5,COALESCE($6,'taxable'),COALESCE($7,'taxable'),$8,$9,$10,$11,$12,$13,COALESCE($14,'direct_taxable'),$15,$16,COALESCE($17,CURRENT_DATE),$18,COALESCE($19,'active'),$20::jsonb)
+     RETURNING *`,
+    [
+      orgId, payload.code, payload.name, payload.supplyType || null, payload.taxCategory || null,
+      payload.salesTaxScope || null, payload.purchaseTaxScope || null,
+      payload.salesTaxCodeId || null, payload.purchaseTaxCodeId || null,
+      payload.exemptionReasonCode || null, payload.exemptionReason || null,
+      payload.hsCode || null, payload.fiscalClassificationCode || null,
+      payload.purchaseRecoveryMode || null, payload.defaultRecoverablePercent ?? null, payload.legalReference || null,
+      payload.effectiveFrom || null, payload.effectiveTo || null, payload.status || null,
+      JSON.stringify(payload.metadata || {})
+    ]
+  );
+  return rows[0];
+}
+
+async function updateTaxCatalogProfile({ orgId, profileId, payload }) {
+  const before = await getTaxCatalogProfileById({ orgId, profileId });
+  if (payload.salesTaxCodeId !== undefined) await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.salesTaxCodeId });
+  if (payload.purchaseTaxCodeId !== undefined) await assertTaxCodeBelongsToOrg({ orgId, taxCodeId: payload.purchaseTaxCodeId });
+  const map = {
+    code: 'code', name: 'name', supplyType: 'supply_type', taxCategory: 'tax_category',
+    salesTaxScope: 'sales_tax_scope', purchaseTaxScope: 'purchase_tax_scope',
+    salesTaxCodeId: 'sales_tax_code_id', purchaseTaxCodeId: 'purchase_tax_code_id',
+    exemptionReasonCode: 'exemption_reason_code', exemptionReason: 'exemption_reason',
+    hsCode: 'hs_code', fiscalClassificationCode: 'fiscal_classification_code',
+    purchaseRecoveryMode: 'purchase_recovery_mode', defaultRecoverablePercent: 'default_recoverable_percent', legalReference: 'legal_reference',
+    effectiveFrom: 'effective_from', effectiveTo: 'effective_to', status: 'status'
+  };
+  const sets = []; const params = [orgId, profileId]; let i = 3;
+  for (const [key, col] of Object.entries(map)) {
+    if (payload[key] !== undefined) { sets.push(`${col}=$${i++}`); params.push(payload[key] === '' ? null : payload[key]); }
+  }
+  if (payload.metadata !== undefined) { sets.push(`metadata=$${i++}::jsonb`); params.push(JSON.stringify(payload.metadata || {})); }
+  if (!sets.length) return { before, after: before };
+  const { rows } = await pool.query(
+    `UPDATE tax_catalog_profiles SET ${sets.join(', ')}, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`,
+    params
+  );
+  return { before, after: rows[0] };
+}
+
+async function deleteTaxCatalogProfile({ orgId, profileId }) {
+  const { rows: used } = await pool.query(`SELECT COUNT(*)::int AS count FROM inventory_items WHERE organization_id=$1 AND tax_profile_id=$2`, [orgId, profileId]);
+  if ((used[0]?.count || 0) > 0) {
+    const { rows } = await pool.query(`UPDATE tax_catalog_profiles SET status='inactive', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING *`, [orgId, profileId]);
+    if (!rows.length) throw new AppError(404, 'Tax catalog profile not found');
+    return { deleted: false, deactivated: true, profile: rows[0] };
+  }
+  const { rowCount } = await pool.query(`DELETE FROM tax_catalog_profiles WHERE organization_id=$1 AND id=$2`, [orgId, profileId]);
+  if (!rowCount) throw new AppError(404, 'Tax catalog profile not found');
+  return { deleted: true };
+}
+
+async function listTaxLedgerEntries({ orgId, query = {} }) {
+  const params = [orgId];
+  const where = ['tle.organization_id=$1'];
+  let i = 2;
+  for (const [key, col] of [['sourceType','source_type'],['taxType','tax_type'],['taxScope','tax_scope'],['direction','direction'],['taxCodeId','tax_code_id']]) {
+    if (query[key]) { where.push(`tle.${col}=$${i++}`); params.push(query[key]); }
+  }
+  if (query.fromDate) { where.push(`tle.document_date >= $${i++}::date`); params.push(query.fromDate); }
+  if (query.toDate) { where.push(`tle.document_date <= $${i++}::date`); params.push(query.toDate); }
+
+  if (query.includeDraft !== true && query.includeDraft !== 'true') {
+    where.push(`(
+      (tle.source_type='invoice' AND EXISTS (SELECT 1 FROM invoices x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status IN ('issued','paid'))) OR
+      (tle.source_type='bill' AND EXISTS (SELECT 1 FROM bills x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status IN ('issued','paid'))) OR
+      (tle.source_type='credit_note' AND EXISTS (SELECT 1 FROM credit_notes x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='issued')) OR
+      (tle.source_type='debit_note' AND EXISTS (SELECT 1 FROM debit_notes x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='issued')) OR
+      (tle.source_type='pos_sale' AND EXISTS (SELECT 1 FROM pos_sales x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status IN ('completed','posted','partially_returned','returned','partially_refunded','refunded'))) OR
+      (tle.source_type='pos_return' AND EXISTS (SELECT 1 FROM pos_return_authorizations x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='received')) OR
+      (tle.source_type IN ('expense','petty_cash','return') AND EXISTS (SELECT 1 FROM operational_documents x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.module_code=tle.source_type AND x.status='posted')) OR
+      (tle.source_type='tax_adjustment' AND EXISTS (SELECT 1 FROM tax_adjustments x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='posted')) OR
+      (tle.source_type='imported_service' AND EXISTS (SELECT 1 FROM imported_service_transactions x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='posted'))
+    )`);
+  }
+
+  const { rows } = await pool.query(
+    `SELECT tle.*, tc.code AS tax_code, tc.name AS tax_code_name, bp.name AS partner_name,
+            ROUND(tle.taxable_amount * tle.sign_factor,2)::text AS signed_taxable_amount,
+            ROUND(tle.tax_amount * tle.sign_factor,2)::text AS signed_tax_amount,
+            ROUND(tle.recoverable_amount * tle.sign_factor,2)::text AS signed_recoverable_amount,
+            ROUND(tle.nonrecoverable_amount * tle.sign_factor,2)::text AS signed_nonrecoverable_amount
+       FROM tax_ledger_entries tle
+       LEFT JOIN tax_codes tc ON tc.id=tle.tax_code_id
+       LEFT JOIN business_partners bp ON bp.id=tle.partner_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY tle.document_date DESC, tle.document_no, tle.line_no, tle.created_at`,
+    params
+  );
+  return rows;
 }
 
 async function listTaxCodes({ orgId, query }) {
@@ -716,6 +865,8 @@ async function setTaxSettings({ orgId, payload }) {
     withholdingTaxReceivableAccountId:
       payload.withholdingTaxReceivableAccountId,
     reverseChargeTaxAccountId: payload.reverseChargeTaxAccountId,
+    vatWithholdingPayableAccountId: payload.vatWithholdingPayableAccountId,
+    vatWithholdingReceivableAccountId: payload.vatWithholdingReceivableAccountId,
   })) {
     if (accountId !== undefined) {
       await assertAccountBelongsToOrg({ orgId, accountId, fieldName });
@@ -751,6 +902,28 @@ async function setTaxSettings({ orgId, payload }) {
       payload.enforcePartnerTaxProfile ?? current.enforce_partner_tax_profile,
     require_tax_jurisdiction:
       payload.requireTaxJurisdiction ?? current.require_tax_jurisdiction,
+    mixed_input_provisional_percent:
+      payload.mixedInputProvisionalPercent ?? current.mixed_input_provisional_percent ?? 0,
+    gh_vat_goods_registration_threshold:
+      payload.ghVatGoodsRegistrationThreshold ?? current.gh_vat_goods_registration_threshold ?? '750000.00',
+    gh_vat_monitor_enabled:
+      payload.ghVatMonitorEnabled ?? current.gh_vat_monitor_enabled ?? true,
+    gh_vat_manual_goods_turnover:
+      payload.ghVatManualGoodsTurnover ?? current.gh_vat_manual_goods_turnover ?? null,
+    gh_vat_turnover_basis:
+      payload.ghVatTurnoverBasis ?? current.gh_vat_turnover_basis ?? 'taxable_goods_rolling_12m',
+    gh_income_wht_agent_enabled:
+      payload.ghIncomeWhtAgentEnabled ?? current.gh_income_wht_agent_enabled ?? false,
+    gh_vat_withholding_agent_enabled:
+      payload.ghVatWithholdingAgentEnabled ?? current.gh_vat_withholding_agent_enabled ?? false,
+    gh_wht_annual_threshold:
+      payload.ghWhtAnnualThreshold ?? current.gh_wht_annual_threshold ?? '2000.00',
+    gh_vat_withholding_rate:
+      payload.ghVatWithholdingRate ?? current.gh_vat_withholding_rate ?? '7.000000',
+    vat_withholding_payable_account_id:
+      payload.vatWithholdingPayableAccountId ?? current.vat_withholding_payable_account_id ?? null,
+    vat_withholding_receivable_account_id:
+      payload.vatWithholdingReceivableAccountId ?? current.vat_withholding_receivable_account_id ?? null,
   };
 
   const { rows } = await pool.query(
@@ -765,6 +938,17 @@ async function setTaxSettings({ orgId, payload }) {
          tax_rounding_strategy=$9,
          enforce_partner_tax_profile=$10,
          require_tax_jurisdiction=$11,
+         mixed_input_provisional_percent=$12,
+         gh_vat_goods_registration_threshold=$13,
+         gh_vat_monitor_enabled=$14,
+         gh_vat_manual_goods_turnover=$15,
+         gh_vat_turnover_basis=$16,
+         gh_income_wht_agent_enabled=$17,
+         gh_vat_withholding_agent_enabled=$18,
+         gh_wht_annual_threshold=$19,
+         gh_vat_withholding_rate=$20,
+         vat_withholding_payable_account_id=$21,
+         vat_withholding_receivable_account_id=$22,
          updated_at=NOW()
      WHERE organization_id=$1
      RETURNING *`,
@@ -780,6 +964,17 @@ async function setTaxSettings({ orgId, payload }) {
       out.tax_rounding_strategy || "line",
       !!out.enforce_partner_tax_profile,
       !!out.require_tax_jurisdiction,
+      out.mixed_input_provisional_percent,
+      out.gh_vat_goods_registration_threshold,
+      !!out.gh_vat_monitor_enabled,
+      out.gh_vat_manual_goods_turnover,
+      out.gh_vat_turnover_basis,
+      !!out.gh_income_wht_agent_enabled,
+      !!out.gh_vat_withholding_agent_enabled,
+      out.gh_wht_annual_threshold,
+      out.gh_vat_withholding_rate,
+      out.vat_withholding_payable_account_id || null,
+      out.vat_withholding_receivable_account_id || null,
     ],
   );
 
@@ -961,6 +1156,7 @@ async function postTaxAdjustment({ orgId, actorUserId, adjustmentId }) {
         actorUserId,
       ],
     );
+    await upsertTaxAdjustmentLedgerEntry({ client, adjustment: rows[0] });
     return rows[0];
   });
 }
@@ -1153,10 +1349,10 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       withholding_rate_override, withholding_certificate_no,
       filing_contact_email, customer_tax_identifier_type, vendor_tax_identifier_type,
       input_tax_recovery_mode, destination_country_code, registration_status,
-      e_invoice_network, e_invoice_endpoint,
+      e_invoice_network, e_invoice_endpoint, residency_status, economic_activity_code,
       created_by, updated_by
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$32
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$34
     ) RETURNING *`,
     [
       orgId,
@@ -1190,7 +1386,28 @@ async function createPartnerTaxProfile({ orgId, actorUserId, payload }) {
       payload.registrationStatus || "registered",
       payload.eInvoiceNetwork || null,
       payload.eInvoiceEndpoint || null,
+      payload.residencyStatus || null,
+      payload.economicActivityCode || null,
       actorUserId || null,
+    ],
+  );
+  await pool.query(
+    `UPDATE tax_partner_profiles
+        SET withholding_exempt=$3,
+            withholding_exemption_reference=$4,
+            withholding_exemption_expiry=$5,
+            default_withholding_category=$6,
+            vat_withholding_eligible=$7,
+            updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2`,
+    [
+      orgId,
+      rows[0].id,
+      payload.withholdingExempt === true,
+      payload.withholdingExemptionReference || null,
+      payload.withholdingExemptionExpiry || null,
+      payload.defaultWithholdingCategory || null,
+      payload.vatWithholdingEligible !== false,
     ],
   );
   return getPartnerTaxProfile({ orgId, profileId: rows[0].id });
@@ -1268,6 +1485,13 @@ async function updatePartnerTaxProfile({
     registrationStatus: "registration_status",
     eInvoiceNetwork: "e_invoice_network",
     eInvoiceEndpoint: "e_invoice_endpoint",
+    residencyStatus: "residency_status",
+    economicActivityCode: "economic_activity_code",
+    withholdingExempt: "withholding_exempt",
+    withholdingExemptionReference: "withholding_exemption_reference",
+    withholdingExemptionExpiry: "withholding_exemption_expiry",
+    defaultWithholdingCategory: "default_withholding_category",
+    vatWithholdingEligible: "vat_withholding_eligible",
   };
 
   for (const [k, col] of Object.entries(map)) {
@@ -1945,12 +2169,14 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
             organization_id, jurisdiction_id, code, name, tax_type, rate, is_compound,
             box_code, direction, category_code, tax_scope, application_scope, calculation_method,
             exemption_reason_code, exemption_reason, reverse_charge, recoverable_percent, reporting_group,
-            effective_from, effective_to, status, metadata
+            effective_from, effective_to, status, metadata,
+            withholding_regime, withholding_treatment, threshold_basis, threshold_amount
          ) VALUES (
             $1,$2,$3,$4,$5,$6::numeric,COALESCE($7,false),
             $8,$9,$10,COALESCE($11,'taxable'),COALESCE($12,'both'),COALESCE($13,'standard'),
             $14,$15,COALESCE($16,false),COALESCE($17,1),$18,
-            COALESCE($19,CURRENT_DATE),$20,COALESCE($21,'active'),$22::jsonb
+            COALESCE($19,CURRENT_DATE),$20,COALESCE($21,'active'),$22::jsonb,
+            $23,$24,$25,$26
          )
          ON CONFLICT (organization_id, code) DO UPDATE SET
             jurisdiction_id=EXCLUDED.jurisdiction_id,
@@ -1969,6 +2195,10 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
             reverse_charge=EXCLUDED.reverse_charge,
             recoverable_percent=EXCLUDED.recoverable_percent,
             reporting_group=EXCLUDED.reporting_group,
+            withholding_regime=EXCLUDED.withholding_regime,
+            withholding_treatment=EXCLUDED.withholding_treatment,
+            threshold_basis=EXCLUDED.threshold_basis,
+            threshold_amount=EXCLUDED.threshold_amount,
             effective_from=EXCLUDED.effective_from,
             effective_to=EXCLUDED.effective_to,
             status=EXCLUDED.status,
@@ -1998,6 +2228,10 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
           tc.effectiveTo ?? null,
           tc.status || null,
           jsonb(rowMetadata),
+          tc.withholdingRegime || null,
+          tc.withholdingTreatment || null,
+          tc.thresholdBasis || (tc.thresholdAmount != null ? "annual_cumulative" : null),
+          tc.thresholdAmount ?? null,
         ],
       );
       taxCodeByCode.set(rows[0].code, rows[0].id);
@@ -2022,6 +2256,48 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
       await client.query(`UPDATE tax_codes SET is_compound=TRUE, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, parentId]);
     }
 
+    let catalogProfileCount = 0;
+    for (const profile of asArray(metadata.catalogProfiles)) {
+      const profileCode = String(profile.code || '').trim();
+      if (!profileCode) continue;
+      const salesTaxCodeId = profile.salesTaxCodeId || taxCodeByCode.get(profile.salesTaxCode || null) || null;
+      const purchaseTaxCodeId = profile.purchaseTaxCodeId || taxCodeByCode.get(profile.purchaseTaxCode || null) || null;
+      await client.query(
+        `INSERT INTO tax_catalog_profiles(
+           organization_id, code, name, supply_type, tax_category,
+           sales_tax_scope, purchase_tax_scope, sales_tax_code_id, purchase_tax_code_id,
+           exemption_reason_code, exemption_reason, hs_code, fiscal_classification_code,
+           effective_from, effective_to, status, metadata
+         ) VALUES($1,$2,$3,COALESCE($4,'goods'),$5,COALESCE($6,'taxable'),COALESCE($7,'taxable'),$8,$9,$10,$11,$12,$13,COALESCE($14,CURRENT_DATE),$15,COALESCE($16,'active'),$17::jsonb)
+         ON CONFLICT (organization_id, code) DO UPDATE SET
+           name=EXCLUDED.name,
+           supply_type=EXCLUDED.supply_type,
+           tax_category=EXCLUDED.tax_category,
+           sales_tax_scope=EXCLUDED.sales_tax_scope,
+           purchase_tax_scope=EXCLUDED.purchase_tax_scope,
+           sales_tax_code_id=EXCLUDED.sales_tax_code_id,
+           purchase_tax_code_id=EXCLUDED.purchase_tax_code_id,
+           exemption_reason_code=EXCLUDED.exemption_reason_code,
+           exemption_reason=EXCLUDED.exemption_reason,
+           hs_code=COALESCE(EXCLUDED.hs_code,tax_catalog_profiles.hs_code),
+           fiscal_classification_code=COALESCE(EXCLUDED.fiscal_classification_code,tax_catalog_profiles.fiscal_classification_code),
+           effective_from=EXCLUDED.effective_from,
+           effective_to=EXCLUDED.effective_to,
+           status=EXCLUDED.status,
+           metadata=tax_catalog_profiles.metadata || EXCLUDED.metadata,
+           updated_at=NOW()`,
+        [
+          orgId, profileCode, profile.name || profileCode, profile.supplyType || null, profile.taxCategory || null,
+          profile.salesTaxScope || null, profile.purchaseTaxScope || null, salesTaxCodeId, purchaseTaxCodeId,
+          profile.exemptionReasonCode || null, profile.exemptionReason || null, profile.hsCode || null,
+          profile.fiscalClassificationCode || null, profile.effectiveFrom || metadata.effectiveFrom || null,
+          profile.effectiveTo || null, profile.status || 'active',
+          jsonb({ ...(profile.metadata || {}), installedFromPack: pack.pack_code })
+        ]
+      );
+      catalogProfileCount += 1;
+    }
+
     for (const rule of asArray(metadata.taxRules)) {
       const code = rule.taxCode || rule.tax_code || null;
       const taxCodeId = rule.taxCodeId || taxCodeByCode.get(code);
@@ -2033,6 +2309,7 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
         orgId,
         ruleCode,
         rule.name || code,
+        rule.ruleGroup || null,
         rule.documentType || null,
         rule.partnerType || null,
         rule.supplyType || null,
@@ -2054,18 +2331,19 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
         await client.query(
           `UPDATE tax_rules
               SET name=$3,
-                  document_type=$4,
-                  partner_type=$5,
-                  supply_type=$6,
-                  place_of_supply_basis=$7,
-                  transaction_scope=COALESCE($8,'both'),
-                  jurisdiction_id=$9,
-                  tax_code_id=$10,
-                  priority=COALESCE($11,100),
-                  effective_from=COALESCE($12,CURRENT_DATE),
-                  effective_to=$13,
-                  conditions=COALESCE($14,'{}'::jsonb),
-                  status=COALESCE($15,'active'),
+                  rule_group=$4,
+                  document_type=$5,
+                  partner_type=$6,
+                  supply_type=$7,
+                  place_of_supply_basis=$8,
+                  transaction_scope=COALESCE($9,'both'),
+                  jurisdiction_id=$10,
+                  tax_code_id=$11,
+                  priority=COALESCE($12,100),
+                  effective_from=COALESCE($13,CURRENT_DATE),
+                  effective_to=$14,
+                  conditions=COALESCE($15,'{}'::jsonb),
+                  status=COALESCE($16,'active'),
                   updated_at=NOW()
             WHERE organization_id=$1 AND code=$2`,
           ruleParams,
@@ -2073,10 +2351,10 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
       } else {
         await client.query(
           `INSERT INTO tax_rules(
-              organization_id, code, name, document_type, partner_type, supply_type, place_of_supply_basis,
+              organization_id, code, name, rule_group, document_type, partner_type, supply_type, place_of_supply_basis,
               transaction_scope, jurisdiction_id, tax_code_id, priority, effective_from, effective_to, conditions, status
            ) VALUES (
-              $1,$2,$3,$4,$5,$6,$7,COALESCE($8,'both'),$9,$10,COALESCE($11,100),COALESCE($12,CURRENT_DATE),$13,COALESCE($14,'{}'::jsonb),COALESCE($15,'active')
+              $1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,'both'),$10,$11,COALESCE($12,100),COALESCE($13,CURRENT_DATE),$14,COALESCE($15,'{}'::jsonb),COALESCE($16,'active')
            )`,
           ruleParams,
         );
@@ -2095,6 +2373,7 @@ async function installCountryPack({ orgId, actorUserId, payload }) {
       installedCounts: {
         jurisdictions: jurisdictionByCode.size,
         taxCodes: taxCodeByCode.size,
+        catalogProfiles: catalogProfileCount,
         rules: asArray(metadata.taxRules).length,
       },
     };
@@ -2112,28 +2391,57 @@ async function listAutomationRules({ orgId }) {
   return rows.map(normalizeAutomationRuleRow);
 }
 
+function deriveAutomationRuleCode(payload) {
+  if (payload.code && String(payload.code).trim()) return String(payload.code).trim();
+  return String(payload.name || "tax automation rule")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 120);
+}
+
 async function upsertAutomationRule({ orgId, actorUserId, payload }) {
+  const code = deriveAutomationRuleCode(payload);
+  const scope = payload.scope || {};
+  const action = payload.action || {};
+  // Keep the legacy automation columns and the schema-129 compatibility columns
+  // in sync. `code` is NOT NULL after migration 129.
+  const config = {
+    scheduleCode: payload.scheduleCode || null,
+    scope,
+    action,
+  };
+
   const { rows } = await pool.query(
-    `INSERT INTO tax_automation_rules(organization_id, name, trigger_code, schedule_code, scope_json, action_json, is_enabled, created_by, updated_by)
-     VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,COALESCE($7,TRUE),$8,$8)
+    `INSERT INTO tax_automation_rules(
+       organization_id, code, name, trigger_code, schedule_code, scope_json, action_json,
+       is_enabled, created_by, updated_by, trigger_type, config_json
+     )
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,COALESCE($8,TRUE),$9,$9,$4,$10::jsonb)
      ON CONFLICT (organization_id, name) DO UPDATE
-       SET trigger_code=EXCLUDED.trigger_code,
+       SET code=EXCLUDED.code,
+           trigger_code=EXCLUDED.trigger_code,
            schedule_code=EXCLUDED.schedule_code,
            scope_json=EXCLUDED.scope_json,
            action_json=EXCLUDED.action_json,
+           trigger_type=EXCLUDED.trigger_type,
+           config_json=EXCLUDED.config_json,
            is_enabled=EXCLUDED.is_enabled,
            updated_by=EXCLUDED.updated_by,
            updated_at=NOW()
      RETURNING *`,
     [
       orgId,
+      code,
       payload.name,
       payload.triggerCode,
       payload.scheduleCode || null,
-      JSON.stringify(payload.scope || {}),
-      JSON.stringify(payload.action || {}),
+      JSON.stringify(scope),
+      JSON.stringify(action),
       payload.isEnabled,
       actorUserId || null,
+      JSON.stringify(config),
     ],
   );
   return rows[0];
@@ -3381,7 +3689,7 @@ function percentOfUnits(baseUnits, rateMicros) {
 }
 
 async function getGhanaSetupChecklist({ orgId }) {
-  const [packs, jurisdictions, codes, settings, registrations, templates, rules] = await Promise.all([
+  const [packs, jurisdictions, codes, settings, registrations, templates, rules, catalogProfiles] = await Promise.all([
     listCountryPacks({ orgId }),
     listJurisdictions({ orgId }),
     listTaxCodes({ orgId, query: {} }),
@@ -3389,18 +3697,25 @@ async function getGhanaSetupChecklist({ orgId }) {
     listTaxRegistrations({ orgId, query: {} }),
     listTaxReturnTemplates({ orgId, query: {} }),
     listTaxRules({ orgId, query: {} }),
+    listTaxCatalogProfiles({ orgId, query: { status: "active" } }),
   ]);
   const ghPack = packs.find((p) => String(p.country_code || p.countryCode || "").toUpperCase() === "GH");
   const ghJurisdiction = jurisdictions.find((j) => String(j.code || "").toUpperCase() === "GH");
   const ghCodes = codes.filter((c) => String(c.code || "").startsWith("GH_"));
   const ghVat = ghCodes.find((c) => c.code === "GH_VAT_EFFECTIVE_20");
   const ghWht = ghCodes.filter((c) => String(c.tax_type || c.taxType || "").includes("WITHHOLDING"));
+  const importedServicesCode = ghCodes.find((c) => c.code === "GH_IMPORTED_SERVICES_20");
+  const ghWhVat = ghCodes.find((c) => c.code === "GH_WHVAT_7");
+  const ghCatalogProfiles = catalogProfiles.filter((p) => String(p.code || "").startsWith("GH_"));
   const ghTemplates = templates.filter((t) => String(t.code || t.template_code || "").startsWith("GH_"));
   const requiredSettings = [
     ["Output tax account", settings.output_tax_account_id],
     ["Input tax account", settings.input_tax_account_id],
     ["Withholding payable account", settings.withholding_tax_payable_account_id],
     ["Withholding receivable account", settings.withholding_tax_receivable_account_id],
+    ["Non-recoverable input tax account", settings.non_recoverable_input_tax_account_id],
+    ["Reverse-charge tax account", settings.reverse_charge_tax_account_id || settings.output_tax_account_id],
+    ["VAT withholding payable account", settings.vat_withholding_payable_account_id],
   ];
   const checklist = [
     { key: "ghana_pack", label: "Install Ghana tax country pack", complete: !!ghPack?.is_installed || !!ghPack?.isInstalled, action: "Install Ghana defaults" },
@@ -3408,6 +3723,11 @@ async function getGhanaSetupChecklist({ orgId }) {
     { key: "ghana_vat", label: "Install Ghana VAT/NHIL/GETFund codes", complete: !!ghVat, action: "Install Ghana defaults" },
     { key: "ghana_wht", label: "Install Ghana withholding tax codes", complete: ghWht.length >= 5, action: "Install Ghana defaults" },
     { key: "ghana_templates", label: "Install Ghana return templates", complete: ghTemplates.length >= 2, action: "Install Ghana defaults" },
+    { key: "ghana_catalog_profiles", label: "Configure Ghana taxable/exempt/zero-rated catalog profiles", complete: ghCatalogProfiles.some((p) => p.code === "GH_STANDARD_GOODS") && ghCatalogProfiles.some((p) => p.code === "GH_EXEMPT_SUPPLY") && ghCatalogProfiles.some((p) => p.code === "GH_ZERO_RATED_EXPORT"), action: "Install Ghana defaults and classify products/services" },
+    { key: "ghana_mixed_input", label: "Enable mixed-input recovery classification", complete: ghCatalogProfiles.some((p) => p.code === "GH_MIXED_INPUT"), action: "Run migration 149 or add a mixed-use tax profile" },
+    { key: "ghana_imported_services", label: "Install Ghana imported-services VAT code", complete: !!importedServicesCode, action: "Run migration 149 / update Ghana tax pack" },
+    { key: "ghana_whvat", label: "Install Ghana VAT withholding 7% regime", complete: !!ghWhVat, action: "Run migration 150 / update Ghana tax pack" },
+    { key: "ghana_vat_monitor", label: "Enable VAT registration threshold monitoring", complete: settings.gh_vat_monitor_enabled !== false, action: "Enable the Ghana VAT registration monitor in Tax Settings" },
     { key: "tax_registration", label: "Add the organisation's GRA tax registration", complete: registrations.length > 0, action: "Create tax registration" },
     { key: "tax_rules", label: "Enable default tax determination rules", complete: rules.some((r) => String(r.name || "").toLowerCase().includes("ghana")), action: "Install workflows" },
     ...requiredSettings.map(([label, value]) => ({ key: label.toLowerCase().replace(/[^a-z0-9]+/g, "_"), label, complete: !!value, action: "Map tax posting account" })),
@@ -3508,6 +3828,7 @@ async function installGhanaTaxWorkflows({ orgId, actorUserId }) {
     orgId,
     actorUserId,
     payload: {
+      code: "gh_vat_monthly_return_reminder",
       name: "Ghana monthly VAT return reminder",
       triggerCode: "return_due",
       scheduleCode: "weekly",
@@ -3520,6 +3841,7 @@ async function installGhanaTaxWorkflows({ orgId, actorUserId }) {
     orgId,
     actorUserId,
     payload: {
+      code: "gh_income_wht_monthly_remittance_reminder",
       name: "Ghana withholding remittance reminder",
       triggerCode: "return_due",
       scheduleCode: "weekly",
@@ -3528,7 +3850,20 @@ async function installGhanaTaxWorkflows({ orgId, actorUserId }) {
       isEnabled: true,
     },
   });
-  return { installed: true, pack: packResult, configuredTemplates: tplRows.length, automationRules: 2, checklist: await getGhanaSetupChecklist({ orgId }) };
+  await upsertAutomationRule({
+    orgId,
+    actorUserId,
+    payload: {
+      code: "gh_whvat_monthly_return_reminder",
+      name: "Ghana VAT withholding return reminder",
+      triggerCode: "return_due",
+      scheduleCode: "weekly",
+      scope: { countryCode: "GH", taxType: "WITHHOLDING", regime: "vat_withholding", cadence: "monthly", dueDay: 15 },
+      action: { type: "notify", message: "Review VAT withholding certificates, WHVAT return and remittance due by the 15th." },
+      isEnabled: true,
+    },
+  });
+  return { installed: true, pack: packResult, configuredTemplates: tplRows.length, automationRules: 3, checklist: await getGhanaSetupChecklist({ orgId }) };
 }
 
 // ==================== MODULE EXPORTS ====================
@@ -3549,6 +3884,12 @@ module.exports = {
   updateTaxRule,
   deleteTaxRule,
   getTaxRuleById,
+  listTaxCatalogProfiles,
+  getTaxCatalogProfileById,
+  createTaxCatalogProfile,
+  updateTaxCatalogProfile,
+  deleteTaxCatalogProfile,
+  listTaxLedgerEntries,
   listTaxCodes,
   createTaxCode,
   updateTaxCode,

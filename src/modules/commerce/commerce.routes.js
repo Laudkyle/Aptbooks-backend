@@ -131,7 +131,7 @@ router.get('/pos/sales/:id', requirePermission('pos.sale.read'), async (req, res
   try { res.json(await svc.getSale({ orgId: orgId(req), saleId: req.params.id })); } catch (e) { next(e); }
 });
 router.post('/pos/sales/:id/complete', idempotency({ required: true }), requirePermission('pos.sale.create'), async (req, res, next) => {
-  try { res.json(await svc.completeSale({ orgId: orgId(req), saleId: req.params.id, payload: req.body })); } catch (e) { next(e); }
+  try { res.json(await svc.completeSale({ orgId: orgId(req), actorUserId: req.user.id, saleId: req.params.id, payload: req.body })); } catch (e) { next(e); }
 });
 router.post('/pos/sales/:id/post', idempotency({ required: true }), requirePermission('pos.sale.post'), async (req, res, next) => {
   try { res.json(await svc.postSale({ orgId: orgId(req), actorUserId: req.user.id, saleId: req.params.id, payload: req.body })); } catch (e) { next(e); }

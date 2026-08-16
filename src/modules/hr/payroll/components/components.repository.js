@@ -15,8 +15,8 @@ async function createComponent(orgId, payload) {
       INSERT INTO hr_payroll_components(
         organization_id, code, name, kind, calculation_method,
         expense_account_id, liability_account_id,
-        is_taxable, is_statutory, status
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        is_taxable, is_statutory, ghana_category, pensionable, status
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       RETURNING *
     `,
     [
@@ -29,6 +29,8 @@ async function createComponent(orgId, payload) {
       p.liability_account_id || null,
       Boolean(p.is_taxable),
       Boolean(p.is_statutory),
+      p.ghana_category || "regular",
+      Boolean(p.pensionable),
       p.status || "active",
     ]
   );
@@ -74,7 +76,9 @@ async function updateComponent(orgId, componentId, payload) {
         liability_account_id = COALESCE($8, liability_account_id),
         is_taxable = COALESCE($9, is_taxable),
         is_statutory = COALESCE($10, is_statutory),
-        status = COALESCE($11, status),
+        ghana_category = COALESCE($11, ghana_category),
+        pensionable = COALESCE($12, pensionable),
+        status = COALESCE($13, status),
         updated_at = NOW()
       WHERE organization_id=$1 AND id=$2
       RETURNING *
@@ -90,6 +94,8 @@ async function updateComponent(orgId, componentId, payload) {
       p.liability_account_id ?? null,
       p.is_taxable ?? null,
       p.is_statutory ?? null,
+      p.ghana_category ?? null,
+      p.pensionable ?? null,
       p.status ?? null,
     ]
   );

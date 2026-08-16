@@ -3,6 +3,9 @@ const { pool } = require('../../db/pool');
 const { AppError } = require('../../shared/errors/AppError');
 const journalIF = require('../../interfaces/journalPosting.interface');
 const periodIF = require('../../interfaces/periodManagement.interface');
+const { syncPosTaxDetailToLedger, syncPosReturnTaxDetailToLedger } = require('../../shared/tax/taxLedger');
+const { computeComponentTaxBreakdown } = require('../../shared/tax/taxMath');
+const fiscalizationSvc = require('../integrations/fiscalization/fiscalization.service');
 
 Decimal.set({ precision: 28, rounding: Decimal.ROUND_HALF_UP });
 const D = (v) => new Decimal(v == null || v === '' ? 0 : v);
@@ -248,11 +251,11 @@ async function shiftSummary({ orgId, shiftId, client = null }) {
 async function getTaxComponents(client, orgId, taxCodeId) {
   if (!taxCodeId) return [];
   const { rows: comps } = await client.query(
-    `SELECT c.component_tax_code_id AS id, COALESCE(c.rate_override, tc.rate) AS rate, tc.code, tc.name, tc.tax_type, tc.box_code, tc.reporting_group
+    `SELECT c.component_tax_code_id AS id, COALESCE(c.rate_override, tc.rate) AS rate, tc.code, tc.name, tc.tax_type, tc.box_code, tc.reporting_group, tc.tax_scope, tc.direction, tc.category_code, tc.reverse_charge
        FROM tax_code_components c JOIN tax_codes tc ON tc.id=c.component_tax_code_id
       WHERE c.organization_id=$1 AND c.parent_tax_code_id=$2 ORDER BY c.sequence_no`, [orgId, taxCodeId]);
   if (comps.length) return comps;
-  const { rows } = await client.query(`SELECT id, rate, code, name, tax_type, box_code, reporting_group FROM tax_codes WHERE organization_id=$1 AND id=$2`, [orgId, taxCodeId]);
+  const { rows } = await client.query(`SELECT id, rate, code, name, tax_type, box_code, reporting_group, tax_scope, direction, category_code, reverse_charge FROM tax_codes WHERE organization_id=$1 AND id=$2`, [orgId, taxCodeId]);
   return rows;
 }
 async function getLineInputs(client, orgId, lines) {
@@ -260,8 +263,17 @@ async function getLineInputs(client, orgId, lines) {
   const itemIds = [...new Set(lines.map(l => l.itemId).filter(Boolean))];
   if (itemIds.length !== lines.length) throw new AppError(400, 'Every line requires itemId');
   const { rows } = await client.query(
-    `SELECT i.id, i.sku, i.name, i.category_id, c.inventory_account_id, c.cogs_account_id
-       FROM inventory_items i JOIN item_categories c ON c.id=i.category_id
+    `SELECT i.id, i.sku, i.name, i.category_id, i.tax_profile_id,
+            c.inventory_account_id, c.cogs_account_id,
+            tcp.code AS tax_profile_code, tcp.supply_type AS tax_profile_supply_type,
+            tcp.tax_category AS tax_profile_category,
+            tcp.sales_tax_scope, tcp.sales_tax_code_id,
+            tcp.exemption_reason_code, tcp.fiscal_classification_code, tcp.hs_code
+       FROM inventory_items i
+       JOIN item_categories c ON c.id=i.category_id
+       LEFT JOIN tax_catalog_profiles tcp ON tcp.id=i.tax_profile_id AND tcp.organization_id=i.organization_id
+         AND tcp.status='active' AND tcp.effective_from <= CURRENT_DATE
+         AND (tcp.effective_to IS NULL OR tcp.effective_to >= CURRENT_DATE)
       WHERE i.organization_id=$1 AND i.id = ANY($2::uuid[])`, [orgId, itemIds]);
   if (rows.length !== itemIds.length) throw new AppError(400, 'One or more products were not found');
   return new Map(rows.map(r => [r.id, r]));
@@ -279,15 +291,17 @@ async function calculateSale(client, orgId, payload) {
     const lineDiscount = D(l.discountAmount || 0);
     if (lineDiscount.lt(0) || lineDiscount.gt(lineGrossBeforeDiscount)) throw new AppError(400, 'Invalid line discount');
     const priceAfterDiscount = lineGrossBeforeDiscount.minus(lineDiscount);
-    const components = await getTaxComponents(client, orgId, l.taxCodeId || payload.taxCodeId || null);
-    const totalRate = components.reduce((a, c) => a.plus(D(c.rate || 0)), D(0));
-    let taxable = priceAfterDiscount;
-    let lineTax = D(0);
-    if (totalRate.gt(0)) {
-      if (payload.taxInclusive) taxable = priceAfterDiscount.div(D(1).plus(totalRate.div(100)));
-      for (const c of components) lineTax = lineTax.plus(taxable.mul(D(c.rate || 0)).div(100));
-    }
-    const lineTotal = payload.taxInclusive ? priceAfterDiscount : priceAfterDiscount.plus(lineTax);
+    const effectiveTaxCodeId = l.taxCodeId || payload.taxCodeId || items.get(l.itemId)?.sales_tax_code_id || null;
+    const components = await getTaxComponents(client, orgId, effectiveTaxCodeId);
+    const breakdown = computeComponentTaxBreakdown({
+      amount: money(priceAfterDiscount),
+      components,
+      inclusive: payload.taxInclusive === true,
+    });
+    const taxable = D(breakdown.taxableAmount);
+    const lineTax = D(breakdown.taxAmount);
+    const lineTotal = D(breakdown.totalAmount);
+    const calculatedComponents = breakdown.components;
     subtotal = subtotal.plus(taxable);
     discount = discount.plus(lineDiscount);
     tax = tax.plus(lineTax);
@@ -295,7 +309,7 @@ async function calculateSale(client, orgId, payload) {
     lineOut.push({
       lineNo: idx + 1, item: items.get(l.itemId), itemId: l.itemId, quantity, unitPrice,
       discountAmount: lineDiscount, taxableAmount: taxable, taxAmount: lineTax, totalAmount: lineTotal,
-      taxCodeId: l.taxCodeId || payload.taxCodeId || null, components
+      taxCodeId: effectiveTaxCodeId, components: calculatedComponents
     });
   }
   return { lines: lineOut, subtotalAmount: subtotal, discountAmount: discount, taxAmount: tax, totalAmount: total };
@@ -305,7 +319,7 @@ async function taxPreview({ orgId, payload }) {
     const c = await calculateSale(client, orgId, payload);
     return {
       subtotalAmount: money(c.subtotalAmount), discountAmount: money(c.discountAmount), taxAmount: money(c.taxAmount), totalAmount: money(c.totalAmount),
-      lines: c.lines.map(l => ({ lineNo: l.lineNo, itemId: l.itemId, quantity: qty(l.quantity), unitPrice: money(l.unitPrice), taxableAmount: money(l.taxableAmount), taxAmount: money(l.taxAmount), totalAmount: money(l.totalAmount), taxes: l.components.map(c => ({ taxCodeId: c.id, code: c.code, name: c.name, rate: String(c.rate), amount: money(l.taxableAmount.mul(D(c.rate || 0)).div(100)) })) }))
+      lines: c.lines.map(l => ({ lineNo: l.lineNo, itemId: l.itemId, quantity: qty(l.quantity), unitPrice: money(l.unitPrice), taxableAmount: money(l.taxableAmount), taxAmount: money(l.taxAmount), totalAmount: money(l.totalAmount), taxes: l.components.map(c => ({ taxCodeId: c.id, code: c.code, name: c.name, rate: String(c.rate), amount: c.taxAmount })) }))
     };
   });
 }
@@ -366,11 +380,27 @@ async function createSale({ orgId, actorUserId, payload }) {
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
         [orgId, sale.id, l.lineNo, l.itemId, l.item.name, qty(l.quantity), money(l.unitPrice), money(l.discountAmount), money(l.taxableAmount), money(l.taxAmount), money(l.totalAmount), l.taxCodeId, money(stock.unitCost), money(stock.cogs)]);
       for (const c of l.components) {
-        const componentTax = l.taxableAmount.mul(D(c.rate || 0)).div(100);
-        await client.query(
+        const componentTax = c.taxAmount;
+        const { rows: taxRows } = await client.query(
           `INSERT INTO pos_sale_line_taxes(organization_id, sale_id, sale_line_id, source_tax_code_id, tax_code_id, tax_code, tax_name, rate, taxable_amount, tax_amount, tax_type, box_code, reporting_group)
-           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [orgId, sale.id, lr[0].id, l.taxCodeId, c.id, c.code, c.name, c.rate, money(l.taxableAmount), money(componentTax), c.tax_type || null, c.box_code || null, c.reporting_group || null]);
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+          [orgId, sale.id, lr[0].id, l.taxCodeId, c.id, c.code, c.name, c.rate, money(l.taxableAmount), componentTax, c.tax_type || null, c.box_code || null, c.reporting_group || null]);
+        await syncPosTaxDetailToLedger({ client, orgId, saleId: sale.id, saleLineId: lr[0].id, detail: {
+          ...taxRows[0],
+          tax_scope: c.tax_scope || l.item.sales_tax_scope || 'taxable',
+          direction: c.direction && c.direction !== 'both' ? c.direction : 'output',
+          category_code: l.item.tax_profile_category || null,
+          exemption_reason_code: l.item.exemption_reason_code || null,
+          recoverable_percent: 0,
+          reverse_charge: c.reverse_charge === true,
+          metadata: {
+            reportingGroup: c.reporting_group || null,
+            taxProfileId: l.item.tax_profile_id || null,
+            taxProfileCode: l.item.tax_profile_code || null,
+            fiscalClassificationCode: l.item.fiscal_classification_code || null,
+            hsCode: l.item.hs_code || null
+          }
+        }});
       }
       storedLines.push({ ...l, unitCost: stock.unitCost, cogsAmount: stock.cogs });
     }
@@ -382,6 +412,9 @@ async function createSale({ orgId, actorUserId, payload }) {
          VALUES($1,$2,$3,$4,$5,$6,$7,'captured',now(),$8)`, [orgId, sale.id, shift.id, p.paymentMethodId, money(p.amount), currency, p.providerReference || null, p.metadata || {}]);
     }
     const invId = await createInventoryIssueRecord(client, orgId, { ...sale, cogs_amount: money(cogsTotal) }, storedLines, actorUserId, shift.warehouse_id);
+    // GRA-5: completed POS sales get a fiscal snapshot in the same transaction.
+    // Actual GRA transmission is handled by the durable queue outside the sale transaction.
+    await fiscalizationSvc.autoPrepareForSource({ db: client, orgId, actorUserId, sourceType: 'pos_sale', sourceId: sale.id });
     return getSale({ orgId, saleId: sale.id, client, extra: { inventoryTransactionId: invId } });
   });
 }
@@ -478,7 +511,17 @@ async function refundSale({ orgId, actorUserId, saleId, payload = {} }) {
 async function receiptData({ orgId, saleId }) {
   const sale = await getSale({ orgId, saleId });
   const { rows: orgRows } = await pool.query(`SELECT name, base_currency_code FROM organizations WHERE id=$1`, [orgId]);
-  return { organization: orgRows[0] || {}, sale, receipt: { title: 'Sales Receipt', receiptNo: sale.sale_no, printedAt: new Date().toISOString() } };
+  const { rows: fiscalRows } = await pool.query(
+    `SELECT id,status,is_simulation,commissioner_general_signature,qr_code,receipt_signature,invoice_signature,verification_engine_id,
+            fiscal_timestamp,serial_number,receipt_number,machine_registration_code,gra_reference,offline_deadline_at
+       FROM fiscal_documents WHERE organization_id=$1 AND source_type='pos_sale' AND source_id=$2`,
+    [orgId, saleId]
+  );
+  return {
+    organization: orgRows[0] || {}, sale,
+    receipt: { title: 'Sales Receipt', receiptNo: sale.sale_no, printedAt: new Date().toISOString() },
+    fiscal: fiscalRows[0] || null
+  };
 }
 
 async function createOrder({ orgId, actorUserId, payload }) {
@@ -549,10 +592,29 @@ async function paymentReconciliationReport({ orgId, query = {} }) {
 async function taxSummaryReport({ orgId, query = {} }) {
   const from = query.from || '1900-01-01'; const to = query.to || '2999-12-31';
   const { rows } = await pool.query(
-    `SELECT tax_code, tax_name, rate::text, tax_type, box_code, reporting_group, COALESCE(SUM(taxable_amount),0)::text taxable_amount, COALESCE(SUM(tax_amount),0)::text tax_amount
-       FROM pos_sale_line_taxes t JOIN pos_sales s ON s.id=t.sale_id
-      WHERE t.organization_id=$1 AND s.sale_date BETWEEN $2 AND $3 AND s.status NOT IN ('voided')
-      GROUP BY tax_code, tax_name, rate, tax_type, box_code, reporting_group ORDER BY tax_code`, [orgId, from, to]);
+    `SELECT COALESCE(tc.code, tle.metadata->>'taxCode') AS tax_code,
+            COALESCE(tc.name, tle.metadata->>'taxName') AS tax_name,
+            tle.tax_rate::text AS rate,
+            COALESCE(tle.tax_type,tc.tax_type) AS tax_type,
+            COALESCE(tle.box_code,tc.box_code) AS box_code,
+            COALESCE(tle.metadata->>'reportingGroup',tc.reporting_group) AS reporting_group,
+            COALESCE(SUM(tle.taxable_amount * tle.sign_factor),0)::text AS taxable_amount,
+            COALESCE(SUM(tle.tax_amount * tle.sign_factor),0)::text AS tax_amount
+       FROM tax_ledger_entries tle
+       LEFT JOIN tax_codes tc ON tc.id=tle.tax_code_id
+      WHERE tle.organization_id=$1
+        AND tle.document_date BETWEEN $2::date AND $3::date
+        AND (
+          (tle.source_type='pos_sale' AND EXISTS (
+            SELECT 1 FROM pos_sales s WHERE s.organization_id=tle.organization_id AND s.id=tle.source_id
+              AND s.status IN ('completed','posted','partially_returned','returned','partially_refunded','refunded')
+          )) OR
+          (tle.source_type='pos_return' AND EXISTS (
+            SELECT 1 FROM pos_return_authorizations r WHERE r.organization_id=tle.organization_id AND r.id=tle.source_id AND r.status='received'
+          ))
+        )
+      GROUP BY tc.code, tc.name, tle.tax_rate, COALESCE(tle.tax_type,tc.tax_type), COALESCE(tle.box_code,tc.box_code), COALESCE(tle.metadata->>'reportingGroup',tc.reporting_group)
+      ORDER BY tax_code`, [orgId, from, to]);
   return { from, to, data: rows };
 }
 
@@ -576,9 +638,24 @@ async function createReturn({ orgId, actorUserId, payload }) {
        VALUES($1,$2,$3,$4,'draft',$5,$6) RETURNING *`, [orgId, payload.saleId, returnNo, payload.reason || null, actorUserId || null, payload.metadata || {}]);
     for (const line of returnLines) {
       if (!line.itemId || D(line.quantity).lte(0)) throw new AppError(400, 'Each return line requires itemId and positive quantity');
+      let saleLineId = line.saleLineId || null;
+      if (saleLineId) {
+        const { rows: matched } = await client.query(
+          `SELECT id, item_id FROM pos_sale_lines WHERE organization_id=$1 AND sale_id=$2 AND id=$3`,
+          [orgId, payload.saleId, saleLineId]
+        );
+        if (!matched.length || matched[0].item_id !== line.itemId) throw new AppError(400, 'Return line does not match the original sale line');
+      } else {
+        const { rows: candidates } = await client.query(
+          `SELECT id FROM pos_sale_lines WHERE organization_id=$1 AND sale_id=$2 AND item_id=$3 ORDER BY line_no`,
+          [orgId, payload.saleId, line.itemId]
+        );
+        if (candidates.length !== 1) throw new AppError(400, 'saleLineId is required when an item appears more than once on the sale');
+        saleLineId = candidates[0].id;
+      }
       await client.query(
         `INSERT INTO pos_return_lines(organization_id, return_id, sale_line_id, item_id, quantity, refund_amount, restock_action)
-         VALUES($1,$2,$3,$4,$5,$6,$7)`, [orgId, rows[0].id, line.saleLineId || null, line.itemId, qty(line.quantity), money(line.refundAmount || 0), line.restockAction || payload.disposition || 'restock']);
+         VALUES($1,$2,$3,$4,$5,$6,$7)`, [orgId, rows[0].id, saleLineId, line.itemId, qty(line.quantity), money(line.refundAmount || 0), line.restockAction || payload.disposition || 'restock']);
     }
     return rows[0];
   });
@@ -599,15 +676,111 @@ async function receiveReturn({ orgId, actorUserId, returnId }) {
     if (!rRows.length) throw new AppError(404, 'Return not found');
     const ret = rRows[0];
     if (ret.status !== 'approved') throw new AppError(409, 'Only approved returns can be received');
-    const { rows: lines } = await client.query(`SELECT * FROM pos_return_lines WHERE organization_id=$1 AND return_id=$2`, [orgId, returnId]);
+    const { rows: lines } = await client.query(`SELECT * FROM pos_return_lines WHERE organization_id=$1 AND return_id=$2 ORDER BY created_at, id`, [orgId, returnId]);
     for (const line of lines) {
+      const { rows: saleLineRows } = await client.query(
+        `SELECT sl.*,
+                COALESCE((
+                  SELECT SUM(rl2.quantity)
+                    FROM pos_return_lines rl2
+                    JOIN pos_return_authorizations r2 ON r2.id=rl2.return_id
+                   WHERE rl2.organization_id=sl.organization_id
+                     AND rl2.sale_line_id=sl.id
+                     AND r2.status='received'
+                     AND r2.id<>$4
+                ),0) AS previously_returned_quantity
+           FROM pos_sale_lines sl
+          WHERE sl.organization_id=$1 AND sl.sale_id=$2 AND sl.id=$3
+          FOR UPDATE`,
+        [orgId, ret.sale_id, line.sale_line_id, returnId]
+      );
+      if (!saleLineRows.length) throw new AppError(409, 'Original sale line for return was not found');
+      const saleLine = saleLineRows[0];
+      const previousQty = D(saleLine.previously_returned_quantity || 0);
+      const thisQty = D(line.quantity);
+      const soldQty = D(saleLine.quantity);
+      const cumulativeQty = previousQty.plus(thisQty);
+      if (cumulativeQty.gt(soldQty)) throw new AppError(409, 'Returned quantity exceeds quantity originally sold');
+      const completesLineReturn = cumulativeQty.eq(soldQty);
+
+      const { rows: originalTaxes } = await client.query(
+        `SELECT st.*, COALESCE(tc.tax_scope,'taxable') AS tax_scope, COALESCE(tc.direction,'output') AS direction,
+                tc.category_code, tc.reverse_charge
+           FROM pos_sale_line_taxes st
+           LEFT JOIN tax_codes tc ON tc.id=st.tax_code_id
+          WHERE st.organization_id=$1 AND st.sale_line_id=$2
+          ORDER BY st.created_at, st.id`,
+        [orgId, saleLine.id]
+      );
+
+      for (const sourceTax of originalTaxes) {
+        const { rows: prior } = await client.query(
+          `SELECT COALESCE(SUM(taxable_amount),0)::text AS taxable_amount,
+                  COALESCE(SUM(tax_amount),0)::text AS tax_amount
+             FROM pos_return_line_taxes
+            WHERE organization_id=$1 AND sale_line_tax_id=$2`,
+          [orgId, sourceTax.id]
+        );
+        const remainingTaxable = D(sourceTax.taxable_amount || 0).minus(D(prior[0]?.taxable_amount || 0));
+        const remainingTax = D(sourceTax.tax_amount || 0).minus(D(prior[0]?.tax_amount || 0));
+        let returnedTaxable;
+        let returnedTax;
+        if (completesLineReturn) {
+          returnedTaxable = remainingTaxable;
+          returnedTax = remainingTax;
+        } else {
+          const ratio = thisQty.div(soldQty);
+          returnedTaxable = D(sourceTax.taxable_amount || 0).mul(ratio).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          returnedTax = D(sourceTax.tax_amount || 0).mul(ratio).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+          if (returnedTaxable.gt(remainingTaxable)) returnedTaxable = remainingTaxable;
+          if (returnedTax.gt(remainingTax)) returnedTax = remainingTax;
+        }
+        const { rows: taxRows } = await client.query(
+          `INSERT INTO pos_return_line_taxes(
+             organization_id, return_id, return_line_id, sale_line_tax_id,
+             source_tax_code_id, tax_code_id, tax_code, tax_name, rate,
+             taxable_amount, tax_amount, tax_type, tax_scope, direction, box_code,
+             reporting_group, category_code, exemption_reason_code, reverse_charge, metadata
+           ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb)
+           ON CONFLICT (organization_id, return_line_id, sale_line_tax_id) DO NOTHING
+           RETURNING *`,
+          [orgId, returnId, line.id, sourceTax.id,
+           sourceTax.source_tax_code_id, sourceTax.tax_code_id, sourceTax.tax_code, sourceTax.tax_name, sourceTax.rate,
+           money(returnedTaxable), money(returnedTax), sourceTax.tax_type, sourceTax.tax_scope, sourceTax.direction,
+           sourceTax.box_code, sourceTax.reporting_group, sourceTax.category_code, null, sourceTax.reverse_charge === true,
+           JSON.stringify({ saleId: ret.sale_id, originalSaleLineId: saleLine.id })]
+        );
+        if (taxRows.length) {
+          await syncPosReturnTaxDetailToLedger({ client, orgId, returnId, returnLineId: line.id, detail: {
+            ...taxRows[0],
+            tax_rate: taxRows[0].rate,
+            recoverable_percent: 0,
+          }});
+        }
+      }
+
       if (line.restock_action === 'restock') {
         await client.query(`UPDATE inventory_balances SET qty_on_hand=qty_on_hand+$4::numeric, updated_at=now() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`, [orgId, ret.warehouse_id, line.item_id, line.quantity]);
       }
     }
     await client.query(`UPDATE pos_return_authorizations SET status='received', received_by=$3, received_at=now(), updated_at=now() WHERE organization_id=$1 AND id=$2`, [orgId, returnId, actorUserId || null]);
-    await client.query(`UPDATE pos_sales SET status='partially_returned', updated_at=now() WHERE organization_id=$1 AND id=$2 AND status IN ('completed','posted')`, [orgId, ret.sale_id]);
-    return { returnId, status: 'received' };
+    const { rows: returnState } = await client.query(
+      `SELECT NOT EXISTS (
+         SELECT 1
+           FROM pos_sale_lines sl
+          WHERE sl.organization_id=$1 AND sl.sale_id=$2
+            AND COALESCE((
+              SELECT SUM(rl.quantity)
+                FROM pos_return_lines rl
+                JOIN pos_return_authorizations r ON r.id=rl.return_id
+               WHERE rl.organization_id=sl.organization_id AND rl.sale_line_id=sl.id AND r.status='received'
+            ),0) < sl.quantity
+       ) AS fully_returned`,
+      [orgId, ret.sale_id]
+    );
+    const saleStatus = returnState[0]?.fully_returned ? 'returned' : 'partially_returned';
+    await client.query(`UPDATE pos_sales SET status=$3, updated_at=now() WHERE organization_id=$1 AND id=$2 AND status <> 'voided'`, [orgId, ret.sale_id, saleStatus]);
+    return { returnId, status: 'received', saleStatus };
   });
 }
 
@@ -920,12 +1093,19 @@ async function cashShiftSummary({ orgId, query = {} }) {
   if (query.shiftId) return ok(await shiftSummary({ orgId, shiftId: query.shiftId }));
   return listShifts({ orgId, query: { status: 'open', limit: query.limit || 50 } });
 }
-async function completeSale({ orgId, saleId }) {
-  const { rows } = await pool.query(`UPDATE pos_sales SET status='completed', updated_at=now() WHERE organization_id=$1 AND id=$2 AND status='draft' RETURNING *`, [orgId, saleId]);
-  if (rows.length) return ok(rows[0]);
-  const existing = await getSale({ orgId, saleId });
-  if (existing.status === 'completed' || existing.status === 'posted') return ok(existing);
-  throw new AppError(409, 'Sale cannot be completed from current status');
+async function completeSale({ orgId, actorUserId = null, saleId }) {
+  return withTx(async (client) => {
+    const { rows } = await client.query(`UPDATE pos_sales SET status='completed', updated_at=now() WHERE organization_id=$1 AND id=$2 AND status='draft' RETURNING *`, [orgId, saleId]);
+    let sale = rows[0] || null;
+    if (!sale) {
+      const current = await client.query(`SELECT * FROM pos_sales WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, saleId]);
+      sale = current.rows[0] || null;
+      if (!sale) throw new AppError(404, 'POS sale not found');
+      if (!['completed','posted'].includes(sale.status)) throw new AppError(409, 'Sale cannot be completed from current status');
+    }
+    await fiscalizationSvc.autoPrepareForSource({ db: client, orgId, actorUserId, sourceType: 'pos_sale', sourceId: saleId });
+    return ok(sale);
+  });
 }
 async function emailReceipt({ orgId, saleId, payload = {} }) {
   const receipt = await receiptData({ orgId, saleId });

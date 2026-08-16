@@ -12,6 +12,8 @@ const createPayrollComponentSchema = z.object({
   liability_account_id: z.string().uuid().optional().nullable(),
   is_taxable: z.boolean().optional().default(false),
   is_statutory: z.boolean().optional().default(false),
+  ghana_category: z.enum(["regular", "bonus", "overtime", "non_taxable", "relief", "other_deduction"]).optional().default("regular"),
+  pensionable: z.boolean().optional().default(false),
   status: z.enum(["active", "inactive"]).optional().default("active"),
 });
 
@@ -39,6 +41,39 @@ const updatePayrollRunSchema = z.object({
   currency: z.string().min(3).max(3).optional(),
 });
 
+const ghanaPayrollSettingsSchema = z.object({
+  enabled: z.boolean().optional(),
+  payeEnabled: z.boolean().optional(),
+  ssnitEnabled: z.boolean().optional(),
+  tier2Enabled: z.boolean().optional(),
+  payePayableAccountId: z.string().uuid().nullable().optional(),
+  ssnitTier1PayableAccountId: z.string().uuid().nullable().optional(),
+  tier2PayableAccountId: z.string().uuid().nullable().optional(),
+  employerPensionExpenseAccountId: z.string().uuid().nullable().optional(),
+  defaultTier2SchemeName: z.string().max(200).nullable().optional(),
+  graTaxOffice: z.string().max(200).nullable().optional(),
+  employerTaxId: z.string().max(100).nullable().optional(),
+  ssnitEmployerNumber: z.string().max(100).nullable().optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+const ghanaPreparePayeReturnSchema = z.object({
+  formCode: z.enum(["DT107", "DT108"]),
+  periodStart: z.string().min(8),
+  periodEnd: z.string().min(8),
+});
+const ghanaMarkPayeFiledSchema = z.object({ graReference: z.string().max(200).optional().nullable() });
+const ghanaPrepareRemittanceSchema = z.object({
+  type: z.enum(["PAYE", "SSNIT_TIER1", "TIER2"]),
+  periodStart: z.string().min(8),
+  periodEnd: z.string().min(8),
+});
+const ghanaMarkRemittancePaidSchema = z.object({
+  settlementAccountId: z.string().uuid(),
+  paymentDate: z.string().min(8),
+  paymentReference: z.string().max(200).optional().nullable(),
+});
+
 module.exports = {
   createPayrollComponentSchema,
   updatePayrollComponentSchema,
@@ -46,4 +81,9 @@ module.exports = {
   updateEmployeeComponentSchema,
   createPayrollRunSchema,
   updatePayrollRunSchema,
+  ghanaPayrollSettingsSchema,
+  ghanaPreparePayeReturnSchema,
+  ghanaMarkPayeFiledSchema,
+  ghanaPrepareRemittanceSchema,
+  ghanaMarkRemittancePaidSchema,
 };

@@ -97,6 +97,39 @@ async function createTemplate(client, payload) {
   return rows[0];
 }
 
+
+async function createTemplateIfMissing(client, payload) {
+  const { rows } = await client.query(
+    `
+    INSERT INTO document_templates(
+      organization_id, code, name, description, category, base_template_key,
+      paper_size, orientation, is_active, is_system, is_default,
+      created_by_user_id, updated_by_user_id
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+    ON CONFLICT (organization_id, code) DO NOTHING
+    RETURNING *
+    `,
+    [
+      payload.orgId,
+      payload.code,
+      payload.name,
+      payload.description || null,
+      payload.category || 'transaction_document',
+      payload.baseTemplateKey,
+      payload.paperSize || 'A4',
+      payload.orientation || 'portrait',
+      payload.isActive !== false,
+      payload.isSystem === true,
+      payload.isDefault === true,
+      payload.actorUserId || null
+    ]
+  );
+  if (rows[0]) return { template: rows[0], created: true };
+  const existing = await getTemplateByCode({ orgId: payload.orgId, code: payload.code, client });
+  return { template: existing, created: false };
+}
+
 async function nextVersionNo(client, templateId) {
   const { rows } = await client.query(
     `SELECT COALESCE(MAX(version_no), 0) AS max_no FROM document_template_versions WHERE template_id = $1`,
@@ -312,6 +345,7 @@ module.exports = {
   getTemplateById,
   getTemplateByCode,
   createTemplate,
+  createTemplateIfMissing,
   createVersion,
   updateTemplate,
   listAssignments,

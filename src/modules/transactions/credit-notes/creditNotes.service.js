@@ -9,28 +9,47 @@ const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const repo = require("./creditNotes.repository");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
+const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 
-async function calcTotals({ client, orgId, lines }) {
-  let subtotal = 0;
-  let tax_total = 0;
+async function calcTotals({ client, orgId, lines, payload = {} }) {
+  let subtotalCents = 0n;
+  let taxTotalCents = 0n;
   for (const l of lines) {
-    const qty = Number(l.quantity ?? 1);
-    const up = Number(l.unitPrice ?? 0);
-    const lt = Number((qty * up).toFixed(2));
-    l.lineTotal = lt;
-    const tax = await resolveLineTaxes({ client, orgId, line: l, defaultTaxableAmount: lt });
+    const qty = l.quantity ?? 1;
+    const unitPrice = l.unitPrice ?? 0;
+    const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
+    const lineTotal = bigIntToDecimalString(lineCents, 2);
+    l.lineTotal = lineTotal;
+    const tax = await resolveLineTaxes({
+      client,
+      orgId,
+      line: l,
+      defaultTaxableAmount: lineTotal,
+      context: {
+        partnerId: payload.customerId || null,
+        partnerType: 'customer',
+        transactionScope: 'sales',
+        documentType: 'credit_note',
+        documentDate: payload.creditNoteDate || null,
+        supplyType: l.supplyType || payload.supplyType || null,
+        jurisdictionId: payload.jurisdictionId || null,
+        placeOfSupplyCountryCode: l.placeOfSupplyCountryCode || payload.placeOfSupplyCountryCode || null
+      }
+    });
     const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
-    l.taxableAmount = round2(lt - resolvedTaxSummary.inclusiveNonWithholdingTax);
-    l.taxAmount = round2(resolvedTaxSummary.totalNonWithholdingTax);
+    const taxableCents = lineCents - parseDecimalToBigInt(resolvedTaxSummary.inclusiveNonWithholdingTax, 2);
+    l.taxableAmount = bigIntToDecimalString(taxableCents, 2);
+    l.taxAmount = resolvedTaxSummary.totalNonWithholdingTax;
     l.taxCodeId = tax.selectedTaxCodeId || null;
     l.taxDetails = tax.components;
-    subtotal += Number(l.taxableAmount ?? 0);
-    tax_total += Number(l.taxAmount ?? 0);
+    subtotalCents += taxableCents;
+    taxTotalCents += parseDecimalToBigInt(l.taxAmount, 2);
   }
-  subtotal = Number(subtotal.toFixed(2));
-  tax_total = Number(tax_total.toFixed(2));
-  const total = Number((subtotal + tax_total).toFixed(2));
-  return { subtotal, tax_total, total };
+  return {
+    subtotal: bigIntToDecimalString(subtotalCents, 2),
+    tax_total: bigIntToDecimalString(taxTotalCents, 2),
+    total: bigIntToDecimalString(subtotalCents + taxTotalCents, 2)
+  };
 }
 
 async function getTaxSettings({ orgId, client }) {
@@ -112,7 +131,7 @@ async function createDraftCreditNote({ orgId, actorUserId, payload }) {
   if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
 
   return withTransaction(async (client) => {
-    const totals = await calcTotals({ client, orgId, lines: payload.lines });
+    const totals = await calcTotals({ client, orgId, lines: payload.lines, payload });
     const created = await repo.createDraft({ orgId, actorUserId, payload, totals, client });
     return created;
   });

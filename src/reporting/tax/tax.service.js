@@ -48,6 +48,22 @@ function isGhanaVatRow(row) {
   return type === 'VAT' || code.startsWith('GH_VAT') || code.includes('NHIL') || code.includes('GETFUND');
 }
 
+function uniqueSignedTaxableTotal(rows) {
+  const bySourceLine = new Map();
+  for (const row of rows) {
+    const key = [
+      row.entity_type || '',
+      row.entity_id || '',
+      row.line_id || '',
+      row.sign_factor || '1'
+    ].join('::');
+    const value = d(row.signed_taxable_amount);
+    const existing = bySourceLine.get(key);
+    if (!existing || value.abs().greaterThan(existing.abs())) bySourceLine.set(key, value);
+  }
+  return Array.from(bySourceLine.values()).reduce((sum, value) => sum.plus(value), new Decimal(0));
+}
+
 function normalizedPercent(value) {
   const pct = d(value === null || value === undefined ? 1 : value);
   return pct.greaterThan(1) ? pct.div(100) : pct;
@@ -60,147 +76,77 @@ function mustBeRange(fromDate, toDate) {
 }
 
 async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }) {
-  assertIsoDate(fromDate, "from");
-  assertIsoDate(toDate, "to");
-  if (toDate < fromDate) throw new AppError(400, "to must be on or after from");
+  assertIsoDate(fromDate, 'from');
+  assertIsoDate(toDate, 'to');
+  if (toDate < fromDate) throw new AppError(400, 'to must be on or after from');
 
   const params = [orgId, fromDate, toDate];
-  let taxTypeFilter = "";
+  let taxTypeFilter = '';
   if (taxType) {
     params.push(taxType);
-    taxTypeFilter = ` AND src.tax_type = $4 `;
+    taxTypeFilter = ` AND tle.tax_type=$4 `;
   }
 
   const { rows } = await pool.query(
-    `
-    WITH src AS (
-      SELECT 'invoice'::text AS entity_type, i.id AS entity_id, i.invoice_no AS document_no,
-             i.invoice_date AS document_date, i.status,
-             i.customer_id AS partner_id, bp.name AS partner_name,
-             il.id AS line_id, il.line_no, il.description,
-             d.taxable_amount,
-             d.tax_amount,
-             d.tax_code_id, tc.code AS tax_code, tc.name AS tax_code_name,
-             COALESCE(d.tax_type, tc.tax_type) AS tax_type,
-             COALESCE(d.tax_scope, tc.tax_scope) AS tax_scope,
-             COALESCE(d.direction, tc.direction, 'output') AS direction,
-             COALESCE(d.box_code, tc.box_code) AS box_code,
-             1::numeric AS sign_factor
-      FROM invoices i
-      JOIN invoice_lines il ON il.invoice_id = i.id
-      JOIN invoice_line_tax_details d ON d.line_id = il.id
-      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
-      LEFT JOIN business_partners bp ON bp.id = i.customer_id
-      WHERE i.organization_id=$1 AND i.status IN ('issued','paid') AND i.invoice_date BETWEEN $2::date AND $3::date
-
-      UNION ALL
-      SELECT 'bill', b.id, b.bill_no, b.bill_date, b.status,
-             b.vendor_id, bp.name,
-             bl.id, bl.line_no, bl.description,
-             d.taxable_amount,
-             d.tax_amount,
-             d.tax_code_id, tc.code, tc.name,
-             COALESCE(d.tax_type, tc.tax_type),
-             COALESCE(d.tax_scope, tc.tax_scope),
-             COALESCE(d.direction, tc.direction, 'input'),
-             COALESCE(d.box_code, tc.box_code),
-             1::numeric
-      FROM bills b
-      JOIN bill_lines bl ON bl.bill_id = b.id
-      JOIN bill_line_tax_details d ON d.line_id = bl.id
-      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
-      LEFT JOIN business_partners bp ON bp.id = b.vendor_id
-      WHERE b.organization_id=$1 AND b.status IN ('issued','paid') AND b.bill_date BETWEEN $2::date AND $3::date
-
-      UNION ALL
-      SELECT 'credit_note', cn.id, cn.credit_note_no, cn.credit_note_date, cn.status,
-             cn.customer_id, bp.name,
-             cnl.id, cnl.line_no, cnl.description,
-             d.taxable_amount,
-             d.tax_amount,
-             d.tax_code_id, tc.code, tc.name,
-             COALESCE(d.tax_type, tc.tax_type),
-             COALESCE(d.tax_scope, tc.tax_scope),
-             COALESCE(d.direction, tc.direction, 'output'),
-             COALESCE(d.box_code, tc.box_code),
-             -1::numeric
-      FROM credit_notes cn
-      JOIN credit_note_lines cnl ON cnl.credit_note_id = cn.id
-      JOIN credit_note_line_tax_details d ON d.line_id = cnl.id
-      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
-      LEFT JOIN business_partners bp ON bp.id = cn.customer_id
-      WHERE cn.organization_id=$1 AND cn.status='issued' AND cn.credit_note_date BETWEEN $2::date AND $3::date
-
-      UNION ALL
-      SELECT 'debit_note', dn.id, dn.debit_note_no, dn.debit_note_date, dn.status,
-             dn.vendor_id, bp.name,
-             dnl.id, dnl.line_no, dnl.description,
-             d.taxable_amount,
-             d.tax_amount,
-             d.tax_code_id, tc.code, tc.name,
-             COALESCE(d.tax_type, tc.tax_type),
-             COALESCE(d.tax_scope, tc.tax_scope),
-             COALESCE(d.direction, tc.direction, 'input'),
-             COALESCE(d.box_code, tc.box_code),
-             -1::numeric
-      FROM debit_notes dn
-      JOIN debit_note_lines dnl ON dnl.debit_note_id = dn.id
-      JOIN debit_note_line_tax_details d ON d.line_id = dnl.id
-      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
-      LEFT JOIN business_partners bp ON bp.id = dn.vendor_id
-      WHERE dn.organization_id=$1 AND dn.status='issued' AND dn.debit_note_date BETWEEN $2::date AND $3::date
-
-      UNION ALL
-      SELECT od.module_code AS entity_type, od.id AS entity_id, od.document_no,
-             od.document_date, od.status,
-             od.counterparty_partner_id, bp.name,
-             odl.id, odl.line_no, odl.description,
-             d.taxable_amount,
-             d.tax_amount,
-             d.tax_code_id, tc.code, tc.name,
-             COALESCE(d.tax_type, tc.tax_type),
-             COALESCE(d.tax_scope, tc.tax_scope),
-             CASE
-               WHEN od.module_code='return' AND COALESCE(od.meta->>'returnType','')='sales_return' THEN 'output'
-               WHEN od.module_code='return' AND COALESCE(od.meta->>'returnType','')='purchase_return' THEN 'input'
-               ELSE COALESCE(d.direction, tc.direction, 'input')
-             END,
-             COALESCE(d.box_code, tc.box_code),
-             CASE
-               WHEN od.module_code='return' AND COALESCE(od.meta->>'returnType','') IN ('sales_return','purchase_return') THEN -1::numeric
-               ELSE 1::numeric
-             END AS sign_factor
-      FROM operational_documents od
-      JOIN operational_document_lines odl ON odl.document_id = od.id
-      JOIN operational_doc_line_tax_details d ON d.line_id = odl.id
-      LEFT JOIN tax_codes tc ON tc.id = d.tax_code_id
-      LEFT JOIN business_partners bp ON bp.id = od.counterparty_partner_id
-      WHERE od.organization_id=$1
-        AND od.status='posted'
-        AND od.module_code IN ('expense','petty_cash','return')
-        AND od.document_date BETWEEN $2::date AND $3::date
-
-      UNION ALL
-      SELECT 'tax_adjustment', ta.id, CONCAT('TAX-ADJ-', LEFT(ta.id::text,8)), ta.adjustment_date, ta.status,
-             NULL::uuid, NULL::text,
-             ta.id, 1, ta.description,
-             0::numeric, ABS(ta.amount),
-             NULL::uuid, NULL::text, NULL::text, ta.tax_type,
-             NULL::text AS tax_scope, ta.direction, ta.box_code,
-             CASE WHEN ta.amount < 0 THEN -1::numeric ELSE 1::numeric END
-      FROM tax_adjustments ta
-      WHERE ta.organization_id=$1 AND ta.status='posted' AND ta.adjustment_date BETWEEN $2::date AND $3::date
-    )
-    SELECT entity_type, entity_id, document_no, document_date, status, partner_id, partner_name,
-           line_id, line_no, description, taxable_amount, tax_amount, tax_code_id, tax_code, tax_code_name,
-           tax_type, tax_scope, direction, box_code, sign_factor,
-           ROUND((taxable_amount * sign_factor)::numeric, 2) AS signed_taxable_amount,
-           ROUND((tax_amount * sign_factor)::numeric, 2) AS signed_tax_amount
-    FROM src
-    WHERE COALESCE(tax_amount,0) <> 0
-      ${taxTypeFilter}
-    ORDER BY document_date DESC, document_no, line_no
-    `,
+    `SELECT tle.source_type AS entity_type,
+            tle.source_id AS entity_id,
+            tle.document_no,
+            tle.document_date,
+            CASE
+              WHEN tle.source_type='invoice' THEN (SELECT x.status FROM invoices x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='bill' THEN (SELECT x.status FROM bills x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='credit_note' THEN (SELECT x.status FROM credit_notes x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='debit_note' THEN (SELECT x.status FROM debit_notes x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='pos_sale' THEN (SELECT x.status FROM pos_sales x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='pos_return' THEN (SELECT x.status FROM pos_return_authorizations x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='tax_adjustment' THEN (SELECT x.status FROM tax_adjustments x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              WHEN tle.source_type='imported_service' THEN (SELECT x.status FROM imported_service_transactions x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id)
+              ELSE (SELECT x.status FROM operational_documents x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.module_code=tle.source_type)
+            END AS status,
+            tle.partner_id,
+            bp.name AS partner_name,
+            tle.source_line_id AS line_id,
+            tle.line_no,
+            tle.description,
+            tle.taxable_amount,
+            tle.tax_amount,
+            tle.tax_code_id,
+            tc.code AS tax_code,
+            tc.name AS tax_code_name,
+            COALESCE(tle.tax_type,tc.tax_type) AS tax_type,
+            COALESCE(tle.tax_scope,tc.tax_scope) AS tax_scope,
+            COALESCE(tle.direction,tc.direction) AS direction,
+            COALESCE(tle.box_code,tc.box_code) AS box_code,
+            tle.sign_factor,
+            tle.recoverable_percent,
+            tle.recoverable_amount,
+            tle.nonrecoverable_amount,
+            tle.recovery_basis,
+            tle.recovery_reason,
+            tle.exemption_reason_code,
+            tle.source_rule_id,
+            ROUND(tle.taxable_amount * tle.sign_factor,2)::text AS signed_taxable_amount,
+            ROUND(tle.tax_amount * tle.sign_factor,2)::text AS signed_tax_amount,
+            ROUND(tle.recoverable_amount * tle.sign_factor,2)::text AS signed_recoverable_amount,
+            ROUND(tle.nonrecoverable_amount * tle.sign_factor,2)::text AS signed_nonrecoverable_amount
+       FROM tax_ledger_entries tle
+       LEFT JOIN tax_codes tc ON tc.id=tle.tax_code_id
+       LEFT JOIN business_partners bp ON bp.id=tle.partner_id
+      WHERE tle.organization_id=$1
+        AND tle.document_date BETWEEN $2::date AND $3::date
+        ${taxTypeFilter}
+        AND (
+          (tle.source_type='invoice' AND EXISTS (SELECT 1 FROM invoices x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status IN ('issued','paid'))) OR
+          (tle.source_type='bill' AND EXISTS (SELECT 1 FROM bills x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status IN ('issued','paid'))) OR
+          (tle.source_type='credit_note' AND EXISTS (SELECT 1 FROM credit_notes x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='issued')) OR
+          (tle.source_type='debit_note' AND EXISTS (SELECT 1 FROM debit_notes x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='issued')) OR
+          (tle.source_type='pos_sale' AND EXISTS (SELECT 1 FROM pos_sales x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status IN ('completed','posted','partially_returned','returned','partially_refunded','refunded'))) OR
+          (tle.source_type='pos_return' AND EXISTS (SELECT 1 FROM pos_return_authorizations x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='received')) OR
+          (tle.source_type IN ('expense','petty_cash','return') AND EXISTS (SELECT 1 FROM operational_documents x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.module_code=tle.source_type AND x.status='posted')) OR
+          (tle.source_type='tax_adjustment' AND EXISTS (SELECT 1 FROM tax_adjustments x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='posted')) OR
+          (tle.source_type='imported_service' AND EXISTS (SELECT 1 FROM imported_service_transactions x WHERE x.organization_id=tle.organization_id AND x.id=tle.source_id AND x.status='posted'))
+        )
+      ORDER BY tle.document_date DESC, tle.document_no, tle.line_no, tle.created_at`,
     params
   );
 
@@ -209,15 +155,22 @@ async function getTaxTransactionRows({ orgId, fromDate, toDate, taxType = null }
     taxable_amount: money(r.taxable_amount),
     tax_amount: money(r.tax_amount),
     signed_taxable_amount: money(r.signed_taxable_amount),
-    signed_tax_amount: money(r.signed_tax_amount)
+    signed_tax_amount: money(r.signed_tax_amount),
+    recoverable_amount: money(r.recoverable_amount),
+    nonrecoverable_amount: money(r.nonrecoverable_amount),
+    signed_recoverable_amount: money(r.signed_recoverable_amount),
+    signed_nonrecoverable_amount: money(r.signed_nonrecoverable_amount),
   }));
 }
 
 async function vatSummary({ orgId, fromDate, toDate, includeGhanaComponents = false }) {
   const rows0 = await getTaxTransactionRows({ orgId, fromDate, toDate, taxType: includeGhanaComponents ? null : 'VAT' });
   const rows = includeGhanaComponents ? rows0.filter(isGhanaVatRow) : rows0;
-  const outputTax = rows.filter((r) => r.direction === 'output').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
-  const inputTax = rows.filter((r) => r.direction === 'input').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const outputTax = rows.filter((r) => r.direction === 'output' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const inputTax = rows.filter((r) => r.direction === 'input' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_recoverable_amount)), new Decimal(0));
+  const nonRecoverableInputTax = rows.filter((r) => r.direction === 'input' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_nonrecoverable_amount)), new Decimal(0));
+  const importedServicesOutputTax = rows.filter((r) => r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const importedServicesRecoverableInputTax = rows.filter((r) => r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_recoverable_amount)), new Decimal(0));
   const byComponent = rows.reduce((acc, row) => {
     const key = row.tax_code || row.tax_type || 'UNMAPPED';
     const prev = d(acc[key] || 0);
@@ -230,6 +183,8 @@ async function vatSummary({ orgId, fromDate, toDate, includeGhanaComponents = fa
     outputTax: money(outputTax),
     inputTax: money(inputTax),
     netTaxPayable: money(outputTax.minus(inputTax)),
+    nonRecoverableInputTax: money(nonRecoverableInputTax),
+    importedServices: { outputTax: money(importedServicesOutputTax), recoverableInputTax: money(importedServicesRecoverableInputTax) },
     componentBreakdown: byComponent,
     sourceBreakdown: rows.reduce((acc, row) => {
       acc[row.entity_type] = money(d(acc[row.entity_type] || 0).plus(d(row.signed_tax_amount)));
@@ -294,9 +249,12 @@ async function buildVatReturnPayload({ orgId, fromDate, toDate, templateCode = n
     };
   });
 
-  const outputTax = rows.filter((r) => r.direction === 'output').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
-  const inputTax = rows.filter((r) => r.direction === 'input').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
-  const taxableTotal = rows.reduce((sum, r) => sum.plus(d(r.signed_taxable_amount)), new Decimal(0));
+  const outputTax = rows.filter((r) => r.direction === 'output' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const inputTax = rows.filter((r) => r.direction === 'input' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_recoverable_amount)), new Decimal(0));
+  const nonRecoverableInputTax = rows.filter((r) => r.direction === 'input' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_nonrecoverable_amount)), new Decimal(0));
+  const importedServicesOutputTax = rows.filter((r) => r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const importedServicesRecoverableInputTax = rows.filter((r) => r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_recoverable_amount)), new Decimal(0));
+  const taxableTotal = uniqueSignedTaxableTotal(rows);
 
   return {
     tax_type: 'VAT',
@@ -308,7 +266,10 @@ async function buildVatReturnPayload({ orgId, fromDate, toDate, templateCode = n
       taxable_amount: money(taxableTotal),
       output_tax: money(outputTax),
       input_tax: money(inputTax),
-      net_tax_payable: money(outputTax.minus(inputTax))
+      net_tax_payable: money(outputTax.minus(inputTax)),
+      nonrecoverable_input_tax: money(nonRecoverableInputTax),
+      imported_services_output_tax: money(importedServicesOutputTax),
+      imported_services_recoverable_input_tax: money(importedServicesRecoverableInputTax)
     },
     coverage: {
       transaction_count: rows.length,
@@ -358,10 +319,11 @@ async function taxTransactions({ orgId, fromDate, toDate, taxType, direction, en
   return rows;
 }
 
-async function taxReconciliation({ orgId, fromDate, toDate, taxType }) {
+async function taxReconciliation({ orgId, fromDate, toDate, taxType, includeGhanaComponents = false }) {
   mustBeRange(fromDate, toDate);
-  const effectiveTaxType = taxType || 'VAT';
-  const rows = await getTaxTransactionRows({ orgId, fromDate, toDate, taxType: effectiveTaxType || null });
+  const effectiveTaxType = includeGhanaComponents ? 'GHANA_VAT' : (taxType || 'VAT');
+  const sourceRows = await getTaxTransactionRows({ orgId, fromDate, toDate, taxType: includeGhanaComponents ? null : effectiveTaxType });
+  const rows = includeGhanaComponents ? sourceRows.filter(isGhanaVatRow) : sourceRows;
   const bySource = {};
   const byBox = {};
   const issueItems = [];
@@ -381,7 +343,6 @@ async function taxReconciliation({ orgId, fromDate, toDate, taxType }) {
   const taxAccountIds = [
     settings.output_tax_account_id,
     settings.input_tax_account_id,
-    settings.non_recoverable_input_tax_account_id,
     settings.withholding_tax_payable_account_id,
     settings.withholding_tax_receivable_account_id,
     settings.reverse_charge_tax_account_id
@@ -407,8 +368,8 @@ async function taxReconciliation({ orgId, fromDate, toDate, taxType }) {
     glRows = gl.rows.map((r) => ({ ...r, debit_total: money(r.debit_total), credit_total: money(r.credit_total), net_amount: money(r.net_amount) }));
   }
 
-  const output = rows.filter((r) => r.direction === 'output').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
-  const input = rows.filter((r) => r.direction === 'input').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const output = rows.filter((r) => r.direction === 'output' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_tax_amount)), new Decimal(0));
+  const input = rows.filter((r) => r.direction === 'input' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_recoverable_amount)), new Decimal(0));
   const vatPayableBasis = output.minus(input);
   const expectedGlBalance = input.minus(output);
   const glNet = glRows.reduce((sum, r) => sum.plus(d(r.net_amount)), new Decimal(0));
@@ -424,6 +385,7 @@ async function taxReconciliation({ orgId, fromDate, toDate, taxType }) {
     sourceTotals: {
       outputTax: money(output),
       inputTax: money(input),
+      nonRecoverableInputTax: money(rows.filter((r) => r.direction === 'input' || r.direction === 'reverse_charge').reduce((sum, r) => sum.plus(d(r.signed_nonrecoverable_amount)), new Decimal(0))),
       vatPayableBasis: money(vatPayableBasis),
       expectedGlBalanceDebitMinusCredit: money(expectedGlBalance),
       signConvention: 'VAT payable is output minus input; GL tax balance is debit minus credit, so payable normally appears negative.'
@@ -699,6 +661,27 @@ async function createJurisdictionReturn({ orgId, userId, fromDate, toDate, templ
   });
 }
 
+async function ghanaVatWithholdingCredits({ orgId, fromDate, toDate }) {
+  mustBeRange(fromDate, toDate);
+  const { rows } = await pool.query(
+    `SELECT e.id,e.event_date,e.partner_id,bp.name AS partner_name,e.source_document_no,e.taxable_basis,e.tax_rate,e.withheld_amount,
+            e.certificate_no,e.certificate_date,e.status,c.gra_reference
+       FROM ghana_withholding_events e
+       LEFT JOIN business_partners bp ON bp.id=e.partner_id
+       LEFT JOIN ghana_withholding_certificates c ON c.organization_id=e.organization_id AND c.event_id=e.id AND c.certificate_role='received' AND c.status<>'voided'
+      WHERE e.organization_id=$1 AND e.regime='vat_withholding' AND e.direction='receivable' AND e.status<>'voided'
+        AND e.event_date BETWEEN $2::date AND $3::date
+      ORDER BY e.event_date,e.created_at`,
+    [orgId,fromDate,toDate]
+  );
+  const total = rows.reduce((sum,row)=>sum.plus(d(row.withheld_amount)),new Decimal(0));
+  return {
+    amount: money(total),
+    certificateCount: rows.filter((r)=>r.certificate_no).length,
+    rows: rows.map((row)=>({ ...row,taxable_basis:money(row.taxable_basis),withheld_amount:money(row.withheld_amount) }))
+  };
+}
+
 async function ghanaVatReturn({ orgId, fromDate, toDate, templateCode = null }) {
   const payload = await buildVatReturnPayload({ orgId, fromDate, toDate, templateCode, includeGhanaComponents: true });
   const componentTotals = payload.transactions.reduce((acc, row) => {
@@ -706,7 +689,21 @@ async function ghanaVatReturn({ orgId, fromDate, toDate, templateCode = null }) 
     acc[key] = money(d(acc[key] || 0).plus(d(row.signed_tax_amount)));
     return acc;
   }, {});
-  return { ...payload, report_type: 'GHANA_VAT_NHIL_GETFUND', componentTotals };
+  const whvat = await ghanaVatWithholdingCredits({ orgId,fromDate,toDate });
+  const beforeCredit = d(payload.totals.net_tax_payable);
+  const afterCredit = beforeCredit.minus(d(whvat.amount));
+  return {
+    ...payload,
+    report_type: 'GHANA_VAT_NHIL_GETFUND',
+    componentTotals,
+    totals: {
+      ...payload.totals,
+      net_tax_payable_before_vat_withholding_credit: money(beforeCredit),
+      vat_withholding_credit: whvat.amount,
+      net_tax_payable: money(afterCredit)
+    },
+    vatWithholdingCredits: whvat
+  };
 }
 
 async function ghanaVatTransactions({ orgId, fromDate, toDate }) {
@@ -715,9 +712,47 @@ async function ghanaVatTransactions({ orgId, fromDate, toDate }) {
 }
 
 async function ghanaVatReconciliation({ orgId, fromDate, toDate }) {
-  const generic = await taxReconciliation({ orgId, fromDate, toDate, taxType: 'VAT' });
+  const generic = await taxReconciliation({ orgId, fromDate, toDate, taxType: null, includeGhanaComponents: true });
   const ghanaReturn = await ghanaVatReturn({ orgId, fromDate, toDate });
-  return { ...generic, ghanaComponentTotals: ghanaReturn.componentTotals, ghanaNetTaxPayable: ghanaReturn.totals.net_tax_payable };
+  return { ...generic, ghanaComponentTotals: ghanaReturn.componentTotals, vatWithholdingCredits: ghanaReturn.vatWithholdingCredits, ghanaNetTaxPayableBeforeVatWithholdingCredit: ghanaReturn.totals.net_tax_payable_before_vat_withholding_credit, ghanaNetTaxPayable: ghanaReturn.totals.net_tax_payable };
+}
+
+async function importedServicesVatSummary({ orgId, fromDate, toDate }) {
+  mustBeRange(fromDate, toDate);
+  const { rows } = await pool.query(
+    `SELECT t.id, t.document_no, t.service_date, t.tax_period_start, t.tax_period_end,
+            t.declaration_due_date, t.description, t.supplier_country_code, t.currency_code,
+            t.foreign_amount, t.exchange_rate, t.taxable_amount, t.total_tax_amount,
+            t.recoverable_tax_amount, t.nonrecoverable_tax_amount, t.recovery_basis,
+            t.recoverable_percent, t.reference, t.status, bp.name AS supplier_name
+       FROM imported_service_transactions t
+       LEFT JOIN business_partners bp ON bp.id=t.supplier_id
+      WHERE t.organization_id=$1 AND t.status='posted'
+        AND t.service_date BETWEEN $2::date AND $3::date
+      ORDER BY t.service_date, t.created_at`,
+    [orgId, fromDate, toDate]
+  );
+  const totalTaxable = rows.reduce((sum, row) => sum.plus(d(row.taxable_amount)), new Decimal(0));
+  const totalTax = rows.reduce((sum, row) => sum.plus(d(row.total_tax_amount)), new Decimal(0));
+  const recoverable = rows.reduce((sum, row) => sum.plus(d(row.recoverable_tax_amount)), new Decimal(0));
+  const nonrecoverable = rows.reduce((sum, row) => sum.plus(d(row.nonrecoverable_tax_amount)), new Decimal(0));
+  return {
+    from: fromDate,
+    to: toDate,
+    transactionCount: rows.length,
+    taxableAmount: money(totalTaxable),
+    outputTaxDue: money(totalTax),
+    recoverableInputTax: money(recoverable),
+    nonRecoverableInputTax: money(nonrecoverable),
+    netTaxCost: money(totalTax.minus(recoverable)),
+    rows: rows.map((row) => ({
+      ...row,
+      taxable_amount: money(row.taxable_amount),
+      total_tax_amount: money(row.total_tax_amount),
+      recoverable_tax_amount: money(row.recoverable_tax_amount),
+      nonrecoverable_tax_amount: money(row.nonrecoverable_tax_amount),
+    })),
+  };
 }
 
 async function withholdingReport({ orgId, fromDate, toDate, mode = 'summary' }) {
@@ -807,8 +842,10 @@ module.exports = {
   jurisdictionReturn,
   createJurisdictionReturn,
   ghanaVatReturn,
+  ghanaVatWithholdingCredits,
   ghanaVatTransactions,
   ghanaVatReconciliation,
+  importedServicesVatSummary,
   withholdingReport,
   withholdingReconciliation,
   listCountryPacks,

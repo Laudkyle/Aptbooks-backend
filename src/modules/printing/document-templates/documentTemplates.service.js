@@ -14,7 +14,7 @@ async function ensurePresetLibrary({ orgId, actorUserId = null }) {
     for (const preset of PRESET_TEMPLATE_LIBRARY) {
       let tpl = await repo.getTemplateByCode({ orgId, code: preset.code, client });
       if (!tpl) {
-        tpl = await repo.createTemplate(client, {
+        const ensured = await repo.createTemplateIfMissing(client, {
           orgId,
           actorUserId,
           code: preset.code,
@@ -27,15 +27,18 @@ async function ensurePresetLibrary({ orgId, actorUserId = null }) {
           isSystem: true,
           isDefault: preset.isDefault === true
         });
-        await repo.createVersion(client, {
-          templateId: tpl.id,
-          actorUserId,
-          layoutConfig: preset.layoutConfig,
-          brandingConfig: preset.brandingConfig,
-          fieldConfig: preset.fieldConfig,
-          status: 'published',
-          isPublished: true
-        });
+        tpl = ensured.template;
+        if (ensured.created) {
+          await repo.createVersion(client, {
+            templateId: tpl.id,
+            actorUserId,
+            layoutConfig: preset.layoutConfig,
+            brandingConfig: preset.brandingConfig,
+            fieldConfig: preset.fieldConfig,
+            status: 'published',
+            isPublished: true
+          });
+        }
       }
       if (preset.isDefault === true) defaultTemplateId = tpl.id;
     }

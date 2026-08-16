@@ -10,7 +10,8 @@ const partnerIF = require("../../../interfaces/partnerManagement.interface");
 
 const {
   multiplyQtyByUnitPriceToMoney,
-  bigIntToDecimalString
+  bigIntToDecimalString,
+  parseDecimalToBigInt
 } = require("../../../shared/utils/money");
 
 const repo = require("./bills.repository");
@@ -40,15 +41,15 @@ async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
 
 async function prepareBillLines({ client, orgId, payload, lines }) {
   let subtotalCents = 0n;
-  let taxTotal = 0;
-  let withholdingTotal = 0;
+  let taxTotalCents = 0n;
+  let withholdingTotalCents = 0n;
   const computed = [];
 
   for (const l of lines) {
     const qty = l.quantity ?? 1;
     const unitPrice = l.unitPrice ?? 0;
     const lineCents = multiplyQtyByUnitPriceToMoney(qty, unitPrice, 4, 2);
-    const enteredLineAmount = Number(bigIntToDecimalString(lineCents, 2));
+    const enteredLineAmount = bigIntToDecimalString(lineCents, 2);
     const tax = await resolveLineTaxes({
       client,
       orgId,
@@ -61,21 +62,27 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
         documentType: "bill",
         documentDate: payload.billDate,
         jurisdictionId: payload.jurisdictionId || null,
-        placeOfSupply: payload.placeOfSupply || null
+        supplyType: l.supplyType || payload.supplyType || null,
+        placeOfSupply: payload.placeOfSupply || null,
+        placeOfSupplyCountryCode: l.placeOfSupplyCountryCode || payload.placeOfSupplyCountryCode || null,
+        industry: payload.industry || null,
+        partnerCountryCode: payload.placeOfSupplyCountryCode || null
       }
     });
     const resolvedTaxSummary = summarizeResolvedTaxes(tax.components);
-    const taxableAmount = round2(enteredLineAmount - resolvedTaxSummary.inclusiveNonWithholdingTax);
-    subtotalCents += BigInt(Math.round(taxableAmount * 100));
-    taxTotal += Number(resolvedTaxSummary.totalNonWithholdingTax || 0);
-    withholdingTotal += Number(resolvedTaxSummary.withholdingTax || 0);
+    const inclusiveTaxCents = parseDecimalToBigInt(resolvedTaxSummary.inclusiveNonWithholdingTax, 2);
+    const taxableCents = lineCents - inclusiveTaxCents;
+    const taxableAmount = bigIntToDecimalString(taxableCents, 2);
+    subtotalCents += taxableCents;
+    taxTotalCents += parseDecimalToBigInt(resolvedTaxSummary.totalNonWithholdingTax, 2);
+    withholdingTotalCents += parseDecimalToBigInt(resolvedTaxSummary.withholdingTax, 2);
     computed.push({
       ...l,
       quantity: qty,
       unitPrice,
-      lineTotal: bigIntToDecimalString(lineCents, 2),
+      lineTotal: enteredLineAmount,
       taxableAmount,
-      taxAmount: round2(resolvedTaxSummary.totalNonWithholdingTax),
+      taxAmount: resolvedTaxSummary.totalNonWithholdingTax,
       taxCodeId: tax.selectedTaxCodeId || null,
       taxDetails: tax.components,
       taxSnapshot: tax.snapshot
@@ -83,7 +90,11 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
   }
 
   const subtotal = bigIntToDecimalString(subtotalCents, 2);
-  return { computed, subtotal, taxTotal: round2(taxTotal).toFixed(2), withholdingTotal: round2(withholdingTotal).toFixed(2), netSettlementTotal: (Number(subtotal) + round2(taxTotal) - round2(withholdingTotal)).toFixed(2), total: (Number(subtotal) + round2(taxTotal)).toFixed(2) };
+  const taxTotal = bigIntToDecimalString(taxTotalCents, 2);
+  const withholdingTotal = bigIntToDecimalString(withholdingTotalCents, 2);
+  const total = bigIntToDecimalString(subtotalCents + taxTotalCents, 2);
+  const netSettlementTotal = bigIntToDecimalString(subtotalCents + taxTotalCents - withholdingTotalCents, 2);
+  return { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total };
 }
 
 async function createDraftBill({ orgId, actorUserId, payload }) {

@@ -117,6 +117,16 @@ const createEmployeeSchema = z.object({
 
   tax_id: z.string().max(80).optional().nullable(),
   national_id: z.string().max(80).optional().nullable(),
+  ghana_card_pin: z.string().max(80).optional().nullable(),
+  ssnit_number: z.string().max(80).optional().nullable(),
+  tier2_member_id: z.string().max(120).optional().nullable(),
+  tier2_scheme_name: z.string().max(200).optional().nullable(),
+  tax_residency: z.enum(["resident", "nonresident"]).optional().default("resident"),
+  worker_classification: z.enum(["regular", "temporary", "casual", "part_time"]).optional().default("regular"),
+  qualifies_overtime_concession: z.boolean().optional().default(false),
+  pension_exempt: z.boolean().optional().default(false),
+  approved_monthly_tax_relief: z.number().nonnegative().optional().default(0),
+  employment_end_date: z.string().min(8).optional().nullable(),
 });
 
 const updateEmployeeSchema = createEmployeeSchema.partial().extend({
@@ -186,6 +196,8 @@ const createBenefitPlanSchema = z.object({
   cap_amount: z.number().positive().optional().nullable(),
   expense_account_id: uuid,
   liability_account_id: uuid,
+  effective_from: z.string().min(8).optional(),
+  effective_to: z.string().min(8).optional().nullable(),
 });
 
 const updateBenefitPlanSchema = z.object({
@@ -198,6 +210,8 @@ const updateBenefitPlanSchema = z.object({
   cap_amount: z.number().positive().nullable().optional(),
   expense_account_id: uuid.optional(),
   liability_account_id: uuid.optional(),
+  effective_from: z.string().min(8).optional(),
+  effective_to: z.string().min(8).nullable().optional(),
   status: z.enum(["active","inactive"]).optional(),
 });
 
@@ -223,7 +237,7 @@ const payeBracketSchema = z.object({
   rate: z.number().min(0).max(100),
 });
 
-createStatutoryRuleSchema = z.object({
+const createStatutoryRuleSchema = z.object({
   code: z.string().min(1).max(50),
   name: z.string().min(1).max(200),
   description: z.string().max(2000).optional(),
@@ -238,6 +252,8 @@ createStatutoryRuleSchema = z.object({
   cap_amount: z.number().positive().optional().nullable(),
   expense_account_id: uuid,
   liability_account_id: uuid,
+  effective_from: z.string().min(8).optional(),
+  effective_to: z.string().min(8).optional().nullable(),
 });
 
 const updateStatutoryRuleSchema = z.object({
@@ -245,12 +261,17 @@ const updateStatutoryRuleSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(2000).nullable().optional(),
   rule_type: z.enum(["income_tax","pension","social_security","health_insurance","other"]).optional(),
+  calculation_method: z.enum(["flat","progressive"]).optional(),
+  brackets: z.array(payeBracketSchema).optional(),
+  allowance_amount: z.number().min(0).optional(),
   employee_rate: z.number().min(0).max(100).optional(),
   employer_rate: z.number().min(0).max(100).optional(),
   base_on: z.enum(["base", "gross"]).optional(),
   cap_amount: z.number().positive().nullable().optional(),
   expense_account_id: uuid.optional(),
   liability_account_id: uuid.optional(),
+  effective_from: z.string().min(8).optional(),
+  effective_to: z.string().min(8).nullable().optional(),
   status: z.enum(["active","inactive"]).optional(),
 });
 
