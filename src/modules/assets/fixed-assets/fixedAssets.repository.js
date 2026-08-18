@@ -44,8 +44,29 @@ async function listAssets({ orgId, query }) {
     i++;
   }
 
+  const qualifiedWhere = where.map((clause) => clause
+    .replace(/^organization_id/, 'a.organization_id')
+    .replace(/^status=/, 'a.status=')
+    .replace(/^category_id=/, 'a.category_id=')
+    .replace(/^location_id=/, 'a.location_id=')
+    .replace(/^department_id=/, 'a.department_id=')
+    .replace(/^cost_center_id=/, 'a.cost_center_id=')
+    .replace(/^\(code ILIKE/, '(a.code ILIKE')
+    .replace(/ OR name ILIKE/, ' OR a.name ILIKE'));
+
   const { rows } = await pool.query(
-    `SELECT * FROM fixed_assets WHERE ${where.join(" AND ")} ORDER BY created_at DESC`,
+    `SELECT a.*,
+            ac.name AS category_name,
+            ol.code AS location_code, ol.name AS location_name,
+            od.code AS department_code, od.name AS department_name,
+            cc.code AS cost_center_code, cc.name AS cost_center_name
+     FROM fixed_assets a
+     LEFT JOIN asset_categories ac ON ac.id=a.category_id AND ac.organization_id=a.organization_id
+     LEFT JOIN org_locations ol ON ol.id=a.location_id AND ol.organization_id=a.organization_id
+     LEFT JOIN org_departments od ON od.id=a.department_id AND od.organization_id=a.organization_id
+     LEFT JOIN cost_centers cc ON cc.id=a.cost_center_id AND cc.organization_id=a.organization_id
+     WHERE ${qualifiedWhere.join(" AND ")}
+     ORDER BY a.created_at DESC`,
     params
   );
   return rows;
@@ -69,9 +90,16 @@ async function getAssetWithCategoryAccounts({ orgId, assetId }) {
       c.depr_expense_account_id,
       c.disposal_gain_account_id,
       c.disposal_loss_account_id,
-      c.status AS category_status
+      c.status AS category_status,
+      c.name AS category_name,
+      ol.code AS location_code, ol.name AS location_name,
+      od.code AS department_code, od.name AS department_name,
+      cc.code AS cost_center_code, cc.name AS cost_center_name
     FROM fixed_assets a
     JOIN asset_categories c ON c.id = a.category_id
+    LEFT JOIN org_locations ol ON ol.id=a.location_id AND ol.organization_id=a.organization_id
+    LEFT JOIN org_departments od ON od.id=a.department_id AND od.organization_id=a.organization_id
+    LEFT JOIN cost_centers cc ON cc.id=a.cost_center_id AND cc.organization_id=a.organization_id
     WHERE a.organization_id=$1 AND a.id=$2
     `,
     [orgId, assetId]
@@ -202,8 +230,18 @@ async function insertAssetEvent({ orgId, assetId, eventType, eventDate, referenc
   return rows[0];
 }
 
+async function listDimensionOptions({ orgId }) {
+  const [locations, departments, costCenters] = await Promise.all([
+    pool.query(`SELECT id, code, name FROM org_locations WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [orgId]),
+    pool.query(`SELECT id, code, name FROM org_departments WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [orgId]),
+    pool.query(`SELECT id, code, name FROM cost_centers WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [orgId]),
+  ]);
+  return { locations: locations.rows, departments: departments.rows, costCenters: costCenters.rows };
+}
+
 module.exports = {
   createAsset,
+  listDimensionOptions,
   listAssets,
   getAsset,
   getAssetWithCategoryAccounts,

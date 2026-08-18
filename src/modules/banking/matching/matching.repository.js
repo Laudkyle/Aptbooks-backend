@@ -85,6 +85,7 @@ async function findCandidateJournalLines({ orgId, bankGlAccountId, txnDate, amou
     WITH candidates AS (
       SELECT
         je.id AS journal_entry_id,
+        je.entry_no AS journal_entry_no,
         je.entry_date,
         je.memo,
         jel.id AS journal_entry_line_id,

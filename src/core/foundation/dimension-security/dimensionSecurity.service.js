@@ -14,10 +14,20 @@ async function listRules(ctx, { limit, offset }) {
   return repo.listRules({ organizationId: ctx.organizationId, limit, offset });
 }
 
+async function listOptions(ctx) {
+  return repo.listOptions({ organizationId: ctx.organizationId });
+}
+
+async function assertPrincipalExists(ctx, principalType, principalId) {
+  const principal = await repo.getPrincipal({ organizationId: ctx.organizationId, principalType, principalId });
+  if (!principal) throw new AppError(400, "Selected principal does not belong to this organization");
+}
+
 async function createRule(ctx, payload) {
   assertPrincipalType(payload.principalType);
   if (!payload.principalId) throw new AppError(400, "principalId required");
   assertEffect(payload.effect);
+  await assertPrincipalExists(ctx, payload.principalType, payload.principalId);
   const r = await repo.createRule({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
@@ -48,6 +58,9 @@ async function updateRule(ctx, ruleId, patch) {
   if (!before) throw new AppError(404, "Rule not found");
   if (patch.principalType) assertPrincipalType(patch.principalType);
   if (patch.effect) assertEffect(patch.effect);
+  const nextPrincipalType = patch.principalType || before.principal_type;
+  const nextPrincipalId = patch.principalId || before.principal_id;
+  if (patch.principalType || patch.principalId) await assertPrincipalExists(ctx, nextPrincipalType, nextPrincipalId);
 
   const after = await repo.updateRule({ organizationId: ctx.organizationId, ruleId, patch });
   if (!after) throw new AppError(404, "Rule not found");
@@ -88,4 +101,4 @@ async function deleteRule(ctx, ruleId) {
   return { id: ruleId };
 }
 
-module.exports = { listRules, createRule, updateRule, deleteRule };
+module.exports = { listRules, listOptions, createRule, updateRule, deleteRule };

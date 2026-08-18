@@ -26,6 +26,12 @@ router.post("/", idempotency({ required: true }), requirePermission("assets.fixe
   } catch (e) { next(e); }
 });
 
+router.get("/dimension-options", requirePermission("assets.fixed_assets.read"), async (req, res, next) => {
+  try {
+    res.json({ data: await svc.listDimensionOptions({ orgId: req.user.organization_id }) });
+  } catch (e) { next(e); }
+});
+
 router.get("/", requirePermission("assets.fixed_assets.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

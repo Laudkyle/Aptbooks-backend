@@ -125,6 +125,7 @@ async function listCashbook(orgId, query = {}) {
         bt.source_id,
         bt.statement_line_id,
         bt.journal_entry_id,
+        je.entry_no AS journal_entry_no,
         bt.external_id,
         bt.created_at,
         m.journal_entry_id AS matched_journal_entry_id,
@@ -134,6 +135,7 @@ async function listCashbook(orgId, query = {}) {
       FROM bank_transactions bt
       JOIN bank_accounts ba ON ba.id = bt.bank_account_id
       LEFT JOIN bank_matches m ON m.bank_statement_line_id = bt.statement_line_id
+      LEFT JOIN journal_entries je ON je.id=bt.journal_entry_id AND je.organization_id=bt.organization_id
       ${where}
       ORDER BY bt.txn_date ${effectiveSort.toUpperCase()}, bt.created_at ${effectiveSort.toUpperCase()}
       LIMIT $${params.length - 1} OFFSET $${params.length}

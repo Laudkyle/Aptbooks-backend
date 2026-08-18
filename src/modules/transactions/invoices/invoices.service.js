@@ -183,6 +183,9 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
   const { rows } = await pool.query(
     `SELECT 
       i.*,
+      bp.name AS customer_name,
+      bp.code AS customer_code,
+      bp.email AS customer_email,
       LOWER(d.workflow_state_code) AS workflow_status,
       CASE
         WHEN d.id IS NOT NULL
@@ -247,6 +250,9 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
         ELSE FALSE
       END AS can_post
      FROM invoices i
+     LEFT JOIN business_partners bp
+       ON bp.id=i.customer_id
+      AND bp.organization_id=i.organization_id
      LEFT JOIN documents d
        ON d.id = i.workflow_document_id
       AND d.organization_id = i.organization_id
@@ -328,14 +334,17 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
 
 async function listInvoices({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["i.organization_id=$1"];
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
-  if (query?.customerId) { where.push(`customer_id=$${i++}`); params.push(query.customerId); }
+  if (query?.status) { where.push(`i.status=$${i++}`); params.push(query.status); }
+  if (query?.customerId) { where.push(`i.customer_id=$${i++}`); params.push(query.customerId); }
 
   const { rows } = await pool.query(
-    `SELECT * FROM invoices WHERE ${where.join(" AND ")} ORDER BY invoice_date DESC, created_at DESC`,
+    `SELECT i.*, bp.name AS customer_name, bp.code AS customer_code
+       FROM invoices i
+       LEFT JOIN business_partners bp ON bp.id=i.customer_id AND bp.organization_id=i.organization_id
+      WHERE ${where.join(" AND ")} ORDER BY i.invoice_date DESC, i.created_at DESC`,
     params
   );
   return rows;

@@ -27,33 +27,65 @@ async function list(orgId, query = {}, client = null) {
   const limit = Math.min(Number(query.limit || 50), 200);
   const offset = Math.max(Number(query.offset || 0), 0);
   const params = [orgId];
-  let where = "WHERE organization_id=$1";
+  let where = "WHERE br.organization_id=$1";
   if (query.bankAccountId) {
     params.push(query.bankAccountId);
-    where += ` AND bank_account_id=$${params.length}`;
+    where += ` AND br.bank_account_id=$${params.length}`;
   }
   if (query.periodId) {
     params.push(query.periodId);
-    where += ` AND period_id=$${params.length}`;
+    where += ` AND br.period_id=$${params.length}`;
   }
   if (typeof query.is_locked === "boolean") {
     params.push(query.is_locked);
-    where += ` AND is_locked=$${params.length}`;
+    where += ` AND br.is_locked=$${params.length}`;
   }
   params.push(limit);
   params.push(offset);
 
   const { rows } = await db(client).query(
-    `SELECT * FROM bank_reconciliations ${where} ORDER BY reconciled_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    `SELECT br.*,
+            ba.code AS bank_account_code, ba.name AS bank_account_name,
+            ap.code AS period_code,
+            COALESCE(ru.full_name, ru.email) AS reconciled_by_name,
+            COALESCE(cu.full_name, cu.email) AS closed_by_name
+       FROM bank_reconciliations br
+       JOIN bank_accounts ba ON ba.id=br.bank_account_id AND ba.organization_id=br.organization_id
+       JOIN accounting_periods ap ON ap.id=br.period_id AND ap.organization_id=br.organization_id
+       LEFT JOIN users ru ON ru.id=br.reconciled_by AND ru.organization_id=br.organization_id
+       LEFT JOIN users cu ON cu.id=br.closed_by AND cu.organization_id=br.organization_id
+       ${where}
+       ORDER BY br.reconciled_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
   return rows;
 }
 
 async function getById(orgId, id, client = null, forUpdate = false) {
-  const lock = forUpdate ? " FOR UPDATE" : "";
+  if (forUpdate) {
+    // Lock only the reconciliation row. PostgreSQL cannot safely apply an
+    // unrestricted FOR UPDATE across the nullable sides of the display joins.
+    const { rows } = await db(client).query(
+      `SELECT * FROM bank_reconciliations
+        WHERE organization_id=$1 AND id=$2
+        FOR UPDATE`,
+      [orgId, id]
+    );
+    return rows[0] || null;
+  }
+
   const { rows } = await db(client).query(
-    `SELECT * FROM bank_reconciliations WHERE organization_id=$1 AND id=$2${lock}`,
+    `SELECT br.*,
+            ba.code AS bank_account_code, ba.name AS bank_account_name,
+            ap.code AS period_code,
+            COALESCE(ru.full_name, ru.email) AS reconciled_by_name,
+            COALESCE(cu.full_name, cu.email) AS closed_by_name
+       FROM bank_reconciliations br
+       JOIN bank_accounts ba ON ba.id=br.bank_account_id AND ba.organization_id=br.organization_id
+       JOIN accounting_periods ap ON ap.id=br.period_id AND ap.organization_id=br.organization_id
+       LEFT JOIN users ru ON ru.id=br.reconciled_by AND ru.organization_id=br.organization_id
+       LEFT JOIN users cu ON cu.id=br.closed_by AND cu.organization_id=br.organization_id
+      WHERE br.organization_id=$1 AND br.id=$2`,
     [orgId, id]
   );
   return rows[0] || null;

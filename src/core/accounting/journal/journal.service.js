@@ -1000,10 +1000,23 @@ async function assertJournalApprovalStateAllowsPost({ orgId, journal, client }) 
 }
 async function getJournalWithLines({ orgId, journalId, currentUserId = null }) {
   const { rows: j } = await pool.query(
-    `SELECT je.*, o.base_currency_code, jet.code AS type_code
+    `SELECT je.*, o.base_currency_code, o.name AS organization_name,
+            jet.code AS type_code, jet.name AS type_name,
+            ap.code AS period_code,
+            COALESCE(uc.full_name, uc.email) AS created_by_name,
+            COALESCE(us.full_name, us.email) AS submitted_by_name,
+            COALESCE(ua.full_name, ua.email) AS approved_by_name,
+            COALESCE(ur.full_name, ur.email) AS rejected_by_name,
+            COALESCE(uv.full_name, uv.email) AS voided_by_name
        FROM journal_entries je
        JOIN organizations o ON o.id=je.organization_id
   LEFT JOIN journal_entry_types jet ON jet.id=je.journal_entry_type_id
+  LEFT JOIN accounting_periods ap ON ap.id=je.period_id AND ap.organization_id=je.organization_id
+  LEFT JOIN users uc ON uc.id=je.created_by AND uc.organization_id=je.organization_id
+  LEFT JOIN users us ON us.id=je.submitted_by AND us.organization_id=je.organization_id
+  LEFT JOIN users ua ON ua.id=je.approved_by AND ua.organization_id=je.organization_id
+  LEFT JOIN users ur ON ur.id=je.rejected_by AND ur.organization_id=je.organization_id
+  LEFT JOIN users uv ON uv.id=je.voided_by AND uv.organization_id=je.organization_id
       WHERE je.organization_id=$1 AND je.id=$2`,
     [orgId, journalId]
   );
@@ -1153,20 +1166,9 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines, require
       requireBalanced,
     });
 
-    const { rows: existingLines } = await client.query(
-      `SELECT COUNT(*) as count
-       FROM journal_entry_lines
-       WHERE journal_entry_id = $1`,
-      [journalId]
-    );
-
-    if (parseInt(existingLines[0].count, 10) > 0) {
-      await client.query(
-        `DELETE FROM journal_entry_lines WHERE journal_entry_id = $1`,
-        [journalId]
-      );
-    }
-
+    // Draft lines are mutable work-in-progress. Upsert by stable line number rather
+    // than delete/reinsert; this avoids transient unique-key conflicts when an
+    // incomplete draft already has journal_entry_lines.
     for (let i = 0; i < preparedLines.length; i++) {
       const l = preparedLines[i];
       const debitBI = parseDecimalToBigInt(l.debit || 0, 2);
@@ -1177,6 +1179,14 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines, require
         INSERT INTO journal_entry_lines
           (journal_entry_id, line_no, account_id, description, debit, credit, currency_code, fx_rate, amount_base)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (journal_entry_id, line_no) DO UPDATE SET
+          account_id = EXCLUDED.account_id,
+          description = EXCLUDED.description,
+          debit = EXCLUDED.debit,
+          credit = EXCLUDED.credit,
+          currency_code = EXCLUDED.currency_code,
+          fx_rate = EXCLUDED.fx_rate,
+          amount_base = EXCLUDED.amount_base
         `,
         [
           journalId,
@@ -1190,6 +1200,16 @@ async function replaceDraftLines({ orgId, journalId, actorUserId, lines, require
           bigIntToDecimalString(l.amountBaseCents, 2)
         ]
       );
+    }
+
+    // Remove lines the user deleted from the draft. For an empty draft remove all.
+    if (preparedLines.length) {
+      await client.query(
+        `DELETE FROM journal_entry_lines WHERE journal_entry_id=$1 AND line_no > $2`,
+        [journalId, preparedLines.length]
+      );
+    } else {
+      await client.query(`DELETE FROM journal_entry_lines WHERE journal_entry_id=$1`, [journalId]);
     }
 
     // If journal was rejected, revert back to draft

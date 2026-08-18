@@ -115,6 +115,12 @@ async function getDocumentById(a, b, c, d) {
            dws.creator_can_post,
            p.name AS partner_name,
            p.type AS partner_type,
+           ca.code AS cash_account_code,
+           ca.name AS cash_account_name,
+           pa.code AS primary_account_code,
+           pa.name AS primary_account_name,
+           je.entry_no AS journal_entry_no,
+           ap.code AS period_code,
            e.first_name AS employee_first_name,
            e.last_name AS employee_last_name,
            doc.workflow_state_code,
@@ -176,6 +182,19 @@ async function getDocumentById(a, b, c, d) {
       FROM operational_documents d
  LEFT JOIN business_partners p
         ON p.id = d.counterparty_partner_id
+       AND p.organization_id = d.organization_id
+ LEFT JOIN chart_of_accounts ca
+        ON ca.id = d.cash_account_id
+       AND ca.organization_id = d.organization_id
+ LEFT JOIN chart_of_accounts pa
+        ON pa.id = d.primary_account_id
+       AND pa.organization_id = d.organization_id
+ LEFT JOIN journal_entries je
+        ON je.id = d.journal_entry_id
+       AND je.organization_id = d.organization_id
+ LEFT JOIN accounting_periods ap
+        ON ap.id = d.period_id
+       AND ap.organization_id = d.organization_id
  LEFT JOIN hr_employees e
         ON e.id = d.employee_id
  LEFT JOIN documents doc

@@ -7,14 +7,12 @@ const { pool } = require("../../db/pool");
  *
  * Backwards compatible: keeps the existing document_* columns.
  */
-async function listInbox({ orgId, userId, limit = 50, offset = 0, documentTypeId = null, state = null }) {
+async function listInbox({ orgId, userId, limit = 50, offset = 0, documentTypeId = null, state = null, source = null }) {
   const params = [orgId, userId];
 
-  // Check if documentTypeId is valid (not null, undefined, or "undefined" string)
-  const hasValidDocumentTypeId = documentTypeId && documentTypeId !== 'undefined' && documentTypeId !== 'null';
-  
-  // For document workflow rows (Tier 10), apply filters only if documentTypeId is valid
-  let docWhere = `WHERE d.organization_id=$1 AND da.status='PENDING'
+  // Tier-10 rows are always pending approval rows. Visibility is assignment-based,
+  // with organization administrators acting as the built-in approval override.
+  const docWhere = `WHERE d.organization_id=$1 AND da.status='PENDING'
     AND (
       EXISTS (
         SELECT 1 FROM approval_level_users alu_me
@@ -30,20 +28,24 @@ async function listInbox({ orgId, userId, limit = 50, offset = 0, documentTypeId
           AND LOWER(r_admin.name) IN ('admin','administrator','super admin','owner')
       )
     )`;
-  
-  // Only add document_type_id filter if documentTypeId is valid
-  if (hasValidDocumentTypeId) {
+
+  let documentTypeParam = null;
+  if (documentTypeId) {
     params.push(documentTypeId);
-    docWhere += ` AND d.document_type_id=$${params.length}`;
+    documentTypeParam = `$${params.length}`;
   }
-  
-  // Only add workflow_state filter if state is provided
+  let stateParam = null;
   if (state) {
-    params.push(state);
-    docWhere += ` AND d.workflow_state_code=$${params.length}`;
+    params.push(String(state).toLowerCase());
+    stateParam = `$${params.length}`;
   }
 
-  // Paging is applied after the union.
+  let sourceParam = null;
+  if (source) {
+    params.push(String(source).toLowerCase());
+    sourceParam = `$${params.length}`;
+  }
+
   params.push(limit);
   params.push(offset);
   const limitParam = `$${params.length - 1}`;
@@ -281,6 +283,10 @@ async function listInbox({ orgId, userId, limit = 50, offset = 0, documentTypeId
     )
     SELECT *
     FROM unified
+    WHERE 1=1
+      ${documentTypeParam ? `AND document_type_id = ${documentTypeParam}` : ''}
+      ${stateParam ? `AND (LOWER(COALESCE(approval_status,'')) = ${stateParam} OR LOWER(COALESCE(workflow_state_code,'')) = ${stateParam})` : ''}
+      ${sourceParam ? `AND LOWER(source) = ${sourceParam}` : ''}
     ORDER BY COALESCE(submitted_at, updated_at, created_at) DESC, source ASC
     LIMIT ${limitParam} OFFSET ${offsetParam}
     `,

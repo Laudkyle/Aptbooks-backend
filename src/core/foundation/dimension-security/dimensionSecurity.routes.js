@@ -6,6 +6,19 @@ const service = require("./dimensionSecurity.service");
 const router = express.Router();
 router.use(authRequired);
 
+
+router.get("/options", requirePermission("core.dimension_security.read"), async (req, res, next) => {
+  try {
+    const ctx = {
+      organizationId: req.user.organization_id,
+      userId: req.user.id,
+      ip: req.ip,
+      userAgent: req.get("user-agent") || null,
+    };
+    res.json({ data: await service.listOptions(ctx) });
+  } catch (e) { next(e); }
+});
+
 router.get("/rules", requirePermission("core.dimension_security.read"), async (req, res, next) => {
   try {
     const ctx = {

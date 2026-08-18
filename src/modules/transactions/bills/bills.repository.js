@@ -51,6 +51,9 @@ async function getBillById(orgId, billId, currentUserId) {
   const { rows } = await pool.query(
     `SELECT 
       b.*,
+      bp.name AS vendor_name,
+      bp.code AS vendor_code,
+      bp.email AS vendor_email,
       LOWER(d.workflow_state_code) AS workflow_status,
       CASE
         WHEN d.id IS NOT NULL
@@ -115,6 +118,9 @@ async function getBillById(orgId, billId, currentUserId) {
         ELSE FALSE
       END AS can_post
      FROM bills b
+     LEFT JOIN business_partners bp
+       ON bp.id=b.vendor_id
+      AND bp.organization_id=b.organization_id
      LEFT JOIN documents d
        ON d.id = b.workflow_document_id
       AND d.organization_id = b.organization_id
@@ -153,14 +159,17 @@ async function getBillLines(billId) {
 
 async function listBills({ orgId, query }) {
   const params = [orgId];
-  const where = ["organization_id=$1"];
+  const where = ["b.organization_id=$1"];
   let i = 2;
 
-  if (query?.status) { where.push(`status=$${i++}`); params.push(query.status); }
-  if (query?.vendorId) { where.push(`vendor_id=$${i++}`); params.push(query.vendorId); }
+  if (query?.status) { where.push(`b.status=$${i++}`); params.push(query.status); }
+  if (query?.vendorId) { where.push(`b.vendor_id=$${i++}`); params.push(query.vendorId); }
 
   const { rows } = await pool.query(
-    `SELECT * FROM bills WHERE ${where.join(" AND ")} ORDER BY bill_date DESC, created_at DESC`,
+    `SELECT b.*, bp.name AS vendor_name, bp.code AS vendor_code
+       FROM bills b
+       LEFT JOIN business_partners bp ON bp.id=b.vendor_id AND bp.organization_id=b.organization_id
+      WHERE ${where.join(" AND ")} ORDER BY b.bill_date DESC, b.created_at DESC`,
     params
   );
   return rows;

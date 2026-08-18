@@ -70,6 +70,10 @@ async function listAssets({ orgId, query }) {
   return repo.listAssets({ orgId, query });
 }
 
+async function listDimensionOptions({ orgId }) {
+  return repo.listDimensionOptions({ orgId });
+}
+
 async function getAssetDetails({ orgId, assetId }) {
   const asset = await repo.getAssetWithCategoryAccounts({ orgId, assetId });
   if (!asset) throw new AppError(404, "Asset not found");
@@ -530,6 +534,7 @@ async function disposeAsset({ orgId, actorUserId, assetId, payload }) {
 module.exports = {
   createAsset,
   listAssets,
+  listDimensionOptions,
   getAssetDetails,
   updateAsset,
   deleteDraftAsset,

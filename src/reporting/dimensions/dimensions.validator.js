@@ -112,7 +112,7 @@ async function validateDimensionJson({ orgId, dimensionJson }) {
     );
     if (!rows.length) throw new AppError(400, "projectPhaseId not found");
     const phase = rows[0];
-    if (!['active','closed'].includes(phase.status)) throw new AppError(409, `projectPhaseId is ${phase.status}`);
+    if (!['active','completed'].includes(phase.status)) throw new AppError(409, `projectPhaseId is ${phase.status}`);
     if (dimensionJson.projectId && phase.project_id !== dimensionJson.projectId) {
       throw new AppError(400, "projectPhaseId does not belong to projectId");
     }
@@ -124,7 +124,7 @@ async function validateDimensionJson({ orgId, dimensionJson }) {
     );
     if (!rows.length) throw new AppError(400, "projectTaskId not found");
     const task = rows[0];
-    if (!["active", "closed"].includes(task.status)) throw new AppError(409, `projectTaskId is ${task.status}`);
+    if (!["active", "completed"].includes(task.status)) throw new AppError(409, `projectTaskId is ${task.status}`);
     if (dimensionJson.projectId && task.project_id !== dimensionJson.projectId) {
       throw new AppError(400, "projectTaskId does not belong to projectId");
     }

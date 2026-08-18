@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "4590db36-5c7b-4d68-a6cb-30d135fd8742",
+  "snapshot_at": "2026-08-18T15:46:28.995Z",
+  "header": {
+    "id": "4590db36-5c7b-4d68-a6cb-30d135fd8742",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "customer_id": "db7d3649-88f9-4077-8814-cbb42aeee241",
+    "invoice_no": "INV-000001",
+    "invoice_date": "2026-08-18T00:00:00.000Z",
+    "due_date": "2026-08-18T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "bvmnbv,mnbm",
+    "subtotal": "98779.00",
+    "total": "113595.85",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-18T15:45:38.370Z",
+    "updated_at": "2026-08-18T15:45:38.370Z",
+    "tax_total": "14816.85",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "113595.85"
+  },
+  "lines": [
+    {
+      "id": "d22f4f3f-aa2e-4ac8-8113-b217f3fea064",
+      "invoice_id": "4590db36-5c7b-4d68-a6cb-30d135fd8742",
+      "line_no": 1,
+      "description": "hjvzxcn n",
+      "quantity": "1.0000",
+      "unit_price": "98779.00",
+      "line_total": "98779.00",
+      "revenue_account_id": "99bc0fb3-dd9e-4373-8c8b-95c0d0855f32",
+      "created_at": "2026-08-18T15:45:38.370Z",
+      "tax_code_id": "e315c77d-a8b5-4686-b291-d932396b2a38",
+      "tax_amount": "14816.85",
+      "taxable_amount": "98779.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "db7d3649-88f9-4077-8814-cbb42aeee241",
+          "supplyType": "goods",
+          "partnerType": "customer",
+          "documentDate": "2026-08-18",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "14816.85",
+        "components": [
+          {
+            "rate": "15.000000",
+            "boxCode": "CIT_PAYABLE",
+            "taxCode": "GH_CAPITAL_GAINS_15",
+            "taxType": "OTHER",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "goods",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "taxable",
+            "direction": "output",
+            "taxAmount": "14816.85",
+            "taxCodeId": "e315c77d-a8b5-4686-b291-d932396b2a38",
+            "taxCodeName": "Capital Gains Tax 15%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "98779.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "e315c77d-a8b5-4686-b291-d932396b2a38",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "e315c77d-a8b5-4686-b291-d932396b2a38",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "98779.00",
+        "classification": {
+          "supplyType": "goods",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "e315c77d-a8b5-4686-b291-d932396b2a38",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "14816.85"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "98779.00",
+    "total": "113595.85"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

@@ -15,7 +15,10 @@ async function createStatement(orgId, createdBy, payload, client = null) {
 
 async function getStatement(orgId, statementId, client = null) {
   const { rows } = await db(client).query(
-    `SELECT * FROM bank_statements WHERE organization_id=$1 AND id=$2`,
+    `SELECT s.*, ba.code AS bank_account_code, ba.name AS bank_account_name
+       FROM bank_statements s
+       JOIN bank_accounts ba ON ba.id=s.bank_account_id AND ba.organization_id=s.organization_id
+      WHERE s.organization_id=$1 AND s.id=$2`,
     [orgId, statementId]
   );
   return rows[0] || null;
@@ -37,12 +40,14 @@ async function listStatementLines(orgId, statementId, { limit = 200, offset = 0,
     SELECT
       l.*,
       m.journal_entry_id AS match_journal_entry_id,
+      je.entry_no AS match_journal_entry_no,
       m.matched_amount AS match_amount,
       m.matched_at AS match_at,
       m.matched_by AS match_by
     FROM bank_statement_lines l
     JOIN bank_statements s ON s.id = l.statement_id
     LEFT JOIN bank_matches m ON m.bank_statement_line_id = l.id
+    LEFT JOIN journal_entries je ON je.id=m.journal_entry_id AND je.organization_id=s.organization_id
     WHERE s.organization_id=$1 AND s.id=$2${matchedClause}
     ORDER BY l.txn_date DESC, l.created_at DESC
     LIMIT $${typeof matched === "boolean" ? 4 : 3} OFFSET $${typeof matched === "boolean" ? 5 : 4}
@@ -182,7 +187,10 @@ async function matchLine(orgId, lineId, { journalEntryId, matchedBy, matchMethod
 
 async function listStatements(orgId) {
   const { rows } = await pool.query(
-    `SELECT * FROM bank_statements WHERE organization_id=$1 ORDER BY statement_date DESC LIMIT 200`,
+    `SELECT s.*, ba.code AS bank_account_code, ba.name AS bank_account_name
+       FROM bank_statements s
+       JOIN bank_accounts ba ON ba.id=s.bank_account_id AND ba.organization_id=s.organization_id
+      WHERE s.organization_id=$1 ORDER BY s.statement_date DESC LIMIT 200`,
     [orgId]
   );
   return rows;

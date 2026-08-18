@@ -3,10 +3,24 @@ const { pool } = require("../../../db/pool");
 async function listRules({ organizationId, limit = 100, offset = 0 }) {
   const { rows } = await pool.query(
     `
-    SELECT *
-    FROM dimension_access_rules
-    WHERE organization_id=$1
-    ORDER BY updated_at DESC
+    SELECT dar.*,
+           CASE
+             WHEN dar.principal_type='user' THEN COALESCE(u.full_name, u.email)
+             WHEN dar.principal_type='role' THEN r.name
+             ELSE NULL
+           END AS principal_name,
+           CASE WHEN dar.principal_type='user' THEN u.email ELSE NULL END AS principal_email
+    FROM dimension_access_rules dar
+    LEFT JOIN users u
+      ON dar.principal_type='user'
+     AND u.id=dar.principal_id
+     AND u.organization_id=dar.organization_id
+    LEFT JOIN roles r
+      ON dar.principal_type='role'
+     AND r.id=dar.principal_id
+     AND r.organization_id=dar.organization_id
+    WHERE dar.organization_id=$1
+    ORDER BY dar.updated_at DESC
     LIMIT $2 OFFSET $3
     `,
     [organizationId, limit, offset]
@@ -20,6 +34,45 @@ async function getRule({ organizationId, ruleId }) {
     [organizationId, ruleId]
   );
   return rows[0] || null;
+}
+
+async function getPrincipal({ organizationId, principalType, principalId }) {
+  const table = principalType === "user" ? "users" : "roles";
+  const { rows } = await pool.query(
+    `SELECT id FROM ${table} WHERE organization_id=$1 AND id=$2 LIMIT 1`,
+    [organizationId, principalId]
+  );
+  return rows[0] || null;
+}
+
+async function listOptions({ organizationId }) {
+  const [users, roles, locations, assetDepartments, hrDepartments, costCenters, profitCenters, investmentCenters, projects] = await Promise.all([
+    pool.query(`SELECT id, full_name, email FROM users WHERE organization_id=$1 AND status='active' AND COALESCE(is_system,false)=false ORDER BY COALESCE(full_name,email)`, [organizationId]),
+    pool.query(`SELECT id, name FROM roles WHERE organization_id=$1 ORDER BY name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM org_locations WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM org_departments WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM hr_departments WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM cost_centers WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM profit_centers WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM investment_centers WHERE organization_id=$1 AND status='active' ORDER BY code, name`, [organizationId]),
+    pool.query(`SELECT id, code, name FROM projects WHERE organization_id=$1 AND status IN ('active','completed') ORDER BY code, name`, [organizationId]),
+  ]);
+
+  // Asset departments and HR departments are both legitimate human-readable
+  // department masters in the current schema. Deduplicate by UUID for selection.
+  const departmentMap = new Map();
+  for (const row of [...assetDepartments.rows, ...hrDepartments.rows]) departmentMap.set(String(row.id), row);
+
+  return {
+    users: users.rows,
+    roles: roles.rows,
+    locations: locations.rows,
+    departments: [...departmentMap.values()],
+    costCenters: costCenters.rows,
+    profitCenters: profitCenters.rows,
+    investmentCenters: investmentCenters.rows,
+    projects: projects.rows,
+  };
 }
 
 async function createRule({ organizationId, actorUserId, principalType, principalId, effect, ruleJson, note }) {
@@ -69,4 +122,4 @@ async function deleteRule({ organizationId, ruleId }) {
   return rows[0] || null;
 }
 
-module.exports = { listRules, getRule, createRule, updateRule, deleteRule };
+module.exports = { listRules, getRule, getPrincipal, listOptions, createRule, updateRule, deleteRule };

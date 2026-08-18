@@ -13,7 +13,10 @@ async function create(orgId, payload) {
 
 async function list(orgId) {
   const { rows } = await pool.query(
-    `SELECT * FROM bank_accounts WHERE organization_id=$1 ORDER BY code`,
+    `SELECT ba.*, coa.code AS gl_account_code, coa.name AS gl_account_name
+       FROM bank_accounts ba
+       LEFT JOIN chart_of_accounts coa ON coa.id=ba.gl_account_id AND coa.organization_id=ba.organization_id
+      WHERE ba.organization_id=$1 ORDER BY ba.code`,
     [orgId]
   );
   return rows;
