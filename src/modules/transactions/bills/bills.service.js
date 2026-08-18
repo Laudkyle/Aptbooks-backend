@@ -103,6 +103,33 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
   return { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total };
 }
 
+async function previewBillTaxes({ orgId, payload }) {
+  const client = await pool.connect();
+  try {
+    const result = await prepareBillLines({ client, orgId, payload, lines: payload.lines || [] });
+    return {
+      lines: result.computed.map((line, index) => ({
+        lineNo: index + 1,
+        description: line.description,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal: line.lineTotal,
+        taxableAmount: line.taxableAmount,
+        taxAmount: line.taxAmount,
+        taxCodeId: line.taxCodeId,
+        taxDetails: line.taxDetails || [],
+      })),
+      subtotal: result.subtotal,
+      taxTotal: result.taxTotal,
+      withholdingTotal: result.withholdingTotal,
+      netSettlementTotal: result.netSettlementTotal,
+      total: result.total,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function createDraftBill({ orgId, actorUserId, payload }) {
   const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: payload.vendorId });
   if (vendor.type !== "vendor") throw new AppError(400, "Partner is not a vendor");
@@ -526,6 +553,7 @@ async function voidBill({ orgId, actorUserId, billId, reason }) {
 }
 
 module.exports = {
+  previewBillTaxes,
   createDraftBill,
   getBillDetails,
   listBills,

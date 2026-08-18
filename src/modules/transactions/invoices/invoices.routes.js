@@ -15,6 +15,14 @@ const {
 
 router.use(authRequired);
 
+router.post("/preview/determine-taxes", requirePermission("transactions.invoice.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createInvoiceSchema, req.body);
+    res.json(await svc.previewInvoiceTaxes({ orgId, payload }));
+  } catch (e) { next(e); }
+});
+
 router.post("/", idempotency({ required: true }), requirePermission("transactions.invoice.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

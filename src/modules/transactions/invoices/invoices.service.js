@@ -101,6 +101,33 @@ async function prepareInvoiceLines({ client, orgId, payload, lines }) {
   return { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total };
 }
 
+async function previewInvoiceTaxes({ orgId, payload }) {
+  const client = await pool.connect();
+  try {
+    const result = await prepareInvoiceLines({ client, orgId, payload, lines: payload.lines || [] });
+    return {
+      lines: result.computed.map((line, index) => ({
+        lineNo: index + 1,
+        description: line.description,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal: line.lineTotal,
+        taxableAmount: line.taxableAmount,
+        taxAmount: line.taxAmount,
+        taxCodeId: line.taxCodeId,
+        taxDetails: line.taxDetails || [],
+      })),
+      subtotal: result.subtotal,
+      taxTotal: result.taxTotal,
+      withholdingTotal: result.withholdingTotal,
+      netSettlementTotal: result.netSettlementTotal,
+      total: result.total,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 async function nextInvoiceNo(client, orgId) {
   await client.query(
     `INSERT INTO invoice_sequences(organization_id, next_no)
@@ -763,6 +790,7 @@ async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
 }
 
 module.exports = {
+  previewInvoiceTaxes,
   createDraftInvoice,
   getInvoiceDetails,
   listInvoices,

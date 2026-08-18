@@ -42,7 +42,7 @@ async function fetchTaxCodeBundle({ client, orgId, taxCodeId }) {
             tc.category_code, tc.tax_scope, tc.application_scope, tc.calculation_method, tc.exemption_reason_code, tc.exemption_reason,
             tc.reverse_charge, tc.recoverable_percent, tc.reporting_group, tc.posting_account_id, tc.metadata
        FROM tax_code_components tcc
-       JOIN tax_codes tc ON tc.id = tcc.component_tax_code_id
+       JOIN tax_codes tc ON tc.id = tcc.component_tax_code_id AND tc.organization_id=tcc.organization_id
       WHERE tcc.organization_id=$1 AND tcc.parent_tax_code_id=$2
       ORDER BY tcc.sequence_no, tc.code`,
     [orgId, taxCodeId]
@@ -62,7 +62,11 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
     selectedTaxCodeId: bundle.code.id,
     sourceTaxCodeId: bundle.code.id,
     sourceRuleId: selection.sourceRuleId || null,
-    taxCodeId: taxCode.id || taxCode.tax_code_id,
+    // Rows from tax_code_components contain both the relationship row `id`
+    // and the actual component tax code as `tax_code_id`. Persist only IDs from
+    // tax_codes in line tax detail FKs; using the relationship UUID violates
+    // *_line_tax_details_tax_code_id_fkey for compound taxes.
+    taxCodeId: taxCode.tax_code_id || taxCode.id,
     taxCode: taxCode.code,
     taxCodeName: taxCode.name,
     taxType: taxCode.tax_type,

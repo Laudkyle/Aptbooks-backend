@@ -14,6 +14,14 @@ const { writeAudit } = require("../../../core/foundation/audit-logs/audit.servic
 
 router.use(authRequired);
 
+router.post("/preview/determine-taxes", requirePermission("transactions.bill.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const payload = validate(createBillSchema, req.body);
+    res.json(await svc.previewBillTaxes({ orgId, payload }));
+  } catch (e) { next(e); }
+});
+
 router.post("/", idempotency({ required: true }), requirePermission("transactions.bill.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
