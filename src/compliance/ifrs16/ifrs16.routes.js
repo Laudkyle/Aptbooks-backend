@@ -2,12 +2,18 @@
 const express = require("express");
 const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const { validate } = require("../../shared/validators/validate");
 const svc = require("./ifrs16.service");
 const v = require("./ifrs16.validators");
 
 const router = express.Router();
 router.use(authRequired);
+const requireMutationIdempotency = idempotency({ required: true });
+router.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  return requireMutationIdempotency(req, res, next);
+});
 
 router.get("/settings", requirePermission("compliance.ifrs16.read"), async (req,res,next)=>{ try { res.json(await svc.getSettings({ orgId:req.user.organization_id })); } catch(e){ next(e);} });
 router.put("/settings", requirePermission("compliance.ifrs16.manage"), async (req,res,next)=>{ try { const payload = validate(v.upsertSettings, req.body); res.json(await svc.upsertSettings({ orgId:req.user.organization_id, actorUserId:req.user.id, payload })); } catch(e){ next(e);} });

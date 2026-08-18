@@ -578,7 +578,6 @@ router.get(
       );
 
       res.json({ ok: true, data: rows });
-      console.log(rows, "This is the list of workflow rules");
     } catch (e) { next(e); }
   }
 );

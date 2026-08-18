@@ -2,8 +2,14 @@ const express = require("express");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const reconcile = require("../../../interfaces/reconciliation.interface");
 const { authRequired } = require("../../../middleware/auth.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const router = express.Router();
 router.use(authRequired);
+const requireMutationIdempotency = idempotency({ required: true });
+router.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  return requireMutationIdempotency(req, res, next);
+});
 
 router.get("/period", requirePermission("accounting.reconcile.run"), async (req, res, next) => {
   try {

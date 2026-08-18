@@ -1,8 +1,16 @@
 const express = require("express");
+const { authRequired } = require("../../../middleware/auth.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const svc = require("./imports.service");
 
 const router = express.Router();
+router.use(authRequired);
+const requireMutationIdempotency = idempotency({ required: true });
+router.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  return requireMutationIdempotency(req, res, next);
+});
 
 // Body is expected as raw text/csv; alternatively send JSON { csvText: "..." }
 router.post("/coa", requirePermission("accounting.imports.run"), express.text({ type: ["text/*"], limit: "10mb" }), async (req, res, next) => {

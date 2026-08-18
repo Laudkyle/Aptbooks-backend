@@ -15,7 +15,7 @@ const svc = require("./creditNotes.service");
 
 router.use(authRequired);
 
-router.post("/", requirePermission("transactions.credit_note.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("transactions.credit_note.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -99,66 +99,33 @@ router.post(
   }
 );
 
-router.post("/:id/issue", requirePermission("transactions.credit_note.issue"), async (req, res, next) => {
+router.post("/:id/issue", idempotency({ required: true }), requirePermission("transactions.credit_note.issue"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     const out = await svc.issueCreditNote({ orgId, actorUserId, id: req.params.id });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "credit_note.issued",
-      entityType: "credit_notes",
-      entityId: out.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
-
     res.json(out);
   } catch (e) { next(e); }
 });
 
-router.post("/:id/apply", requirePermission("transactions.credit_note.apply"), async (req, res, next) => {
+router.post("/:id/apply", idempotency({ required: true }), requirePermission("transactions.credit_note.apply"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     const payload = validate(applyCreditNoteSchema, req.body);
     const out = await svc.applyCreditNote({ orgId, actorUserId, id: req.params.id, payload });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "credit_note.applied",
-      entityType: "credit_notes",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
-
     res.json(out);
   } catch (e) { next(e); }
 });
 
-router.post("/:id/void", requirePermission("transactions.credit_note.void"), async (req, res, next) => {
+router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.credit_note.void"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     const reason = (req.body && req.body.reason) ? String(req.body.reason) : null;
     const out = await svc.voidCreditNote({ orgId, actorUserId, id: req.params.id, reason });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "credit_note.voided",
-      entityType: "credit_notes",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
 
     res.json(out);
   } catch (e) { next(e); }

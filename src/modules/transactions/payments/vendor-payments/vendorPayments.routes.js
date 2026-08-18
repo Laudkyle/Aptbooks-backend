@@ -139,17 +139,6 @@ router.post("/:id/post", idempotency({ required: true }), requirePermission("tra
 
     const out = await svc.postVendorPayment({ orgId, actorUserId, id: req.params.id });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "vendor_payment.posted",
-      entityType: "vendor_payments",
-      entityId: out.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
-
     res.json(out);
   } catch (e) { next(e); }
 });
@@ -161,17 +150,6 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("tra
 
     const body = validate(voidVendorPaymentSchema, req.body || {});
     const out = await svc.voidVendorPayment({ orgId, actorUserId, id: req.params.id, reason: body.reason });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "vendor_payment.voided",
-      entityType: "vendor_payments",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
 
     res.json(out);
   } catch (e) { next(e); }

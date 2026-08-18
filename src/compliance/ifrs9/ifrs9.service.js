@@ -76,11 +76,10 @@ function serializeSettings(row) {
 }
 
 async function safeWriteAudit(payload) {
-  try {
-    await writeAudit(payload);
-  } catch (error) {
-    logger.warn({ err: error, action: payload?.action, entityType: payload?.entityType, entityId: payload?.entityId }, "IFRS9 audit write failed");
-  }
+  // Retained as a compatibility helper for non-transactional callers, but audit
+  // persistence is now mandatory. Critical state transitions pass `client` and
+  // write before COMMIT so an audit failure rolls the mutation back.
+  return writeAudit(payload);
 }
 
 async function getPeriodOrThrow(client, orgId, periodId) {
@@ -392,7 +391,6 @@ async function upsertIfrs9Settings({ orgId, actorUserId, payload, audit = {} }) 
       ]
     );
 
-    await client.query("COMMIT");
     const out = serializeSettings(rows[0]);
     await safeWriteAudit({
       organizationId: orgId,
@@ -403,8 +401,10 @@ async function upsertIfrs9Settings({ orgId, actorUserId, payload, audit = {} }) 
       ip: audit.ip,
       userAgent: audit.userAgent,
       before: serializeSettings(before),
-      after: out
+      after: out,
+      client
     });
+    await client.query("COMMIT");
     return out;
   } catch (e) {
     await client.query("ROLLBACK");
@@ -510,7 +510,6 @@ async function addEclParameter({ orgId, actorUserId, modelId, payload, audit = {
         actorUserId
       ]
     );
-    await client.query("COMMIT");
     await safeWriteAudit({
       organizationId: orgId,
       actorUserId,
@@ -519,8 +518,10 @@ async function addEclParameter({ orgId, actorUserId, modelId, payload, audit = {
       entityId: rows[0].id,
       ip: audit.ip,
       userAgent: audit.userAgent,
-      after: rows[0]
+      after: rows[0],
+      client
     });
+    await client.query("COMMIT");
     return rows[0];
   } catch (e) {
     await client.query("ROLLBACK");
@@ -575,7 +576,6 @@ async function upsertCounterpartyProfile({ orgId, actorUserId, payload, audit = 
       ]
     );
 
-    await client.query("COMMIT");
     await safeWriteAudit({
       organizationId: orgId,
       actorUserId,
@@ -585,8 +585,10 @@ async function upsertCounterpartyProfile({ orgId, actorUserId, payload, audit = 
       ip: audit.ip,
       userAgent: audit.userAgent,
       before,
-      after: rows[0]
+      after: rows[0],
+      client
     });
+    await client.query("COMMIT");
     return rows[0];
   } catch (e) {
     await client.query("ROLLBACK");
@@ -623,7 +625,6 @@ async function addEclBucket({ orgId, actorUserId, modelId, payload, audit = {} }
       ) VALUES ($1,$2,$3,$4,$5,$6,NOW()) RETURNING *`,
       [modelId, label, daysFrom, daysTo, lossRate, actorUserId]
     );
-    await client.query("COMMIT");
     await safeWriteAudit({
       organizationId: orgId,
       actorUserId,
@@ -632,8 +633,10 @@ async function addEclBucket({ orgId, actorUserId, modelId, payload, audit = {} }
       entityId: rows[0].id,
       ip: audit.ip,
       userAgent: audit.userAgent,
-      after: rows[0]
+      after: rows[0],
+      client
     });
+    await client.query("COMMIT");
     return rows[0];
   } catch (e) {
     await client.query("ROLLBACK");
@@ -649,7 +652,7 @@ function clampNumber(value, min, max) {
 }
 
 function getStateCode(daysPastDue, outstanding, settings) {
-  if (Number(outstanding || 0) <= 0.005) return "RESOLVED";
+  if (new Decimal(outstanding || 0).lte(0)) return "RESOLVED";
   const t2 = Number(settings.stage2_threshold_days ?? 30);
   const t3 = Number(settings.stage3_threshold_days ?? 90);
   if (daysPastDue >= t3) return "DEFAULT";
@@ -819,19 +822,19 @@ async function computeBehavioralAnalyticsEngine(client, orgId, actorUserId, { as
       if (endState === 'RESOLVED') cured += 1;
     }
     const cohort = String(row.invoice_date).slice(0, 7);
-    const current = cohorts.get(cohort) || { total_amount: 0, default_amount: 0, invoice_count: 0 };
-    current.total_amount += Number(row.total_amount || 0);
+    const current = cohorts.get(cohort) || { total_amount: new Decimal(0), default_amount: new Decimal(0), invoice_count: 0 };
+    current.total_amount = current.total_amount.plus(new Decimal(row.total_amount || 0));
     current.invoice_count += 1;
-    if (endState === 'DEFAULT') current.default_amount += Number(row.outstanding_as_of || 0);
+    if (endState === 'DEFAULT') current.default_amount = current.default_amount.plus(new Decimal(row.outstanding_as_of || 0));
     cohorts.set(cohort, current);
   }
 
   const cohortRows = Array.from(cohorts.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([cohort, agg]) => ({
     cohort,
     invoice_count: agg.invoice_count,
-    total_amount: Number(agg.total_amount.toFixed(2)),
-    default_amount: Number(agg.default_amount.toFixed(2)),
-    default_ratio: agg.total_amount > 0 ? Number((agg.default_amount / agg.total_amount).toFixed(6)) : 0
+    total_amount: Number(agg.total_amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)),
+    default_amount: Number(agg.default_amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)),
+    default_ratio: agg.total_amount.gt(0) ? Number(agg.default_amount.div(agg.total_amount).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6)) : 0
   }));
   const longTermVintage = cohortRows.length ? cohortRows.reduce((s, r) => s + r.default_ratio, 0) / cohortRows.length : 0;
   const recentRows = cohortRows.slice(-3);
@@ -1163,8 +1166,8 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
             scenario_id: scenario.id,
             code: scenario.code,
             weight,
-            loss_rate_used: Number(scenarioLossRate.toDecimalPlaces(6).toString()),
-            ecl_amount: scenarioEcl.toNumber(),
+            loss_rate_used: scenarioLossRate.toDecimalPlaces(6).toFixed(6),
+            ecl_amount: scenarioEcl.toDecimalPlaces(2).toFixed(2),
             overlay_ids: overlay.matched_overlay_ids
           });
         } else {
@@ -1187,9 +1190,9 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
             scenario_id: scenario.id,
             code: scenario.code,
             weight,
-            pd_used: Number(scenarioPd.toDecimalPlaces(6).toString()),
-            lgd_used: Number(scenarioLgd.toDecimalPlaces(6).toString()),
-            ecl_amount: scenarioEcl.toNumber(),
+            pd_used: scenarioPd.toDecimalPlaces(6).toFixed(6),
+            lgd_used: scenarioLgd.toDecimalPlaces(6).toFixed(6),
+            ecl_amount: scenarioEcl.toDecimalPlaces(2).toFixed(2),
             overlay_ids: overlay.matched_overlay_ids
           });
         }
@@ -1202,9 +1205,9 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
         ...l,
         exposure_amount: exposure,
         ecl_amount: ecl,
-        pd_used: weightedPd ? Number(weightedPd.toDecimalPlaces(6).toString()) : null,
-        lgd_used: weightedLgd ? Number(weightedLgd.toDecimalPlaces(6).toString()) : null,
-        ead_amount: approach === 'GENERAL' ? exposure.toNumber() : null,
+        pd_used: weightedPd ? weightedPd.toDecimalPlaces(6).toFixed(6) : null,
+        lgd_used: weightedLgd ? weightedLgd.toDecimalPlaces(6).toFixed(6) : null,
+        ead_amount: approach === 'GENERAL' ? exposure.toDecimalPlaces(2).toFixed(2) : null,
         stage_reason: l.stage_reason || (approach === 'GENERAL' ? `Stage ${Number(l.stage)} derived from threshold, override and qualitative SICR logic` : 'Simplified approach loss-rate bucket'),
         source_mix: { invoices: Number(l.invoice_count || 0), contract_assets: Number(l.contract_asset_count || 0) },
         scenario_effects: { scenarios: scenarioBreakdown, scenario_count: scenarioBreakdown.length },
@@ -1245,10 +1248,10 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
         model.id,
         asOfDate,
         approach,
-        totalExposure.toNumber(),
-        totalEcl.toNumber(),
-        priorEcl.toNumber(),
-        deltaAllowance.toNumber(),
+        totalExposure.toDecimalPlaces(2).toFixed(2),
+        totalEcl.toDecimalPlaces(2).toFixed(2),
+        priorEcl.toDecimalPlaces(2).toFixed(2),
+        deltaAllowance.toDecimalPlaces(2).toFixed(2),
         payload.memo || null,
         actorUserId,
         validationStatus,
@@ -1279,8 +1282,8 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
           l.loss_rate,
           l.invoice_count,
           l.contract_asset_count || 0,
-          l.exposure_amount.toNumber(),
-          l.ecl_amount.toNumber(),
+          l.exposure_amount.toDecimalPlaces(2).toFixed(2),
+          l.ecl_amount.toDecimalPlaces(2).toFixed(2),
           l.stage,
           l.pd_used,
           l.lgd_used,
@@ -1300,10 +1303,10 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
       model_id: model.id,
       as_of_date: asOfDate,
       approach,
-      total_exposure: totalExposure.toNumber(),
-      total_ecl: totalEcl.toNumber(),
-      prior_posted_ecl: priorEcl.toNumber(),
-      delta_allowance: deltaAllowance.toNumber(),
+      total_exposure: totalExposure.toDecimalPlaces(2).toFixed(2),
+      total_ecl: totalEcl.toDecimalPlaces(2).toFixed(2),
+      prior_posted_ecl: priorEcl.toDecimalPlaces(2).toFixed(2),
+      delta_allowance: deltaAllowance.toDecimalPlaces(2).toFixed(2),
       validation_status: validationStatus,
       coverage_summary: coverageSummary,
       scenario_snapshot: scenarioSnapshot,
@@ -1313,8 +1316,8 @@ async function computeEcl({ orgId, actorUserId, payload, audit = {} }) {
       bucket_id: l.bucket_id,
       param_id: l.param_id,
       stage: l.stage,
-      exposure_amount: l.exposure_amount.toNumber(),
-      ecl_amount: l.ecl_amount.toNumber(),
+      exposure_amount: l.exposure_amount.toDecimalPlaces(2).toFixed(2),
+      ecl_amount: l.ecl_amount.toDecimalPlaces(2).toFixed(2),
       stage_reason: l.stage_reason,
       source_mix: l.source_mix,
       scenario_effects: l.scenario_effects,
@@ -1382,8 +1385,6 @@ async function finalizeRun({ orgId, actorUserId, runId, audit = {} }) {
         [orgId, runId, frozenHash]
       );
     }
-    await client.query("COMMIT");
-    const out = await getRunDetails({ orgId, runId });
     await safeWriteAudit({
       organizationId: orgId,
       actorUserId,
@@ -1392,8 +1393,11 @@ async function finalizeRun({ orgId, actorUserId, runId, audit = {} }) {
       entityId: runId,
       ip: audit.ip,
       userAgent: audit.userAgent,
-      after: out.run
+      after: upd[0],
+      client
     });
+    await client.query("COMMIT");
+    const out = await getRunDetails({ orgId, runId });
     return out.run;
   } catch (e) {
     await client.query("ROLLBACK");
@@ -1435,7 +1439,6 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
          WHERE organization_id=$1 AND id=$2 RETURNING *`,
         [orgId, run.id, actorUserId]
       );
-      await client.query("COMMIT");
       await safeWriteAudit({
         organizationId: orgId,
         actorUserId,
@@ -1444,8 +1447,10 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
         entityId: run.id,
         ip: audit.ip,
         userAgent: audit.userAgent,
-        after: { ...upd[0], no_entry: true }
+        after: { ...upd[0], no_entry: true },
+        client
       });
+      await client.query("COMMIT");
       return { run_id: upd[0].id, journal_id: null, already_posted: false, no_entry: true };
     }
 
@@ -1466,14 +1471,14 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
       lines: [
         {
           accountId: settings.impairment_expense_account_id,
-          debit: debitExpense ? amt.toNumber() : 0,
-          credit: debitExpense ? 0 : amt.toNumber(),
+          debit: debitExpense ? amt.toDecimalPlaces(2).toFixed(2) : "0.00",
+          credit: debitExpense ? "0.00" : amt.toDecimalPlaces(2).toFixed(2),
           description: "IFRS9 impairment expense (delta)"
         },
         {
           accountId: settings.loss_allowance_account_id,
-          debit: debitExpense ? 0 : amt.toNumber(),
-          credit: debitExpense ? amt.toNumber() : 0,
+          debit: debitExpense ? "0.00" : amt.toDecimalPlaces(2).toFixed(2),
+          credit: debitExpense ? amt.toDecimalPlaces(2).toFixed(2) : "0.00",
           description: "IFRS9 loss allowance (delta)"
         }
       ]
@@ -1520,7 +1525,6 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
         [orgId, run.id, journalId, actorUserId]
       );
 
-      await client2.query("COMMIT");
       await safeWriteAudit({
         organizationId: orgId,
         actorUserId,
@@ -1529,8 +1533,10 @@ async function postEcl({ orgId, actorUserId, payload, audit = {} }) {
         entityId: run.id,
         ip: audit.ip,
         userAgent: audit.userAgent,
-        after: { run_id: upd[0].id, journal_id: upd[0].journal_entry_id }
+        after: { run_id: upd[0].id, journal_id: upd[0].journal_entry_id },
+        client: client2
       });
+      await client2.query("COMMIT");
       return { run_id: upd[0].id, journal_id: upd[0].journal_entry_id, already_posted: false };
     } catch (e) {
       await client2.query("ROLLBACK");
@@ -1570,7 +1576,8 @@ async function reverseEclPosting({ orgId, actorUserId, payload, audit = {} }) {
       targetPeriodId: payload.target_period_id,
       entryDate: payload.entry_date,
       reason: payload.reason,
-      idempotencyKey
+      idempotencyKey,
+      client
     });
 
     await client.query(
@@ -1587,7 +1594,6 @@ async function reverseEclPosting({ orgId, actorUserId, payload, audit = {} }) {
       [orgId, run.id, run.period_id, out.reversalJournalId || null, actorUserId]
     );
 
-    await client.query("COMMIT");
     await safeWriteAudit({
       organizationId: orgId,
       actorUserId,
@@ -1596,8 +1602,10 @@ async function reverseEclPosting({ orgId, actorUserId, payload, audit = {} }) {
       entityId: run.id,
       ip: audit.ip,
       userAgent: audit.userAgent,
-      after: { run_id: run.id, reversal_journal_id: out.reversalJournalId }
+      after: { run_id: run.id, reversal_journal_id: out.reversalJournalId },
+      client
     });
+    await client.query("COMMIT");
     return { run_id: run.id, reversal_journal_id: out.reversalJournalId };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -1627,7 +1635,7 @@ async function getAllowanceMovementReport({ orgId, periodId }) {
        LIMIT 1`,
       [orgId, period.start_date]
     );
-    const openingAllowance = openingRows.length ? Number(openingRows[0].total_ecl) : 0;
+    const openingAllowanceDecimal = new Decimal(openingRows.length ? openingRows[0].total_ecl : 0);
 
     const { rows: runRows } = await client.query(
       `SELECT id, as_of_date, approach, status,
@@ -1643,10 +1651,22 @@ async function getAllowanceMovementReport({ orgId, periodId }) {
     );
 
     const effectiveRuns = runRows.filter((r) => r.status === "posted" && !r.reversed_at);
-    const additions = effectiveRuns.map((r) => Number(r.delta_allowance)).filter((d) => d > 0).reduce((a, b) => a + b, 0);
-    const releases = effectiveRuns.map((r) => Number(r.delta_allowance)).filter((d) => d < 0).reduce((a, b) => a + Math.abs(b), 0);
-    const netMovement = additions - releases;
-    const closingAllowance = openingAllowance + netMovement;
+    const additionsDecimal = effectiveRuns.reduce((sum, r) => {
+      const delta = new Decimal(r.delta_allowance || 0);
+      return delta.gt(0) ? sum.plus(delta) : sum;
+    }, new Decimal(0));
+    const releasesDecimal = effectiveRuns.reduce((sum, r) => {
+      const delta = new Decimal(r.delta_allowance || 0);
+      return delta.lt(0) ? sum.plus(delta.abs()) : sum;
+    }, new Decimal(0));
+    const netMovementDecimal = additionsDecimal.minus(releasesDecimal);
+    const closingAllowanceDecimal = openingAllowanceDecimal.plus(netMovementDecimal);
+    // Report payload retains numeric compatibility; all aggregation above is Decimal-exact.
+    const openingAllowance = Number(openingAllowanceDecimal.toFixed(2));
+    const additions = Number(additionsDecimal.toFixed(2));
+    const releases = Number(releasesDecimal.toFixed(2));
+    const netMovement = Number(netMovementDecimal.toFixed(2));
+    const closingAllowance = Number(closingAllowanceDecimal.toFixed(2));
 
     return {
       period: {
@@ -1989,8 +2009,8 @@ async function submitModelChangeRequest({ orgId, actorUserId, changeId, comment,
        RETURNING *`,
       [orgId, change.id, actorUserId, submittedDoc.id]
     );
+    await safeWriteAudit({ organizationId: orgId, actorUserId, action: 'ifrs9.model_change.submit', entityType: 'ifrs9_model_change', entityId: change.id, ip: audit.ip, userAgent: audit.userAgent, after: rows[0], client });
     await client.query('COMMIT');
-    await safeWriteAudit({ organizationId: orgId, actorUserId, action: 'ifrs9.model_change.submit', entityType: 'ifrs9_model_change', entityId: change.id, ip: audit.ip, userAgent: audit.userAgent, after: rows[0] });
     return rows[0];
   } catch (e) {
     await client.query('ROLLBACK');
@@ -2013,8 +2033,8 @@ async function approveModelChangeRequest({ orgId, actorUserId, changeId, comment
        RETURNING *`,
       [orgId, change.id, actorUserId]
     );
+    await safeWriteAudit({ organizationId: orgId, actorUserId, action: 'ifrs9.model_change.approve', entityType: 'ifrs9_model_change', entityId: change.id, ip: audit.ip, userAgent: audit.userAgent, after: rows[0], client });
     await client.query('COMMIT');
-    await safeWriteAudit({ organizationId: orgId, actorUserId, action: 'ifrs9.model_change.approve', entityType: 'ifrs9_model_change', entityId: change.id, ip: audit.ip, userAgent: audit.userAgent, after: rows[0] });
     return rows[0];
   } catch (e) {
     await client.query('ROLLBACK');
@@ -2037,8 +2057,8 @@ async function rejectModelChangeRequest({ orgId, actorUserId, changeId, comment,
        RETURNING *`,
       [orgId, change.id, actorUserId, comment || null]
     );
+    await safeWriteAudit({ organizationId: orgId, actorUserId, action: 'ifrs9.model_change.reject', entityType: 'ifrs9_model_change', entityId: change.id, ip: audit.ip, userAgent: audit.userAgent, after: rows[0], client });
     await client.query('COMMIT');
-    await safeWriteAudit({ organizationId: orgId, actorUserId, action: 'ifrs9.model_change.reject', entityType: 'ifrs9_model_change', entityId: change.id, ip: audit.ip, userAgent: audit.userAgent, after: rows[0] });
     return rows[0];
   } catch (e) {
     await client.query('ROLLBACK');

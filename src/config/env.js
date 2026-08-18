@@ -23,7 +23,7 @@ const env = {
   // Optional server-side safety: set a statement timeout for all DB sessions (ms). 0 disables.
   PG_STATEMENT_TIMEOUT_MS: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS || "0", 10),
   JWT_SECRET: must("JWT_SECRET"),
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "12h",
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || "15m",
 
   // Optional JWT claims enforcement
   JWT_ISSUER: process.env.JWT_ISSUER || "",

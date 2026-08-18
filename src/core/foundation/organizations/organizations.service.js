@@ -1,6 +1,7 @@
 const { pool } = require("../../../db/pool");
 const bcrypt = require("bcrypt");
 const { env } = require("../../../config/env");
+const logger = require("../../../config/logger");
 
 /**
  * Initialize all defaults for a newly created organization
@@ -20,7 +21,7 @@ async function initializeOrganizationDefaults({
   adminPassword,
   baseCurrencyCode = "GHS" 
 }) {
-  console.log(`Initializing defaults for organization ${orgId}`);
+  logger.info({ orgId }, "Initializing organization defaults");
 
   // Helper functions (same as in your seed script but using the passed client)
   const upsertPermission = async (code, description) => {
@@ -826,7 +827,7 @@ if (existingSystemUser.length === 0) {
   } catch (insertError) {
     // If it's a unique violation, ignore (someone else created it)
     if (insertError.code === '23505') { // PostgreSQL unique violation code
-      console.log('System user already exists, continuing...');
+      logger.debug({ orgId }, "System user already exists during organization initialization");
     } else {
       throw insertError; // Re-throw other errors
     }

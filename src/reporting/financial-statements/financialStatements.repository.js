@@ -1,4 +1,5 @@
 const { pool } = require("../../db/pool");
+const logger = require("../../config/logger");
 
 async function insertFinancialStatement({ orgId, periodId, statementType, templateId, asOfDate, comparePeriodId, mode, parameters, generatedByUserId, payload }) {
   const { rows } =  await pool.query(
@@ -92,39 +93,13 @@ async function createTemplate({ orgId, statementType, name, description }) {
 async function bulkInsertLines({ orgId, templateId, lines }) {
   if (!lines.length) return [];
   
-  console.log('bulkInsertLines - lines data:', JSON.stringify(lines, null, 2));
-  
+  logger.debug({ orgId, templateId, lineCount: lines.length }, "Bulk inserting statement lines");
+
   const values = [];
   const params = [];
   let i = 1;
   
   for (const ln of lines) {
-    console.log(`Processing line ${i}:`, {
-      line_no: ln.line_no,
-      line_type: ln.line_type,
-      label: ln.label,
-      parent_line_id: ln.parent_line_id
-    });
-    
-    // Log each parameter with its expected type
-    const lineParams = [
-      { value: orgId, type: 'uuid' },
-      { value: templateId, type: 'uuid' },
-      { value: ln.line_no, type: 'integer' },
-      { value: ln.label, type: 'text' },
-      { value: ln.line_type, type: 'text' },
-      { value: ln.expression || null, type: 'text' },
-      { value: ln.sort_order || 0, type: 'integer' },
-      { value: ln.parent_line_id || null, type: 'uuid' },
-      { value: ln.is_visible ?? true, type: 'boolean' },
-      { value: ln.dr_cr_normal || null, type: 'text' },
-      { value: ln.section_code || null, type: 'text' }
-    ];
-    
-    lineParams.forEach((p, idx) => {
-      console.log(`  Param ${i + idx}:`, p);
-    });
-    
     params.push(
       orgId,
       templateId,
@@ -160,17 +135,12 @@ async function bulkInsertLines({ orgId, templateId, lines }) {
     RETURNING id, line_no, template_id, label, line_type
   `;
   
-  console.log('Final query:', query);
-  console.log('Parameters:', params.map((p, idx) => `$${idx+1}: ${p} (${typeof p})`).join('\n'));
-  
   try {
     const { rows } = await pool.query(query, params);
-    console.log(`Successfully inserted ${rows.length} lines`);
+    logger.debug({ orgId, templateId, insertedCount: rows.length }, "Statement lines inserted");
     return rows;
   } catch (error) {
-    console.error('Error in bulkInsertLines:', error);
-    console.error('Failed query:', query);
-    console.error('Failed params:', params);
+    logger.error({ err: error?.message, orgId, templateId, lineCount: lines.length }, "Failed to bulk insert statement lines");
     throw error;
   }
 }
@@ -235,12 +205,12 @@ async function getTemplateGraph({ orgId, templateId }) {
   );
   
   if (!lines.length) {
-    console.log(`No lines found for template ${templateId}`);
+    logger.debug({ orgId, templateId }, "No statement lines found for template");
     return { lines: [], mappings: [] };
   }
   
   const lineIds = lines.map((l) => l.id);
-  console.log(`Found ${lines.length} lines, fetching mappings for ${lineIds.length} line IDs`);
+  logger.debug({ orgId, templateId, lineCount: lines.length }, "Loading statement line mappings");
   
   const { rows: maps } = await pool.query(
     `
@@ -260,7 +230,7 @@ async function getTemplateGraph({ orgId, templateId }) {
     [orgId, lineIds]
   );
   
-  console.log(`Found ${maps.length} mappings`);
+  logger.debug({ orgId, templateId, mappingCount: maps.length }, "Loaded statement line mappings");
   
   return { lines, mappings: maps };
 }

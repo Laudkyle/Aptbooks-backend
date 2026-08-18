@@ -2,15 +2,22 @@ const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const repo = require("./depreciation.repository");
-
-function round2(n) {
-  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
-}
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  sumMoneyUnits,
+  absUnits,
+  periodicDepreciationUnits,
+} = require("../../../shared/utils/financialMath");
 
 function sumMoney(lines) {
-  const debit = round2(lines.reduce((s, l) => s + Number(l.debit || 0), 0));
-  const credit = round2(lines.reduce((s, l) => s + Number(l.credit || 0), 0));
-  return { debit, credit };
+  const debitUnits = sumMoneyUnits(lines.map((line) => line.debit || "0"));
+  const creditUnits = sumMoneyUnits(lines.map((line) => line.credit || "0"));
+  return {
+    debit: moneyStringFromUnits(debitUnits),
+    credit: moneyStringFromUnits(creditUnits),
+    balanced: debitUnits === creditUnits,
+  };
 }
 
 async function assertPeriodOpen(orgId, periodId) {
@@ -101,25 +108,39 @@ async function computePeriodDepreciation({ orgId, periodId }) {
 
   const postings = [];
   for (const r of schedRows) {
-    const cost = Number(r.cost || 0);
-    const salvage = Number(r.salvage_value || 0);
-    const base = round2(cost - salvage);
-    if (base <= 0) continue;
+    const baseCents = moneyUnits(r.cost || "0") - moneyUnits(r.salvage_value || "0");
+    if (baseCents <= 0n) continue;
 
     const life = Number(r.useful_life_months || 0);
-    if (!(life > 0)) continue;
+    if (!Number.isInteger(life) || life <= 0) continue;
 
     const { rows: depSum } = await pool.query(
-      `SELECT COALESCE(SUM(amount),0)::numeric AS amt FROM asset_depreciation_transactions WHERE organization_id=$1 AND schedule_id=$2`,
+      `SELECT
+         COALESCE(SUM(amount),0)::numeric AS amt,
+         (
+           SELECT COUNT(*)::int
+           FROM (
+             SELECT period_id
+             FROM asset_depreciation_transactions
+             WHERE organization_id=$1 AND schedule_id=$2
+             GROUP BY period_id
+             HAVING SUM(amount) > 0
+           ) posted_periods
+         ) AS posting_count
+       FROM asset_depreciation_transactions
+       WHERE organization_id=$1 AND schedule_id=$2`,
       [orgId, r.schedule_id]
     );
-    const accumulated = Number(depSum[0].amt || 0);
-    const remaining = round2(base - accumulated);
-    if (remaining <= 0) continue;
-
-    const scheduled = round2(base / life);
-    const amount = round2(Math.min(scheduled, remaining));
-    if (amount <= 0) continue;
+    const accumulatedCents = moneyUnits(depSum[0].amt || "0");
+    const postingCount = Number(depSum[0].posting_count || 0);
+    const amountCents = periodicDepreciationUnits({
+      basisUnits: baseCents,
+      accumulatedUnits: accumulatedCents,
+      usefulLifePeriods: life,
+      postedPeriods: postingCount,
+    });
+    if (amountCents <= 0n) continue;
+    const amount = moneyStringFromUnits(amountCents);
 
     if (!r.depr_expense_account_id) throw new AppError(409, `Category missing depr_expense_account_id for asset ${r.asset_code}`);
     if (!r.accum_depr_account_id) throw new AppError(409, `Category missing accum_depr_account_id for asset ${r.asset_code}`);
@@ -137,8 +158,8 @@ async function computePeriodDepreciation({ orgId, periodId }) {
 
   const journalLines = [];
   for (const p of postings) {
-    journalLines.push({ accountId: p.expenseAccountId, debit: p.amount, credit: 0, description: p.memo });
-    journalLines.push({ accountId: p.accumAccountId, debit: 0, credit: p.amount, description: p.memo });
+    journalLines.push({ accountId: p.expenseAccountId, debit: p.amount, credit: "0.00", description: p.memo });
+    journalLines.push({ accountId: p.accumAccountId, debit: "0.00", credit: p.amount, description: p.memo });
   }
 
   return { period, postings, journalLines, totals: sumMoney(journalLines) };
@@ -172,7 +193,7 @@ async function runPeriodEndDepreciation({ orgId, actorUserId, periodId }) {
       await repo.markRun({ orgId, runId: run.id, status: "skipped", client: undefined });
       return { status: "skipped", runId: run.id, reason: "no_eligible_assets" };
     }
-    if (totals.debit !== totals.credit) {
+    if (!totals.balanced) {
       await repo.markRun({ orgId, runId: run.id, status: "failed", error: "Depreciation journal not balanced" });
       throw new AppError(500, "Depreciation journal not balanced");
     }
@@ -222,7 +243,7 @@ async function reversePeriodEndDepreciation({ orgId, actorUserId, periodId, entr
 
   const { rows: txns } = await pool.query(
     `
-    SELECT t.asset_id, t.schedule_id, t.amount,
+    SELECT t.asset_id, t.schedule_id, SUM(t.amount)::numeric AS amount,
            c.depr_expense_account_id, c.accum_depr_account_id,
            a.code AS asset_code, a.name AS asset_name,
            s.component_code
@@ -231,6 +252,9 @@ async function reversePeriodEndDepreciation({ orgId, actorUserId, periodId, entr
     JOIN fixed_assets a ON a.id=t.asset_id
     JOIN asset_categories c ON c.id=a.category_id
     WHERE t.organization_id=$1 AND t.period_id=$2
+    GROUP BY t.asset_id, t.schedule_id, c.depr_expense_account_id, c.accum_depr_account_id,
+             a.code, a.name, s.component_code
+    HAVING SUM(t.amount) > 0
     `,
     [orgId, periodId]
   );
@@ -238,16 +262,17 @@ async function reversePeriodEndDepreciation({ orgId, actorUserId, periodId, entr
 
   const lines = [];
   for (const r of txns) {
-    const amt = Number(r.amount || 0);
-    if (amt === 0) continue;
+    const amountCents = moneyUnits(r.amount || "0");
+    if (amountCents === 0n) continue;
+    const amount = moneyStringFromUnits(absUnits(amountCents));
     const component = r.component_code ? ` (${r.component_code})` : "";
     const desc = `Depreciation reversal: ${r.asset_name}${component}`;
-    // Reverse original: Credit expense, Debit accum
-    lines.push({ accountId: r.depr_expense_account_id, debit: 0, credit: amt, description: desc });
-    lines.push({ accountId: r.accum_depr_account_id, debit: amt, credit: 0, description: desc });
+    // Reverse original: Credit expense, Debit accumulated depreciation.
+    lines.push({ accountId: r.depr_expense_account_id, debit: "0.00", credit: amount, description: desc });
+    lines.push({ accountId: r.accum_depr_account_id, debit: amount, credit: "0.00", description: desc });
   }
   const totals = sumMoney(lines);
-  if (totals.debit !== totals.credit) throw new AppError(500, "Reversal journal not balanced");
+  if (!totals.balanced) throw new AppError(500, "Reversal journal not balanced");
 
   const idempotencyKey = `depr-rev:${orgId}:${periodId}`;
   const draft = await journalIF.createDraftJournal({
@@ -269,12 +294,12 @@ async function reversePeriodEndDepreciation({ orgId, actorUserId, periodId, entr
   try {
     await client.query("BEGIN");
     for (const r of txns) {
-      const amt = Number(r.amount || 0);
-      if (amt === 0) continue;
+      const amountCents = moneyUnits(r.amount || "0");
+      if (amountCents === 0n) continue;
       await client.query(
-        `INSERT INTO asset_depreciation_transactions(organization_id, asset_id, schedule_id, period_id, amount)
-         VALUES ($1,$2,$3,$4,$5)`,
-        [orgId, r.asset_id, r.schedule_id, periodId, -Math.abs(amt)]
+        `INSERT INTO asset_depreciation_transactions(organization_id, asset_id, schedule_id, period_id, amount, entry_type)
+         VALUES ($1,$2,$3,$4,$5,'reversal')`,
+        [orgId, r.asset_id, r.schedule_id, periodId, moneyStringFromUnits(-absUnits(amountCents))]
       );
     }
     await client.query("COMMIT");

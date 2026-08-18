@@ -76,7 +76,6 @@ function createOpsDocRouter(config) {
       const orgId = req.user.organization_id;
       const actorUserId = req.user.id;
       const out = await service.finalize({ orgId, actorUserId, documentId: req.params.id });
-      await writeAudit({ organizationId: orgId, actorUserId, action: `${entityType}.${finalAction}ed`, entityType, entityId: req.params.id, after: out, ip: req.audit?.ip, userAgent: req.audit?.userAgent });
       res.json(out);
     } catch (e) { next(e); }
   });
@@ -87,7 +86,6 @@ function createOpsDocRouter(config) {
       const actorUserId = req.user.id;
       const payload = validate(voidSchema, req.body || {});
       const out = await service.voidDocument({ orgId, actorUserId, documentId: req.params.id, reason: payload.reason });
-      await writeAudit({ organizationId: orgId, actorUserId, action: `${entityType}.voided`, entityType, entityId: req.params.id, after: out, ip: req.audit?.ip, userAgent: req.audit?.userAgent });
       res.json(out);
     } catch (e) { next(e); }
   });

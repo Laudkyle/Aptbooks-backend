@@ -3,6 +3,50 @@ const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  sumMoneyUnits,
+  absUnits,
+  assetBookAmounts,
+  moneyNumber,
+} = require("../../../shared/utils/financialMath");
+
+async function loadAssetBookState({ orgId, asset }) {
+  const [{ rows: depRows }, { rows: revaluationRows }] = await Promise.all([
+    pool.query(
+      `SELECT COALESCE(SUM(amount),0)::numeric AS amt
+       FROM asset_depreciation_transactions
+       WHERE organization_id=$1 AND asset_id=$2`,
+      [orgId, asset.id]
+    ),
+    pool.query(
+      `SELECT payload_json
+       FROM asset_events
+       WHERE organization_id=$1 AND asset_id=$2 AND event_type='revaluation'
+       ORDER BY event_date, created_at`,
+      [orgId, asset.id]
+    ),
+  ]);
+
+  let revaluationDeltaUnits = 0n;
+  for (const row of revaluationRows) {
+    const payload = row.payload_json || {};
+    if (payload.delta != null) {
+      revaluationDeltaUnits += moneyUnits(payload.delta);
+    } else if (payload.newValue != null && payload.priorValue != null) {
+      // Compatibility for any legacy event that omitted the explicit delta.
+      revaluationDeltaUnits += moneyUnits(payload.newValue) - moneyUnits(payload.priorValue);
+    }
+  }
+
+  return assetBookAmounts({
+    cost: asset.cost || '0',
+    accumulatedDepreciation: depRows[0]?.amt || '0',
+    revaluationDelta: moneyStringFromUnits(revaluationDeltaUnits),
+    impairmentTotal: asset.impairment_total || '0',
+  });
+}
 
 async function assertCategoryExists({ orgId, categoryId }) {
   const { rows } = await pool.query(
@@ -15,7 +59,7 @@ async function assertCategoryExists({ orgId, categoryId }) {
 
 async function createAsset({ orgId, actorUserId, payload }) {
   await assertCategoryExists({ orgId, categoryId: payload.categoryId });
-  if (Number(payload.salvageValue || 0) > Number(payload.cost)) {
+  if (moneyUnits(payload.salvageValue || "0") > moneyUnits(payload.cost)) {
     throw new AppError(400, "salvageValue cannot exceed cost");
   }
   // Creation is metadata-only. Operational acquisition is performed via /:id/acquire.
@@ -34,7 +78,7 @@ async function getAssetDetails({ orgId, assetId }) {
     `SELECT COALESCE(SUM(amount),0)::numeric AS amt FROM asset_depreciation_transactions WHERE organization_id=$1 AND asset_id=$2`,
     [orgId, assetId]
   );
-  const accumulatedDepreciation = Number(depSum[0].amt || 0);
+  const accumulatedDepreciation = moneyNumber(depSum[0].amt || "0");
 
   const { rows: schedules } = await pool.query(
     `SELECT * FROM asset_depreciation_schedules WHERE organization_id=$1 AND asset_id=$2 ORDER BY effective_start_date DESC, created_at DESC`,
@@ -68,13 +112,13 @@ async function updateAsset({ orgId, actorUserId, assetId, payload, audit = {} })
     if (forbidden) throw new AppError(409, "Only draft assets can have cost/salvage/acquisitionDate updated");
   }
   if (payload.salvageValue !== undefined && payload.cost !== undefined) {
-    if (Number(payload.salvageValue) > Number(payload.cost)) throw new AppError(400, "salvageValue cannot exceed cost");
+    if (moneyUnits(payload.salvageValue) > moneyUnits(payload.cost)) throw new AppError(400, "salvageValue cannot exceed cost");
   }
   if (payload.salvageValue !== undefined && payload.cost === undefined) {
-    if (Number(payload.salvageValue) > Number(before.cost)) throw new AppError(400, "salvageValue cannot exceed cost");
+    if (moneyUnits(payload.salvageValue) > moneyUnits(before.cost)) throw new AppError(400, "salvageValue cannot exceed cost");
   }
   if (payload.cost !== undefined && payload.salvageValue === undefined) {
-    if (Number(before.salvage_value || 0) > Number(payload.cost)) throw new AppError(400, "salvageValue cannot exceed cost");
+    if (moneyUnits(before.salvage_value || "0") > moneyUnits(payload.cost)) throw new AppError(400, "salvageValue cannot exceed cost");
   }
 
   const updated = await repo.updateAsset({ orgId, assetId, payload });
@@ -162,28 +206,26 @@ async function revalueAsset({ orgId, actorUserId, assetId, payload, audit = {} }
   if (!asset) throw new AppError(404, "Asset not found");
   if (asset.status !== "active") throw new AppError(409, "Only active assets can be revalued");
 
-  const { rows: depSum } = await pool.query(
-    `SELECT COALESCE(SUM(amount),0)::numeric AS amt FROM asset_depreciation_transactions WHERE organization_id=$1 AND asset_id=$2`,
-    [orgId, assetId]
-  );
-  const accumulated = Number(depSum[0].amt || 0);
-  const impairmentTotal = Number(asset.impairment_total || 0);
-
-  const baseValue = asset.current_value != null ? Number(asset.current_value) : Number(asset.cost) - accumulated - impairmentTotal;
-  const newValue = Number(payload.newValue);
-  const delta = round2(newValue - baseValue);
-  if (delta === 0) throw new AppError(409, "No change in value");
+  const book = await loadAssetBookState({ orgId, asset });
+  const baseValueCents = book.carryingUnits;
+  const newValueCents = moneyUnits(payload.newValue);
+  const deltaCents = newValueCents - baseValueCents;
+  if (deltaCents === 0n) throw new AppError(409, "No change in value");
+  const baseValue = moneyStringFromUnits(baseValueCents);
+  const newValue = moneyStringFromUnits(newValueCents);
+  const delta = moneyStringFromUnits(deltaCents);
   if (!asset.asset_account_id) throw new AppError(409, "Category missing asset_account_id");
 
   const reserveAcc = payload.revaluationReserveAccountId;
 
   const lines = [];
-  if (delta > 0) {
-    lines.push({ accountId: asset.asset_account_id, debit: Math.abs(delta), credit: 0, description: "Asset revaluation increase" });
-    lines.push({ accountId: reserveAcc, debit: 0, credit: Math.abs(delta), description: "Asset revaluation reserve" });
+  const deltaAbs = moneyStringFromUnits(absUnits(deltaCents));
+  if (deltaCents > 0n) {
+    lines.push({ accountId: asset.asset_account_id, debit: deltaAbs, credit: "0.00", description: "Asset revaluation increase" });
+    lines.push({ accountId: reserveAcc, debit: "0.00", credit: deltaAbs, description: "Asset revaluation reserve" });
   } else {
-    lines.push({ accountId: reserveAcc, debit: Math.abs(delta), credit: 0, description: "Asset revaluation reserve" });
-    lines.push({ accountId: asset.asset_account_id, debit: 0, credit: Math.abs(delta), description: "Asset revaluation decrease" });
+    lines.push({ accountId: reserveAcc, debit: deltaAbs, credit: "0.00", description: "Asset revaluation reserve" });
+    lines.push({ accountId: asset.asset_account_id, debit: "0.00", credit: deltaAbs, description: "Asset revaluation decrease" });
   }
 
   const idemKey = `asset-rev:${orgId}:${assetId}:${payload.periodId}:${payload.entryDate}`;
@@ -232,7 +274,7 @@ async function revalueAsset({ orgId, actorUserId, assetId, payload, audit = {} }
     after: updated,
   });
 
-  return { asset: updated, journalId: posted.journalId, delta };
+  return { asset: updated, journalId: posted.journalId, delta: moneyNumber(delta) };
 }
 
 async function impairAsset({ orgId, actorUserId, assetId, payload, audit = {} }) {
@@ -241,21 +283,18 @@ async function impairAsset({ orgId, actorUserId, assetId, payload, audit = {} })
   if (asset.status !== "active") throw new AppError(409, "Only active assets can be impaired");
   if (!asset.asset_account_id) throw new AppError(409, "Category missing asset_account_id");
 
-  const { rows: depSum } = await pool.query(
-    `SELECT COALESCE(SUM(amount),0)::numeric AS amt FROM asset_depreciation_transactions WHERE organization_id=$1 AND asset_id=$2`,
-    [orgId, assetId]
-  );
-  const accumulated = Number(depSum[0].amt || 0);
-  const impairmentTotal = Number(asset.impairment_total || 0);
-
-  const baseValue = asset.current_value != null ? Number(asset.current_value) : Number(asset.cost) - accumulated - impairmentTotal;
-  const amount = round2(Number(payload.impairmentAmount));
-  if (amount <= 0) throw new AppError(400, "impairmentAmount must be > 0");
-  if (amount > baseValue) throw new AppError(409, "impairmentAmount exceeds current carrying value");
+  const book = await loadAssetBookState({ orgId, asset });
+  const baseValueCents = book.carryingUnits;
+  const impairmentTotalCents = book.impairmentUnits;
+  const amountCents = moneyUnits(payload.impairmentAmount);
+  if (amountCents <= 0n) throw new AppError(400, "impairmentAmount must be > 0");
+  if (amountCents > baseValueCents) throw new AppError(409, "impairmentAmount exceeds current carrying value");
+  const baseValue = moneyStringFromUnits(baseValueCents);
+  const amount = moneyStringFromUnits(amountCents);
 
   const lines = [
-    { accountId: payload.impairmentLossAccountId, debit: amount, credit: 0, description: "Impairment loss" },
-    { accountId: asset.asset_account_id, debit: 0, credit: amount, description: "Asset impairment" },
+    { accountId: payload.impairmentLossAccountId, debit: amount, credit: "0.00", description: "Impairment loss" },
+    { accountId: asset.asset_account_id, debit: "0.00", credit: amount, description: "Asset impairment" },
   ];
 
   const idemKey = `asset-imp:${orgId}:${assetId}:${payload.periodId}:${payload.entryDate}`;
@@ -273,12 +312,13 @@ async function impairAsset({ orgId, actorUserId, assetId, payload, audit = {} })
   });
   const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
 
-  const updatedValue = round2(baseValue - amount);
+  const updatedValueCents = baseValueCents - amountCents;
+  const updatedValue = moneyStringFromUnits(updatedValueCents);
   const updated = await repo.updateCurrentValue({
     orgId,
     assetId,
     currentValue: updatedValue,
-    impairmentTotal: impairmentTotal + amount,
+    impairmentTotal: moneyStringFromUnits(impairmentTotalCents + amountCents),
     lastRevaluationAt: null,
   });
 
@@ -305,7 +345,7 @@ async function impairAsset({ orgId, actorUserId, assetId, payload, audit = {} })
     after: updated,
   });
 
-  return { asset: updated, journalId: posted.journalId, impairmentAmount: amount };
+  return { asset: updated, journalId: posted.journalId, impairmentAmount: moneyNumber(amount) };
 }
 
 async function acquireAsset({ orgId, actorUserId, assetId, payload }) {
@@ -319,8 +359,9 @@ async function acquireAsset({ orgId, actorUserId, assetId, payload }) {
     throw new AppError(409, "Asset category is inactive");
   }
 
-  const cost = Number(asset.cost || 0);
-  if (!(cost > 0)) throw new AppError(409, "Asset cost must be > 0 to acquire");
+  const costCents = moneyUnits(asset.cost || "0");
+  if (costCents <= 0n) throw new AppError(409, "Asset cost must be > 0 to acquire");
+  const cost = moneyStringFromUnits(costCents);
   if (!asset.asset_account_id) throw new AppError(409, "Category missing asset_account_id");
 
   const idempotencyKey = `asset-acq:${orgId}:${assetId}`;
@@ -395,50 +436,50 @@ async function disposeAsset({ orgId, actorUserId, assetId, payload }) {
   if (!gainAcc) throw new AppError(409, "Category missing disposal_gain_account_id");
   if (!lossAcc) throw new AppError(409, "Category missing disposal_loss_account_id");
 
-  const cost = Number(asset.cost || 0);
-  const proceeds = Number(payload.proceeds || 0);
+  const proceedsCents = moneyUnits(payload.proceeds || "0");
+  const proceeds = moneyStringFromUnits(proceedsCents);
 
-  // Accumulated depreciation across all schedules for this asset
-  const { rows: depSum } = await pool.query(
-    `
-    SELECT COALESCE(SUM(amount),0)::numeric AS amt
-    FROM asset_depreciation_transactions
-    WHERE organization_id=$1 AND asset_id=$2
-    `,
-    [orgId, assetId]
-  );
-  const accumulated = Number(depSum[0].amt || 0);
+  // Reconstruct the asset-account balance from posted valuation events instead of the stale
+  // current_value cache. This keeps disposal aligned with the actual GL after revaluations,
+  // impairments, depreciation, and reversals.
+  const book = await loadAssetBookState({ orgId, asset });
+  const grossBookCents = book.grossBookUnits;
+  const accumulatedCents = book.accumulatedUnits;
+  const grossBook = moneyStringFromUnits(grossBookCents);
+  const accumulated = moneyStringFromUnits(accumulatedCents);
 
-  const nbv = Number((cost - accumulated).toFixed(2));
-  const gainLoss = Number((proceeds - nbv).toFixed(2));
+  const nbvCents = book.carryingUnits;
+  const gainLossCents = proceedsCents - nbvCents;
+  const nbv = moneyStringFromUnits(nbvCents);
+  const gainLoss = moneyStringFromUnits(gainLossCents);
 
   const lines = [];
 
   // Proceeds (if any)
-  if (proceeds > 0) {
-    lines.push({ accountId: payload.proceedsAccountId, debit: proceeds, credit: 0, description: "Disposal proceeds" });
+  if (proceedsCents > 0n) {
+    lines.push({ accountId: payload.proceedsAccountId, debit: proceeds, credit: "0.00", description: "Disposal proceeds" });
   }
 
   // Clear accumulated depreciation
-  if (accumulated > 0) {
-    lines.push({ accountId: accumAcc, debit: accumulated, credit: 0, description: "Reverse accumulated depreciation" });
+  if (accumulatedCents > 0n) {
+    lines.push({ accountId: accumAcc, debit: accumulated, credit: "0.00", description: "Reverse accumulated depreciation" });
   }
 
-  // Remove asset cost
-  lines.push({ accountId: assetAcc, debit: 0, credit: cost, description: "Asset disposal - remove cost" });
+  // Remove the exact gross asset-account balance, including revaluation/impairment effects.
+  lines.push({ accountId: assetAcc, debit: "0.00", credit: grossBook, description: "Asset disposal - remove carrying basis" });
 
   // Gain/Loss
-  if (gainLoss > 0) {
-    lines.push({ accountId: gainAcc, debit: 0, credit: gainLoss, description: "Gain on disposal" });
-  } else if (gainLoss < 0) {
-    lines.push({ accountId: lossAcc, debit: Math.abs(gainLoss), credit: 0, description: "Loss on disposal" });
+  if (gainLossCents > 0n) {
+    lines.push({ accountId: gainAcc, debit: "0.00", credit: gainLoss, description: "Gain on disposal" });
+  } else if (gainLossCents < 0n) {
+    lines.push({ accountId: lossAcc, debit: moneyStringFromUnits(absUnits(gainLossCents)), credit: "0.00", description: "Loss on disposal" });
   }
 
-  // Balance guard (journal service will also guard)
-  const debit = Number(lines.reduce((s, l) => s + Number(l.debit || 0), 0).toFixed(2));
-  const credit = Number(lines.reduce((s, l) => s + Number(l.credit || 0), 0).toFixed(2));
-  if (debit !== credit) {
-    throw new AppError(500, `Disposal journal not balanced (debit=${debit}, credit=${credit})`);
+  // Exact balance guard; the journal kernel enforces the same minor-unit invariant.
+  const debitCents = sumMoneyUnits(lines.map((line) => line.debit || "0"));
+  const creditCents = sumMoneyUnits(lines.map((line) => line.credit || "0"));
+  if (debitCents !== creditCents) {
+    throw new AppError(500, `Disposal journal not balanced (debit=${moneyStringFromUnits(debitCents)}, credit=${moneyStringFromUnits(creditCents)})`);
   }
 
   const idempotencyKey = `asset-disp:${orgId}:${assetId}`;
@@ -476,7 +517,13 @@ async function disposeAsset({ orgId, actorUserId, assetId, payload }) {
     asset: updated,
     journalId: posted.journalId,
     idempotent: !!draft.idempotent,
-    computed: { accumulated, nbv, proceeds, gainLoss },
+    computed: {
+      grossBookValue: moneyNumber(grossBook),
+      accumulated: moneyNumber(accumulated),
+      nbv: moneyNumber(nbv),
+      proceeds: moneyNumber(proceeds),
+      gainLoss: moneyNumber(gainLoss),
+    },
   };
 }
 

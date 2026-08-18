@@ -8,6 +8,7 @@ const documentableSvc = require("../../../workflow/documents/documentable.servic
 // so the cashbook/reconciliation views can include operational transactions (receipts/payments/journals)
 // without waiting for statement imports.
 const bankTransactionsRepo = require("../../../modules/banking/bank-transactions/bankTransactions.repository");
+const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -387,6 +388,15 @@ async function createDraftJournal({ orgId, actorUserId, payload, client: existin
       );
     }
 
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "journal.created",
+      entityType: "journal_entries",
+      entityId: journalId,
+      after: { journalId, status: "draft", periodId: payload.periodId, entryDate: payload.entryDate },
+      client,
+    });
     if (managesTx) await client.query("COMMIT");
     return { journalId, status: "draft" };
   } catch (e) {
@@ -590,6 +600,12 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       eventType: "accounting.journal.posted",
       payload: { journalId, periodId: journal.period_id, entryDate: journal.entry_date }
     });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "journal.posted",
+      entityType: "journal_entries", entityId: journalId,
+      after: { journalId, status: "posted", periodId: journal.period_id, entryDate: journal.entry_date },
+      client,
+    });
 
     if (managesTx) await client.query("COMMIT");
     return { journalId, status: "posted" };
@@ -751,6 +767,12 @@ async function voidByReversal({ orgId, journalId, actorUserId, reason, client: e
       eventType: "accounting.journal.voided",
       payload: { journalId, reversalJournalId: reversalId, periodId: orig.period_id }
     });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "journal.voided",
+      entityType: "journal_entries", entityId: journalId,
+      after: { journalId, status: "voided", reversalJournalId: reversalId, reason },
+      client,
+    });
 
     if (managesTx) await client.query("COMMIT");
     return { journalId, status: "voided", reversalJournalId: reversalId };
@@ -908,6 +930,12 @@ async function reversePostedJournal({
       orgId,
       eventType: "accounting.journal.reversed",
       payload: { originalJournalId: journalId, reversalJournalId: reversalId, periodId: targetPeriodId, entryDate }
+    });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "journal.reversed",
+      entityType: "journal_entries", entityId: journalId,
+      after: { originalJournalId: journalId, reversalJournalId: reversalId, targetPeriodId, entryDate, reason },
+      client,
     });
 
     if (managesTx) await client.query("COMMIT");
@@ -1249,6 +1277,7 @@ async function submitDraftJournal({ orgId, journalId, actorUserId }) {
       [orgId, journalId, actorUserId]
     );
 
+    await writeAudit({ organizationId: orgId, actorUserId, action: "journal.submitted", entityType: "journal_entries", entityId: journalId, after: { journalId, status: "submitted" }, client });
     await client.query("COMMIT");
     return { journalId, status: "submitted" };
   } catch (e) {
@@ -1329,6 +1358,7 @@ async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
       });
     }
 
+    await writeAudit({ organizationId: orgId, actorUserId, action: isFinalApproval ? "journal.approved" : "journal.approval_step_completed", entityType: "journal_entries", entityId: journalId, after: { journalId, status: isFinalApproval ? "approved" : "submitted", finalApproval: isFinalApproval }, client });
     await client.query("COMMIT");
     return { journalId, status: isFinalApproval ? "approved" : "submitted", workflowStepCompleted: true, finalApproval: isFinalApproval };
   } catch (e) {
@@ -1399,6 +1429,7 @@ async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason })
       });
     }
 
+    await writeAudit({ organizationId: orgId, actorUserId, action: "journal.rejected", entityType: "journal_entries", entityId: journalId, after: { journalId, status: "rejected", reason: reason || null }, client });
     await client.query("COMMIT");
     return { journalId, status: "rejected" };
   } catch (e) {
@@ -1444,6 +1475,7 @@ async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
       [orgId, journalId, actorUserId]
     );
 
+    await writeAudit({ organizationId: orgId, actorUserId, action: "journal.canceled", entityType: "journal_entries", entityId: journalId, after: { journalId, status: "canceled" }, client });
     await client.query("COMMIT");
     return { journalId, status: "canceled" };
   } catch (e) {

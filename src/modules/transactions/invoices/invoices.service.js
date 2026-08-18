@@ -13,11 +13,17 @@ const {
   bigIntToDecimalString,
   parseDecimalToBigInt
 } = require("../../../shared/utils/money");
-const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, round2, upsertDocumentTaxSnapshot, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, insertLineTaxDetails, loadLineTaxDetails, upsertDocumentTaxSnapshot, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const fiscalizationSvc = require("../../integrations/fiscalization/fiscalization.service");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  moneyNumber,
+} = require("../../../shared/utils/financialMath");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -246,15 +252,24 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
     `,
     [invoiceId, orgId]
   );
-  const paid = round2(Number(appliedRows[0]?.receipt_amount || 0) + Number(appliedRows[0]?.credit_amount || 0));
-  const settlementTotal = Number((invoice.net_settlement_total ?? invoice.total) || 0);
-  const outstanding = round2(Math.max(0, settlementTotal - paid));
+  const receiptsAppliedUnits = moneyUnits(appliedRows[0]?.receipt_amount || "0");
+  const creditsAppliedUnits = moneyUnits(appliedRows[0]?.credit_amount || "0");
+  const paidUnits = receiptsAppliedUnits + creditsAppliedUnits;
+  const settlementUnits = moneyUnits((invoice.net_settlement_total ?? invoice.total) || "0");
+  const outstandingUnits = settlementUnits > paidUnits ? settlementUnits - paidUnits : 0n;
+  const paid = moneyNumber(moneyStringFromUnits(paidUnits));
+  const outstanding = moneyNumber(moneyStringFromUnits(outstandingUnits));
 
   return {
     invoice,
     lines: enrichedLines,
     detail_meta: buildDetailMeta({ header: invoice, lines: enrichedLines, extra: { paid, outstanding } }),
-    allocations_summary: { paid, outstanding, credits_applied: round2(appliedRows[0]?.credit_amount || 0), receipts_applied: round2(appliedRows[0]?.receipt_amount || 0) }
+    allocations_summary: {
+      paid,
+      outstanding,
+      credits_applied: moneyNumber(moneyStringFromUnits(creditsAppliedUnits)),
+      receipts_applied: moneyNumber(moneyStringFromUnits(receiptsAppliedUnits)),
+    }
   };
 }
 
@@ -306,8 +321,8 @@ async function getCustomerOutstandingAR({ orgId, customerId, client }) {
     [orgId, customerId]
   );
   const r = rows[0] || {};
-  const out = Number(r.inv_total || 0) - Number(r.receipts_allocated || 0) - Number(r.credit_applied || 0);
-  return Number(out.toFixed(2));
+  const outstandingUnits = moneyUnits(r.inv_total || "0") - moneyUnits(r.receipts_allocated || "0") - moneyUnits(r.credit_applied || "0");
+  return moneyStringFromUnits(outstandingUnits > 0n ? outstandingUnits : 0n);
 }
 
 async function assertCustomerCreditPolicyAllowsIssue({ orgId, customerId, invoiceTotal, client }) {
@@ -317,13 +332,14 @@ async function assertCustomerCreditPolicyAllowsIssue({ orgId, customerId, invoic
     [orgId, customerId]
   );
   if (!rows.length) return;
-  const limit = Number(rows[0].credit_limit || 0);
+  const limitUnits = moneyUnits(rows[0].credit_limit || "0");
   const hold = rows[0].hold_if_over === true;
   if (!hold) return;
-  if (!limit || limit <= 0) return;
-  const outstanding = await getCustomerOutstandingAR({ orgId, customerId, client });
-  if ((outstanding + Number(invoiceTotal || 0)) > limit + 1e-9) {
-    throw new AppError(409, `Customer is on credit hold: limit ${limit.toFixed(2)} exceeded`);
+  if (limitUnits <= 0n) return;
+  const outstandingUnits = moneyUnits(await getCustomerOutstandingAR({ orgId, customerId, client }));
+  const invoiceUnits = moneyUnits(invoiceTotal || "0");
+  if (outstandingUnits + invoiceUnits > limitUnits) {
+    throw new AppError(409, `Customer is on credit hold: limit ${moneyStringFromUnits(limitUnits)} exceeded`);
   }
 }
 
@@ -369,12 +385,12 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
     const revenueMap = new Map();
     const postingLines = lines.map((l) => ({ ...l, taxDetails: taxMap.get(l.id) || [] }));
     const taxSummary = summarizeLineTaxDetails(postingLines);
+    const exactTaxSummary = taxSummary.exact;
     for (const l of postingLines) {
       await assertRevenueAccount({ orgId, accountId: l.revenue_account_id });
-      const lineTax = taxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
-      const baseAmount = Number((l.taxable_amount ?? l.line_total ?? 0));
-      const revenueAmount = Number((baseAmount + Number(lineTax.nonRecoverable || 0)).toFixed(2));
-      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0) + revenueAmount);
+      const lineTax = exactTaxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
+      const revenueUnits = moneyUnits(l.taxable_amount ?? l.line_total ?? "0") + moneyUnits(lineTax.nonRecoverable || "0");
+      revenueMap.set(l.revenue_account_id, (revenueMap.get(l.revenue_account_id) || 0n) + revenueUnits);
     }
 
     const arAccountId = customer.default_receivable_account_id;
@@ -382,31 +398,31 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
     const outputTaxAccountId = taxSettingsRows[0]?.output_tax_account_id || null;
 
     const journalLines = [];
-    for (const [accountId, amt] of revenueMap.entries()) {
-      journalLines.push({ accountId, debit: 0, credit: Number(amt.toFixed(2)), description: `Revenue for ${invoice.invoice_no}` });
+    for (const [accountId, amountUnits] of revenueMap.entries()) {
+      journalLines.push({ accountId, debit: "0.00", credit: moneyStringFromUnits(amountUnits), description: `Revenue for ${invoice.invoice_no}` });
     }
-    if (taxSummary.outputTax > 0) {
+    const outputTaxUnits = moneyUnits(exactTaxSummary.outputTax || "0");
+    if (outputTaxUnits > 0n) {
       if (!outputTaxAccountId) throw new AppError(409, 'Output tax account is not configured (tax_settings.output_tax_account_id)');
-      journalLines.push({ accountId: outputTaxAccountId, debit: 0, credit: taxSummary.outputTax, description: `Output tax for ${invoice.invoice_no}` });
+      journalLines.push({ accountId: outputTaxAccountId, debit: "0.00", credit: moneyStringFromUnits(outputTaxUnits), description: `Output tax for ${invoice.invoice_no}` });
     }
-    if (taxSummary.withholdingReceivable > 0) {
+    const withholdingReceivableUnits = moneyUnits(exactTaxSummary.withholdingReceivable || "0");
+    if (withholdingReceivableUnits > 0n) {
       const withholdingReceivableAccountId = taxSettingsRows[0]?.withholding_tax_receivable_account_id || null;
       if (!withholdingReceivableAccountId) {
         throw new AppError(409, 'Withholding tax receivable account is not configured (tax_settings.withholding_tax_receivable_account_id)');
       }
-      journalLines.push({ accountId: withholdingReceivableAccountId, debit: taxSummary.withholdingReceivable, credit: 0, description: `Withholding tax receivable for ${invoice.invoice_no}` });
+      journalLines.push({ accountId: withholdingReceivableAccountId, debit: moneyStringFromUnits(withholdingReceivableUnits), credit: "0.00", description: `Withholding tax receivable for ${invoice.invoice_no}` });
     }
 
-    const computedReceivable = Number(
-      (
-        journalLines.reduce((sum, line) => sum + Number(line.credit || 0), 0) -
-        journalLines.reduce((sum, line) => sum + Number(line.debit || 0), 0)
-      ).toFixed(2)
+    const computedReceivableUnits = journalLines.reduce(
+      (sum, line) => sum + moneyUnits(line.credit || "0") - moneyUnits(line.debit || "0"),
+      0n
     );
-    if (computedReceivable <= 0) {
+    if (computedReceivableUnits <= 0n) {
       throw new AppError(400, `Computed receivable is invalid for ${invoice.invoice_no}`);
     }
-    journalLines.unshift({ accountId: arAccountId, debit: computedReceivable, credit: 0, description: `A/R for ${invoice.invoice_no}` });
+    journalLines.unshift({ accountId: arAccountId, debit: moneyStringFromUnits(computedReceivableUnits), credit: "0.00", description: `A/R for ${invoice.invoice_no}` });
 
     const idempotencyKey = `invoice:${invoiceId}:issue`;
 
@@ -477,7 +493,18 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       db: client, orgId, actorUserId, sourceType: 'invoice', sourceId: invoiceId
     });
 
-    return afterRows[0];
+    const issuedInvoice = afterRows[0];
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "invoice.issued",
+      entityType: "invoices",
+      entityId: invoiceId,
+      after: issuedInvoice,
+      client
+    });
+
+    return issuedInvoice;
   });
 }
 
@@ -623,6 +650,18 @@ async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
     if (invoice.status !== "issued") throw new AppError(409, "Only issued invoices can be voided");
     if (!invoice.journal_entry_id) throw new AppError(500, "Invoice missing journal reference");
 
+    const { rows: settlementRows } = await client.query(
+      `SELECT 1
+         FROM customer_receipt_allocations a
+         JOIN customer_receipts r ON r.id=a.customer_receipt_id
+        WHERE a.invoice_id=$1 AND r.organization_id=$2 AND r.status='posted'
+        LIMIT 1`,
+      [invoiceId, orgId]
+    );
+    if (settlementRows.length) {
+      throw new AppError(409, "Cannot void an invoice with posted receipts; void the receipts first");
+    }
+
     const out = await journalIF.voidPostedJournal({
       orgId,
       journalId: invoice.journal_entry_id,
@@ -646,7 +685,18 @@ async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
       [orgId, invoiceId, actorUserId, reason, out.reversalJournalId || null]
     );
 
-    return { invoice: rows[0], reversalJournalId: out.reversalJournalId };
+    const result = { invoice: rows[0], reversalJournalId: out.reversalJournalId };
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "invoice.voided",
+      entityType: "invoices",
+      entityId: invoiceId,
+      after: result,
+      client
+    });
+
+    return result;
   });
 }
 

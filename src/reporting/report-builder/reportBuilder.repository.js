@@ -2,23 +2,31 @@ const { pool } = require("../../db/pool");
 
 async function listReports({ organizationId, includeArchived = false, search = null, limit = 50, offset = 0 }) {
   const params = [organizationId];
-  let where = `organization_id=$1`;
+  let where = `r.organization_id=$1`;
   if (!includeArchived) {
-    where += ` AND is_archived=FALSE`;
+    where += ` AND r.is_archived=FALSE`;
   }
   if (search) {
     params.push(`%${search}%`);
-    where += ` AND (name ILIKE $${params.length} OR COALESCE(description,'') ILIKE $${params.length})`;
+    where += ` AND (r.name ILIKE $${params.length} OR COALESCE(r.description,'') ILIKE $${params.length})`;
   }
   params.push(Math.min(Math.max(Number(limit) || 50, 1), 200));
   params.push(Math.max(Number(offset) || 0, 0));
 
   const { rows } = await pool.query(
     `
-    SELECT *
-    FROM saved_reports
+    SELECT r.*, latest.kind, latest.id AS latest_version_id
+    FROM saved_reports r
+    LEFT JOIN LATERAL (
+      SELECT v.id, v.kind
+      FROM saved_report_versions v
+      WHERE v.organization_id=r.organization_id
+        AND v.saved_report_id=r.id
+      ORDER BY v.version_number DESC
+      LIMIT 1
+    ) latest ON TRUE
     WHERE ${where}
-    ORDER BY updated_at DESC
+    ORDER BY r.updated_at DESC
     LIMIT $${params.length - 1} OFFSET $${params.length}
     `,
     params

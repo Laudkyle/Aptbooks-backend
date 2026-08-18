@@ -12,9 +12,19 @@ const {
   parseDecimalToBigInt,
   bigIntToDecimalString
 } = require("../../../../shared/utils/money");
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  normalizeMoney,
+  addMoney,
+  applyFractionToMoneyUnits,
+  minUnits,
+  moneyNumber,
+} = require("../../../../shared/utils/financialMath");
 
 const repo = require("./customerReceipts.repository");
 const { buildDetailMeta, round2 } = require("../../_shared/detailEnrichment");
+const { writeAudit } = require("../../../../core/foundation/audit-logs/audit.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -25,8 +35,9 @@ async function getOrgBaseCurrency(client, orgId) {
   return rows[0].base_currency_code;
 }
 
-async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
-  const { rows } = await pool.query(
+async function assertPostableActiveAccount({ orgId, accountId, errMsg, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT is_postable, status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
     [orgId, accountId]
   );
@@ -35,54 +46,56 @@ async function assertPostableActiveAccount({ orgId, accountId, errMsg }) {
   if (rows[0].status !== "active") throw new AppError(400, "Inactive account used");
 }
 
-async function getPaymentTerm({ orgId, paymentTermsId }) {
+async function getPaymentTerm({ orgId, paymentTermsId, client = null }) {
   if (!paymentTermsId) return null;
-  const { rows } = await pool.query(
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT * FROM payment_terms WHERE organization_id=$1 AND id=$2`,
     [orgId, paymentTermsId]
   );
   return rows[0] || null;
 }
 
-async function getInvoice(orgId, invoiceId) {
-  const { rows } = await pool.query(
+async function getInvoice(orgId, invoiceId, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2`,
     [orgId, invoiceId]
   );
   return rows[0] || null;
 }
 
-async function getInvoiceOutstanding(orgId, invoiceId) {
-  const { rows } = await pool.query(
+async function getInvoiceOutstanding(orgId, invoiceId, client = null) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT outstanding FROM reporting_ar_open_items WHERE organization_id=$1 AND invoice_id=$2`,
     [orgId, invoiceId]
   );
   if (!rows.length) return null;
-  return Number(rows[0].outstanding || 0);
+  return normalizeMoney(rows[0].outstanding || "0");
 }
 
 function computeEarlyPaymentDiscount({ outstanding, cashApplied, term, receiptDate, invoiceDate }) {
-  if (!term) return 0;
-  if (term.discount_days == null || term.discount_rate == null) return 0;
-  const rate = Number(term.discount_rate || 0);
-  if (!rate || rate <= 0) return 0;
+  if (!term || term.discount_days == null || term.discount_rate == null) return "0.00";
 
-  // Eligible if receipt_date <= invoice_date + discount_days
+  const outstandingCents = moneyUnits(outstanding);
+  const cashAppliedCents = moneyUnits(cashApplied);
+  const maxDiscountCents = applyFractionToMoneyUnits(outstandingCents, term.discount_rate || "0");
+  if (maxDiscountCents <= 0n) return "0.00";
+
+  // Eligible if receipt_date <= invoice_date + discount_days. Day counts are not money.
   const inv = new Date(invoiceDate);
   const due = new Date(inv);
   due.setDate(due.getDate() + Number(term.discount_days));
   const rdt = new Date(receiptDate);
-  if (rdt.getTime() > due.getTime()) return 0;
+  if (rdt.getTime() > due.getTime()) return "0.00";
 
-  const maxDiscount = Number((outstanding * rate).toFixed(2));
-  const requiredCash = Number((outstanding - maxDiscount).toFixed(2));
+  const requiredCashCents = outstandingCents - maxDiscountCents;
+  if (cashAppliedCents < requiredCashCents) return "0.00";
 
-  if (cashApplied + 1e-9 < requiredCash) return 0;
-
-  // Discount is the gap between outstanding and cash, capped to maxDiscount
-  const raw = Number((outstanding - cashApplied).toFixed(2));
-  if (raw <= 0) return 0;
-  return Number(Math.min(maxDiscount, raw).toFixed(2));
+  const rawDiscountCents = outstandingCents - cashAppliedCents;
+  if (rawDiscountCents <= 0n) return "0.00";
+  return moneyStringFromUnits(minUnits(maxDiscountCents, rawDiscountCents));
 }
 
 async function createDraftCustomerReceipt({ orgId, actorUserId, payload }) {
@@ -178,7 +191,7 @@ async function getCustomerReceiptDetails({ orgId, id, currentUserId }) {
       display_amounts: {
         amount_applied: round2(allocation.amount_applied || 0),
         discount_taken: round2(allocation.discount_taken || 0),
-        settled_total: round2(Number(allocation.amount_applied || 0) + Number(allocation.discount_taken || 0)),
+        settled_total: moneyNumber(addMoney(allocation.amount_applied || "0", allocation.discount_taken || "0")),
       }
     };
   });
@@ -188,8 +201,8 @@ async function getCustomerReceiptDetails({ orgId, id, currentUserId }) {
     detail_meta: buildDetailMeta({ header: cr, lines: [], extra: { outstanding: cr.unapplied_amount ?? 0 } }),
     allocation_summary: {
       allocation_count: enrichedAllocations.length,
-      applied_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.amount_applied || 0), 0)),
-      discount_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.discount_taken || 0), 0)),
+      applied_total: moneyNumber(moneyStringFromUnits(enrichedAllocations.reduce((sum, item) => sum + moneyUnits(item.amount_applied || "0"), 0n))),
+      discount_total: moneyNumber(moneyStringFromUnits(enrichedAllocations.reduce((sum, item) => sum + moneyUnits(item.discount_taken || "0"), 0n))),
       unapplied_amount: round2(cr.unapplied_amount || 0),
     }
   };
@@ -220,44 +233,34 @@ async function autoAllocateCustomerReceipt({ orgId, actorUserId, id, rule }) {
     [orgId, cr.customer_id]
   );
 
-  let remaining = Number(cr.amount_total || 0);
+  let remainingCents = moneyUnits(cr.amount_total || "0");
   const proposed = [];
 
   for (const r of rows) {
-    if (remaining <= 0) break;
-    const outstanding = Number(r.outstanding || 0);
-    if (outstanding <= 0) continue;
+    if (remainingCents <= 0n) break;
+    const outstandingCents = moneyUnits(r.outstanding || "0");
+    if (outstandingCents <= 0n) continue;
 
-    // Try discount settlement first (if eligible)
-    const maxDiscount = computeEarlyPaymentDiscount({
-      outstanding,
-      cashApplied: outstanding, // placeholder; will recompute below
-      term,
-      receiptDate: cr.receipt_date,
-      invoiceDate: r.invoice_date
-    });
-
-    // Recompute using required cash if discount eligible
-    let discount = 0;
     if (term && term.discount_days != null && term.discount_rate != null) {
-      const rate = Number(term.discount_rate || 0);
-      if (rate > 0) {
-        const maxD = Number((outstanding * rate).toFixed(2));
-        const requiredCash = Number((outstanding - maxD).toFixed(2));
-        if (remaining + 1e-9 >= requiredCash) {
-          const cash = requiredCash;
-          discount = maxD;
-          proposed.push({ invoiceId: r.invoice_id, amountApplied: Number(cash.toFixed(2)), discountTaken: Number(discount.toFixed(2)) });
-          remaining = Number((remaining - cash).toFixed(2));
-          continue;
-        }
+      const maxDiscountCents = applyFractionToMoneyUnits(outstandingCents, term.discount_rate || "0");
+      const requiredCashCents = outstandingCents - maxDiscountCents;
+      const discount = computeEarlyPaymentDiscount({
+        outstanding: moneyStringFromUnits(outstandingCents),
+        cashApplied: moneyStringFromUnits(requiredCashCents),
+        term,
+        receiptDate: cr.receipt_date,
+        invoiceDate: r.invoice_date
+      });
+      if (moneyUnits(discount) > 0n && remainingCents >= requiredCashCents) {
+        proposed.push({ invoiceId: r.invoice_id, amountApplied: moneyStringFromUnits(requiredCashCents), discountTaken: discount });
+        remainingCents -= requiredCashCents;
+        continue;
       }
     }
 
-    // Partial or full cash without discount
-    const cash = Math.min(remaining, outstanding);
-    proposed.push({ invoiceId: r.invoice_id, amountApplied: Number(cash.toFixed(2)), discountTaken: 0 });
-    remaining = Number((remaining - cash).toFixed(2));
+    const cashCents = minUnits(remainingCents, outstandingCents);
+    proposed.push({ invoiceId: r.invoice_id, amountApplied: moneyStringFromUnits(cashCents), discountTaken: "0.00" });
+    remainingCents -= cashCents;
   }
 
   const client = await pool.connect();
@@ -306,9 +309,9 @@ async function reallocateCustomerReceipt({ orgId, actorUserId, id, allocations }
     // Hard control: require special permission on route-level.
     // Additional control: do not allow changing totals (cash/discount/unapplied) for posted documents.
     // We enforce this by requiring the resulting cash allocation sum equals (amount_total - unapplied_amount).
-    const expectedCash = Number((Number(cr.amount_total || 0) - Number(cr.unapplied_amount || 0)).toFixed(2));
-    const sumCash = Number((allocations || []).reduce((s, a) => s + Number(a.amountApplied || 0), 0).toFixed(2));
-    if (Math.abs(sumCash - expectedCash) > 1e-6) {
+    const expectedCashCents = moneyUnits(cr.amount_total || "0") - moneyUnits(cr.unapplied_amount || "0");
+    const sumCashCents = (allocations || []).reduce((sum, allocation) => sum + moneyUnits(allocation.amountApplied || "0"), 0n);
+    if (sumCashCents !== expectedCashCents) {
       throw new AppError(409, "Posted receipt reallocation must preserve applied cash amount");
     }
   }
@@ -326,10 +329,11 @@ async function reallocateCustomerReceipt({ orgId, actorUserId, id, allocations }
     if (inv.status !== "issued" && inv.status !== "paid") throw new AppError(409, "Can only allocate to issued/paid invoices");
 
     const outstanding = await getInvoiceOutstanding(orgId, a.invoiceId);
-    const cashApplied = Number(a.amountApplied || 0);
+    const cashAppliedCents = moneyUnits(a.amountApplied || "0");
     if (outstanding === null) throw new AppError(400, `Invalid invoiceId: ${a.invoiceId}`);
-    if (cashApplied <= 0) throw new AppError(400, "Allocation amountApplied must be > 0");
-    if (cashApplied - 1e-9 > outstanding) throw new AppError(409, "Allocation exceeds invoice outstanding");
+    if (cashAppliedCents <= 0n) throw new AppError(400, "Allocation amountApplied must be > 0");
+    if (cashAppliedCents > moneyUnits(outstanding)) throw new AppError(409, "Allocation exceeds invoice outstanding");
+    const cashApplied = moneyStringFromUnits(cashAppliedCents);
 
     const discount = computeEarlyPaymentDiscount({
       outstanding,
@@ -339,13 +343,13 @@ async function reallocateCustomerReceipt({ orgId, actorUserId, id, allocations }
       invoiceDate: inv.invoice_date
     });
 
-    const settlement = Number((cashApplied + discount).toFixed(2));
-    if (settlement - 1e-9 > outstanding) {
+    const settlementCents = cashAppliedCents + moneyUnits(discount);
+    if (settlementCents > moneyUnits(outstanding)) {
       throw new AppError(409, "Allocation (cash+discount) exceeds invoice outstanding");
     }
 
     proposed.push({ invoiceId: a.invoiceId, amountApplied: cashApplied, discountTaken: discount });
-    sumCashCents += parseDecimalToBigInt(cashApplied, 2);
+    sumCashCents += cashAppliedCents;
   }
 
   const amountTotalCents = parseDecimalToBigInt(cr.amount_total, 2);
@@ -505,120 +509,103 @@ async function rejectCustomerReceiptWorkflow({ orgId, actorUserId, id, comment }
 }
 
 async function postCustomerReceipt({ orgId, actorUserId, id }) {
-  const { customerReceipt: cr, allocations } = await getCustomerReceiptDetails({ orgId, id, currentUserId: actorUserId });
-  if (!["draft","approved"].includes(cr.status)) throw new AppError(409, "Only draft/approved customer receipts can be posted");
+  const { withTransaction } = require("../../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: crRows } = await client.query(
+      `SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, id]
+    );
+    if (!crRows.length) throw new AppError(404, "Customer receipt not found");
+    const cr = crRows[0];
+    if (!["draft", "approved"].includes(cr.status)) throw new AppError(409, "Only draft/approved customer receipts can be posted");
 
-  await assertCustomerReceiptApprovalStateAllowsPost({ orgId, customerReceipt: cr, client: pool });
-
-  const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: cr.customer_id });
-  if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
-
-  await assertPostableActiveAccount({ orgId, accountId: cr.cash_account_id, errMsg: "Invalid cashAccountId" });
-
-  const term = await getPaymentTerm({ orgId, paymentTermsId: customer.payment_terms_id });
-  const settings = await paymentIF.getPaymentSettings({ orgId });
-
-  let cashAppliedCents = 0n;
-  let discountCents = 0n;
-  let settlementCents = 0n;
-
-  // Validate allocations and compute discounts; update allocation rows with computed discounts
-  for (const a of allocations) {
-    const inv = await getInvoice(orgId, a.invoice_id);
-    if (!inv) throw new AppError(400, `Invalid invoiceId: ${a.invoice_id}`);
-    if (inv.customer_id !== cr.customer_id) throw new AppError(400, "Allocation invoice customer mismatch");
-    if (inv.status !== "issued" && inv.status !== "paid") throw new AppError(409, "Can only allocate to issued/paid invoices");
-
-    const outstanding = await getInvoiceOutstanding(orgId, a.invoice_id);
-    if (outstanding === null) throw new AppError(400, `Invalid invoiceId: ${a.invoice_id}`);
-
-    const cashApplied = Number(a.amount_applied || 0);
-    if (cashApplied <= 0) throw new AppError(400, "Allocation amount_applied must be > 0");
-    if (cashApplied - 1e-9 > outstanding) throw new AppError(409, "Allocation exceeds invoice outstanding");
-
-    const discount = computeEarlyPaymentDiscount({
-      outstanding,
-      cashApplied,
-      term,
-      receiptDate: cr.receipt_date,
-      invoiceDate: inv.invoice_date
-    });
-
-    const settlement = Number((cashApplied + discount).toFixed(2));
-    if (settlement - 1e-9 > outstanding) throw new AppError(409, "Allocation (cash+discount) exceeds invoice outstanding");
-
-    // Persist computed discount
-    await pool.query(
-      `UPDATE customer_receipt_allocations SET discount_taken=$3 WHERE customer_receipt_id=$1 AND invoice_id=$2`,
-      [id, a.invoice_id, discount.toFixed(2)]
+    await assertCustomerReceiptApprovalStateAllowsPost({ orgId, customerReceipt: cr, client });
+    const { rows: allocations } = await client.query(
+      `SELECT * FROM customer_receipt_allocations WHERE customer_receipt_id=$1 ORDER BY created_at ASC`,
+      [id]
     );
 
-    cashAppliedCents += parseDecimalToBigInt(cashApplied, 2);
-    discountCents += parseDecimalToBigInt(discount, 2);
-    settlementCents += parseDecimalToBigInt(settlement, 2);
-  }
+    const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: cr.customer_id, client });
+    if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
+    await assertPostableActiveAccount({ orgId, accountId: cr.cash_account_id, errMsg: "Invalid cashAccountId", client });
 
-  const amountTotalCents = parseDecimalToBigInt(cr.amount_total, 2);
-  if (cashAppliedCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds receipt amountTotal");
+    const term = await getPaymentTerm({ orgId, paymentTermsId: customer.payment_terms_id, client });
+    const settings = await paymentIF.getPaymentSettings({ orgId, client });
+    let cashAppliedCents = 0n;
+    let discountCents = 0n;
+    let settlementCents = 0n;
 
-  const unappliedCents = amountTotalCents - cashAppliedCents;
+    for (const a of allocations) {
+      const inv = await getInvoice(orgId, a.invoice_id, client);
+      if (!inv) throw new AppError(400, `Invalid invoiceId: ${a.invoice_id}`);
+      if (inv.customer_id !== cr.customer_id) throw new AppError(400, "Allocation invoice customer mismatch");
+      if (!["issued", "paid"].includes(inv.status)) throw new AppError(409, "Can only allocate to issued/paid invoices");
 
-  if (unappliedCents > 0n) {
-    if (!settings || !settings.ar_unapplied_account_id) {
-      throw new AppError(409, "Unapplied cash exists but payment_settings.ar_unapplied_account_id is not configured");
+      const outstanding = await getInvoiceOutstanding(orgId, a.invoice_id, client);
+      if (outstanding === null) throw new AppError(400, `Invalid invoiceId: ${a.invoice_id}`);
+      const cashCurrent = moneyUnits(a.amount_applied || "0");
+      if (cashCurrent <= 0n) throw new AppError(400, "Allocation amount_applied must be > 0");
+      if (cashCurrent > moneyUnits(outstanding)) throw new AppError(409, "Allocation exceeds invoice outstanding");
+
+      const discount = computeEarlyPaymentDiscount({
+        outstanding,
+        cashApplied: moneyStringFromUnits(cashCurrent),
+        term,
+        receiptDate: cr.receipt_date,
+        invoiceDate: inv.invoice_date
+      });
+      const settlementCurrent = cashCurrent + moneyUnits(discount);
+      if (settlementCurrent > moneyUnits(outstanding)) throw new AppError(409, "Allocation (cash+discount) exceeds invoice outstanding");
+
+      await client.query(
+        `UPDATE customer_receipt_allocations SET discount_taken=$3 WHERE customer_receipt_id=$1 AND invoice_id=$2`,
+        [id, a.invoice_id, discount]
+      );
+      cashAppliedCents += cashCurrent;
+      discountCents += moneyUnits(discount);
+      settlementCents += settlementCurrent;
     }
-    await assertPostableActiveAccount({ orgId, accountId: settings.ar_unapplied_account_id, errMsg: "Invalid arUnappliedAccountId" });
-  }
 
-  if (discountCents > 0n) {
-    if (!settings || !settings.ar_discount_account_id) {
-      throw new AppError(409, "Discount taken exists but payment_settings.ar_discount_account_id is not configured");
+    const amountTotalCents = parseDecimalToBigInt(cr.amount_total, 2);
+    if (cashAppliedCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds receipt amountTotal");
+    const unappliedCents = amountTotalCents - cashAppliedCents;
+
+    if (unappliedCents > 0n) {
+      if (!settings?.ar_unapplied_account_id) throw new AppError(409, "Unapplied cash exists but payment_settings.ar_unapplied_account_id is not configured");
+      await assertPostableActiveAccount({ orgId, accountId: settings.ar_unapplied_account_id, errMsg: "Invalid arUnappliedAccountId", client });
     }
-    await assertPostableActiveAccount({ orgId, accountId: settings.ar_discount_account_id, errMsg: "Invalid arDiscountAccountId" });
-  }
-
-  const cashApplied = bigIntToDecimalString(cashAppliedCents, 2);
-  const discountTotal = bigIntToDecimalString(discountCents, 2);
-  const settlementTotal = bigIntToDecimalString(settlementCents, 2);
-  const unappliedAmount = bigIntToDecimalString(unappliedCents, 2);
-
-  const period = await periodIF.findOpenPeriodForDate({ orgId, date: cr.receipt_date });
-
-  const arAccountId = customer.default_receivable_account_id;
-  const cashAccountId = cr.cash_account_id;
-
-  const journalLines = [];
-  journalLines.push({ accountId: cashAccountId, debit: bigIntToDecimalString(amountTotalCents, 2), credit: "0.00", description: `Cash/Bank receipt ${cr.receipt_no}` });
-
-  if (discountCents > 0n) {
-    journalLines.push({ accountId: settings.ar_discount_account_id, debit: discountTotal, credit: "0.00", description: `Early payment discount ${cr.receipt_no}` });
-  }
-
-  if (settlementCents > 0n) {
-    journalLines.push({ accountId: arAccountId, debit: "0.00", credit: settlementTotal, description: `A/R settlement ${cr.receipt_no}` });
-  }
-
-  if (unappliedCents > 0n) {
-    journalLines.push({ accountId: settings.ar_unapplied_account_id, debit: "0.00", credit: unappliedAmount, description: `Unapplied cash ${cr.receipt_no}` });
-  }
-
-  const idempotencyKey = `customer_receipt:${id}:post`;
-
-  const draft = await journalIF.createDraftJournal({
-    orgId,
-    actorUserId,
-    payload: {
-      periodId: period.id,
-      entryDate: cr.receipt_date,
-      typeCode: "GENERAL",
-      memo: `Customer receipt ${cr.receipt_no}` + (cr.memo ? `: ${cr.memo}` : ""),
-      idempotencyKey,
-      lines: journalLines
+    if (discountCents > 0n) {
+      if (!settings?.ar_discount_account_id) throw new AppError(409, "Discount taken exists but payment_settings.ar_discount_account_id is not configured");
+      await assertPostableActiveAccount({ orgId, accountId: settings.ar_discount_account_id, errMsg: "Invalid arDiscountAccountId", client });
     }
-  });
 
-  await propagateDocumentWorkflowToJournal({
-      client: pool,
+    const discountTotal = bigIntToDecimalString(discountCents, 2);
+    const settlementTotal = bigIntToDecimalString(settlementCents, 2);
+    const unappliedAmount = bigIntToDecimalString(unappliedCents, 2);
+    const period = await periodIF.findOpenPeriodForDate({ orgId, date: cr.receipt_date, client });
+
+    const journalLines = [
+      { accountId: cr.cash_account_id, debit: bigIntToDecimalString(amountTotalCents, 2), credit: "0.00", description: `Cash/Bank receipt ${cr.receipt_no}` }
+    ];
+    if (discountCents > 0n) journalLines.push({ accountId: settings.ar_discount_account_id, debit: discountTotal, credit: "0.00", description: `Early payment discount ${cr.receipt_no}` });
+    if (settlementCents > 0n) journalLines.push({ accountId: customer.default_receivable_account_id, debit: "0.00", credit: settlementTotal, description: `A/R settlement ${cr.receipt_no}` });
+    if (unappliedCents > 0n) journalLines.push({ accountId: settings.ar_unapplied_account_id, debit: "0.00", credit: unappliedAmount, description: `Unapplied cash ${cr.receipt_no}` });
+
+    const draft = await journalIF.createDraftJournal({
+      orgId,
+      actorUserId,
+      client,
+      payload: {
+        periodId: period.id,
+        entryDate: cr.receipt_date,
+        typeCode: "GENERAL",
+        memo: `Customer receipt ${cr.receipt_no}` + (cr.memo ? `: ${cr.memo}` : ""),
+        idempotencyKey: `customer_receipt:${id}:post`,
+        lines: journalLines
+      }
+    });
+    await propagateDocumentWorkflowToJournal({
+      client,
       journalId: draft.journalId,
       source: {
         orgId,
@@ -631,90 +618,60 @@ async function postCustomerReceipt({ orgId, actorUserId, id }) {
         updatedBy: actorUserId
       }
     });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
+    const { rows: updated } = await client.query(
+      `UPDATE customer_receipts
+          SET status='posted', period_id=$3, journal_entry_id=$4,
+              settlement_total=$5, discount_total=$6, unapplied_amount=$7,
+              posted_at=NOW(), posted_by=$8, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, id, period.id, posted.journalId, settlementTotal, discountTotal, unappliedAmount, actorUserId]
+    );
 
-  const { rows: crRows } = await pool.query(
-    `
-    UPDATE customer_receipts
-    SET status='posted',
-        period_id=$3,
-        journal_entry_id=$4,
-        settlement_total=$5,
-        discount_total=$6,
-        unapplied_amount=$7,
-        posted_at=NOW(),
-        posted_by=$8,
-        updated_at=NOW()
-    WHERE organization_id=$1 AND id=$2
-    RETURNING *
-    `,
-    [orgId, id, period.id, posted.journalId, settlementTotal, discountTotal, unappliedAmount, actorUserId]
-  );
-
-  // Update invoice status to paid if fully settled
-  for (const a of allocations) {
-    const outstandingAfter = await getInvoiceOutstanding(orgId, a.invoice_id);
-    if (outstandingAfter !== null && outstandingAfter <= 0) {
-      await pool.query(
-        `
-        UPDATE invoices
-        SET status='paid', updated_at=NOW()
-        WHERE organization_id=$1 AND id=$2 AND status IN ('issued','paid')
-        `,
-        [orgId, a.invoice_id]
-      );
+    for (const a of allocations) {
+      const outstandingAfter = await getInvoiceOutstanding(orgId, a.invoice_id, client);
+      if (outstandingAfter !== null && moneyUnits(outstandingAfter) <= 0n) {
+        await client.query(`UPDATE invoices SET status='paid', updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND status IN ('issued','paid')`, [orgId, a.invoice_id]);
+      }
     }
-  }
 
-  return crRows[0];
+    await writeAudit({ organizationId: orgId, actorUserId, action: "customer_receipt.posted", entityType: "customer_receipts", entityId: id, after: updated[0], client });
+    return updated[0];
+  });
 }
 
 async function voidCustomerReceipt({ orgId, actorUserId, id, reason }) {
-  const cr = await repo.getCustomerReceiptById(orgId, id);
-  if (!cr) throw new AppError(404, "Customer receipt not found");
-  if (cr.status !== "posted") throw new AppError(409, "Only posted customer receipts can be voided");
-  if (!cr.journal_entry_id) throw new AppError(500, "Customer receipt missing journal reference");
+  const { withTransaction } = require("../../../../db/tx");
+  return withTransaction(async (client) => {
+    const { rows: receiptRows } = await client.query(
+      `SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, id]
+    );
+    if (!receiptRows.length) throw new AppError(404, "Customer receipt not found");
+    const cr = receiptRows[0];
+    if (cr.status !== "posted") throw new AppError(409, "Only posted customer receipts can be voided");
+    if (!cr.journal_entry_id) throw new AppError(500, "Customer receipt missing journal reference");
 
-  const out = await journalIF.voidPostedJournal({
-    orgId,
-    journalId: cr.journal_entry_id,
-    actorUserId,
-    reason
-  });
+    const out = await journalIF.voidPostedJournal({ orgId, journalId: cr.journal_entry_id, actorUserId, reason, client });
+    const { rows } = await client.query(
+      `UPDATE customer_receipts
+          SET status='voided', voided_at=NOW(), voided_by=$3, void_reason=$4,
+              reversal_journal_entry_id=$5, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, id, actorUserId, reason, out.reversalJournalId]
+    );
 
-  const { rows } = await pool.query(
-    `
-    UPDATE customer_receipts
-    SET status='voided',
-        voided_at=NOW(),
-        voided_by=$3,
-        void_reason=$4,
-        reversal_journal_entry_id=$5,
-        updated_at=NOW()
-    WHERE organization_id=$1 AND id=$2
-    RETURNING *
-    `,
-    [orgId, id, actorUserId, reason, out.reversalJournalId]
-  );
-
-  // Recompute invoice status after void (if invoice has outstanding again)
-  const { rows: allocRows } = await pool.query(
-    `SELECT invoice_id FROM customer_receipt_allocations WHERE customer_receipt_id=$1`,
-    [id]
-  );
-
-  for (const r of allocRows) {
-    const outstanding = await getInvoiceOutstanding(orgId, r.invoice_id);
-    if (outstanding !== null && outstanding > 0) {
-      await pool.query(
-        `UPDATE invoices SET status='issued', updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND status='paid'`,
-        [orgId, r.invoice_id]
-      );
+    const { rows: allocRows } = await client.query(`SELECT invoice_id FROM customer_receipt_allocations WHERE customer_receipt_id=$1`, [id]);
+    for (const r of allocRows) {
+      const outstanding = await getInvoiceOutstanding(orgId, r.invoice_id, client);
+      if (outstanding !== null && moneyUnits(outstanding) > 0n) {
+        await client.query(`UPDATE invoices SET status='issued', updated_at=NOW() WHERE organization_id=$1 AND id=$2 AND status='paid'`, [orgId, r.invoice_id]);
+      }
     }
-  }
-
-  return rows[0];
+    await writeAudit({ organizationId: orgId, actorUserId, action: "customer_receipt.voided", entityType: "customer_receipts", entityId: id, after: rows[0], client });
+    return rows[0];
+  });
 }
 
 module.exports = {

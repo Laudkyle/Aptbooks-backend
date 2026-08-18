@@ -622,19 +622,10 @@ router.get(
       checks.moduleSummary = { total: 0, healthy: 0, unhealthy: 1, unhealthyModules: ["module_table_check"] };
     }
 
-    try {
-      checks.scheduler = await schedulerHealthSummary({ windowDays: 14, limit: 500 });
-      const failingEnabled = checks.scheduler.tasks.filter((t) => t.is_enabled && t.window_failed_count > 0 && t.window_success_count === 0);
-      if (failingEnabled.length) {
-        checks.ok = false;
-        checks.scheduler.summary = {
-          failingEnabledTasks: failingEnabled.slice(0, 50).map((t) => t.code)
-        };
-      }
-    } catch (e) {
-      checks.ok = false;
-      checks.scheduler = { ok: false, error: e?.message || "scheduler_health_error" };
-    }
+    // scheduled_tasks / scheduled_task_runs are global platform control-plane
+    // tables. Tenant settings users must not receive task names, run history,
+    // failure details, or stack/error text from other organizations' jobs.
+    checks.scheduler = { restricted: true };
 
     checks.elapsed_ms = Date.now() - t0;
     res.status(checks.ok ? 200 : 503).json(checks);

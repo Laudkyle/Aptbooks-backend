@@ -4,66 +4,13 @@ const { AppError } = require("../../shared/errors/AppError");
 const repo = require("./reportBuilder.repository");
 const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
 
-function assertSqlSafe(sql, options = {}) {
-  const { requireOrgScope = true } = options || {};
-  const text = String(sql || "").trim();
-  if (!text) throw new AppError(400, "Query SQL is required");
-
-  // Allow only a single statement.
-  const semi = text.split(";").filter((s) => s.trim().length > 0);
-  if (semi.length > 1) throw new AppError(400, "Only a single SELECT statement is allowed");
-
-  // Must start with WITH or SELECT
-  const start = text.toLowerCase().replace(/^\s+/, "");
-  if (!(start.startsWith("select ") || start.startsWith("with "))) {
-    throw new AppError(400, "Only SELECT queries are allowed");
-  }
-
-  // Block dangerous keywords.
-  const denied = [
-    "insert ",
-    "update ",
-    "delete ",
-    "drop ",
-    "alter ",
-    "truncate ",
-    "create ",
-    "grant ",
-    "revoke ",
-    "copy ",
-    "call ",
-    "do ",
-    "execute ",
-  ];
-  const lowered = ` ${start} `;
-  for (const k of denied) {
-    if (lowered.includes(` ${k}`)) throw new AppError(400, "Unsafe SQL keyword detected");
-  }
-
-  const blockedTables = [
-    "users",
-    "user_sessions",
-    "refresh_tokens",
-    "password",
-    "api_keys",
-    "secrets",
-    "organizations",
-    "audit_logs"
-  ];
-  for (const table of blockedTables) {
-    const re = new RegExp(`\\b${table}\\b`, "i");
-    if (re.test(text)) throw new AppError(400, `Direct access to ${table} is not allowed in saved reports`);
-  }
-
-  if (requireOrgScope) {
-    const hasOrgColumn = /\borganization_id\b/i.test(text);
-    const hasOrgParam = /\$1\b/.test(text);
-    if (!hasOrgColumn || !hasOrgParam) {
-      throw new AppError(400, "Saved report SQL must be organization-scoped using organization_id = $1. Use $2, $3, ... for user parameters.");
-    }
-  }
-
-  return text;
+function assertSqlSafe(_sql, _options = {}) {
+  // Free-form SQL reports are intentionally disabled. Application-level regex
+  // checks cannot prove tenant isolation for arbitrary SQL, and the primary app
+  // database role is not a safe execution context for tenant-authored queries.
+  throw new AppError(403,
+    "Custom SQL reports are disabled for tenant isolation. Use a management report template."
+  );
 }
 
 function computeNextRunAt({ scheduleType, intervalSeconds, dailyHourUtc, dailyMinuteUtc }) {
@@ -128,6 +75,14 @@ async function listReports(ctx, { includeArchived, search, limit, offset }) {
 }
 
 async function createReport(ctx, payload) {
+  // Validate the report definition before creating the parent row so a rejected
+  // SQL definition cannot leave an orphan saved_report record behind.
+  const kind = payload.kind || "management";
+  if (!['management', 'sql'].includes(kind)) throw new AppError(400, "Invalid report kind");
+  const querySql = kind === "sql" ? assertSqlSafe(payload.querySql || "") : null;
+  const templateKey = kind === "management" ? String(payload.templateKey || "").trim() : null;
+  if (kind === "management" && !templateKey) throw new AppError(400, "templateKey is required for management reports");
+
   const r = await repo.createReport({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
@@ -137,9 +92,6 @@ async function createReport(ctx, payload) {
   });
 
   // Create initial version
-  const kind = payload.kind || "sql";
-  const querySql = kind === "sql" ? assertSqlSafe(payload.querySql || "") : null;
-  const templateKey = kind === "management" ? (payload.templateKey || null) : null;
   const v = await repo.createVersion({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
@@ -223,9 +175,11 @@ async function createVersion(ctx, reportId, payload) {
   if (access.denied) throw new AppError(403, "Forbidden");
   if (!access.canEdit) throw new AppError(403, "Forbidden");
 
-  const kind = payload.kind || "sql";
+  const kind = payload.kind || "management";
+  if (!['management', 'sql'].includes(kind)) throw new AppError(400, "Invalid report kind");
   const querySql = kind === "sql" ? assertSqlSafe(payload.querySql || "") : null;
-  const templateKey = kind === "management" ? (payload.templateKey || null) : null;
+  const templateKey = kind === "management" ? String(payload.templateKey || "").trim() : null;
+  if (kind === "management" && !templateKey) throw new AppError(400, "templateKey is required for management reports");
   const v = await repo.createVersion({
     organizationId: ctx.organizationId,
     actorUserId: ctx.userId,
@@ -250,27 +204,10 @@ async function createVersion(ctx, reportId, payload) {
   return v;
 }
 
-async function runReportSql({ organizationId, sql, parameters, maxRows = 500 }) {
-  const safe = assertSqlSafe(sql, { requireOrgScope: true });
-  // Enforce LIMIT
-  const limit = Math.min(Math.max(Number(maxRows) || 500, 1), 2000);
-  const limited = /\blimit\b/i.test(safe) ? safe : `${safe}\nLIMIT ${limit}`;
-
-  const values = [organizationId, ...(Array.isArray(parameters) ? parameters : [])];
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    await client.query("SET TRANSACTION READ ONLY");
-    await client.query("SET LOCAL statement_timeout = '5000ms'");
-    const { rows } = await client.query(limited, values);
-    await client.query("COMMIT");
-    return rows;
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+async function runReportSql({ sql }) {
+  // Deliberately retain the function boundary for legacy callers, but remove the
+  // generic SQL execution engine entirely. assertSqlSafe always rejects.
+  return assertSqlSafe(sql);
 }
 
 async function runReport(ctx, reportId, { versionId = null, scheduleId = null, parameters = [], maxRows = 500 }) {

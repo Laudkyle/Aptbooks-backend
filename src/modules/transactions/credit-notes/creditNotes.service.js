@@ -10,6 +10,7 @@ const repo = require("./creditNotes.repository");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 
 async function calcTotals({ client, orgId, lines, payload = {} }) {
   let subtotalCents = 0n;
@@ -392,6 +393,10 @@ async function issueCreditNote({ orgId, actorUserId, id }) {
       actorUserId,
       client
     });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "credit_note.issued",
+      entityType: "credit_notes", entityId: id, before: cn, after: issued, client
+    });
     return issued;
   });
 }
@@ -437,7 +442,12 @@ async function applyCreditNote({ orgId, actorUserId, id, payload }) {
 
     await refreshInvoicePaidStatus({ orgId, invoiceId: normalizedPayload.invoiceId, client });
     const balance = await getCreditNoteBalances({ orgId, creditNoteId: id, client });
-    return { ...app, balance, is_available_for_application: balance.remaining > 0 };
+    const result = { ...app, balance, is_available_for_application: balance.remaining > 0 };
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "credit_note.applied",
+      entityType: "credit_notes", entityId: id, before: cn, after: result, client
+    });
+    return result;
   });
 }
 
@@ -465,10 +475,14 @@ async function voidCreditNote({ orgId, actorUserId, id, reason }) {
     const out = await repo.setVoided({
       orgId,
       id,
-      reversalJournalEntryId: rev.journalEntryId,
+      reversalJournalEntryId: rev.reversalJournalId,
       actorUserId,
       reason: reason || null,
       client
+    });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "credit_note.voided",
+      entityType: "credit_notes", entityId: id, before: cn, after: out, client
     });
     return out;
   });

@@ -1,6 +1,7 @@
 const express = require("express");
 const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const { validate } = require("../../shared/validators/validate");
 
 const svc = require("./ias12.service");
@@ -10,6 +11,11 @@ const router = express.Router();
 
 // All IAS12 routes are authenticated.
 router.use(authRequired);
+const requireMutationIdempotency = idempotency({ required: true });
+router.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  return requireMutationIdempotency(req, res, next);
+});
 
 router.get(
   "/health",

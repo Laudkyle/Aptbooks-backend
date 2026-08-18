@@ -217,7 +217,7 @@ async function createPayment({ orgId, actorUserId, leaseId, payload }) {
     const amount = toDecimal(payload.amount);
     if (!amount.greaterThan(0)) throw new AppError(400, 'Payment amount must be greater than 0');
     const { rows } = await client.query(`INSERT INTO lease_payments(lease_id,organization_id,due_date,amount,payment_type,is_actual,paid_date,reference,schedule_line_id,created_by)
-      VALUES($1,$2,$3,$4,$5,COALESCE($6,FALSE),$7,$8,$9,$10) RETURNING *`, [leaseId, orgId, toISODate(payload.due_date), amount.toNumber(), payload.payment_type || 'fixed', payload.is_actual ?? false, payload.paid_date ? toISODate(payload.paid_date) : null, payload.reference || null, scheduleLineId, actorUserId]);
+      VALUES($1,$2,$3,$4,$5,COALESCE($6,FALSE),$7,$8,$9,$10) RETURNING *`, [leaseId, orgId, toISODate(payload.due_date), amount.toFixed(6), payload.payment_type || 'fixed', payload.is_actual ?? false, payload.paid_date ? toISODate(payload.paid_date) : null, payload.reference || null, scheduleLineId, actorUserId]);
     await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'PAYMENT_RECORDED', payload: rows[0] }); await client.query('COMMIT'); return rows[0];
   } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); } }
 

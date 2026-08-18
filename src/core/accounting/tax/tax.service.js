@@ -6,6 +6,13 @@ const { withTransaction } = require("../../../db/tx");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
 const { propagateDocumentWorkflowToJournal } = require("../../../modules/transactions/_shared/workflowJournalAudit.service");
 const { upsertTaxAdjustmentLedgerEntry } = require("../../../shared/tax/taxLedger");
+const {
+  FINANCIAL_SCALE,
+  applyPercentagePointUnits,
+  bigIntToDecimalString,
+  parseDecimalRoundedToBigInt,
+  parsePercentagePoints,
+} = require("../../../shared/utils/money");
 
 function normalizeTaxCodeRow(row) {
   if (!row) return row;
@@ -3659,33 +3666,30 @@ async function listWithholdingOpenItems({ orgId, query = {} }) {
 
 
 // ==================== GHANA TAX WORKSPACE HELPERS ====================
-function parseMoneyUnits(value, scale = 2) {
-  const raw = String(value ?? "").trim();
-  if (!/^\d+(\.\d{1,6})?$/.test(raw)) throw new AppError(400, "amount must be a positive decimal value");
-  const [whole, frac = ""] = raw.split(".");
-  const padded = (frac + "0".repeat(scale)).slice(0, scale);
-  return BigInt(whole) * (10n ** BigInt(scale)) + BigInt(padded || "0");
+function parseMoneyUnits(value, scale = FINANCIAL_SCALE.money) {
+  try {
+    const units = parseDecimalRoundedToBigInt(value ?? "0", scale, 6);
+    if (units < 0n) throw new Error("negative");
+    return units;
+  } catch (_) {
+    throw new AppError(400, "amount must be a non-negative decimal value");
+  }
 }
 
 function parseRateMicros(value) {
-  const raw = String(value ?? "0").trim();
-  if (!/^\d+(\.\d{1,6})?$/.test(raw)) throw new AppError(400, "rate must be a non-negative decimal value");
-  const [whole, frac = ""] = raw.split(".");
-  return BigInt(whole) * 1000000n + BigInt((frac + "000000").slice(0, 6));
+  try {
+    return parsePercentagePoints(value ?? "0", FINANCIAL_SCALE.percentagePoints);
+  } catch (_) {
+    throw new AppError(400, "rate must be a non-negative decimal value");
+  }
 }
 
-function formatUnits(units, scale = 2) {
-  const negative = units < 0n;
-  const abs = negative ? -units : units;
-  const base = 10n ** BigInt(scale);
-  const whole = abs / base;
-  const frac = String(abs % base).padStart(scale, "0");
-  return `${negative ? "-" : ""}${whole}.${frac}`;
+function formatUnits(units, scale = FINANCIAL_SCALE.money) {
+  return bigIntToDecimalString(units, scale);
 }
 
 function percentOfUnits(baseUnits, rateMicros) {
-  const denom = 100n * 1000000n;
-  return (baseUnits * rateMicros + denom / 2n) / denom;
+  return applyPercentagePointUnits(baseUnits, rateMicros, FINANCIAL_SCALE.percentagePoints);
 }
 
 async function getGhanaSetupChecklist({ orgId }) {

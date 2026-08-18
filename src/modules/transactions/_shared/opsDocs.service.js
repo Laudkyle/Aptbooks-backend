@@ -8,6 +8,8 @@ const repo = require("./opsDocs.repository");
 const { resolveLineTaxes, round2: roundTax2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 const { enrichLines, buildDetailMeta } = require("./detailEnrichment");
+const journalIF = require("../../../interfaces/journalPosting.interface");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -342,10 +344,28 @@ function createOpsDocService(config) {
       let finalEntity = header;
       if (finalAction === "post") {
         await buildOperationalDocumentJournal({ orgId, actorUserId, header, lines, client });
-        finalEntity = await repo.setStatus(client, orgId, documentId, "posted", actorUserId);
+        finalEntity = await repo.setStatus(client, orgId, documentId, "posted", actorUserId, {
+          posted_at: new Date(),
+          posted_by: actorUserId
+        });
       } else {
-        finalEntity = await repo.setStatus(client, orgId, documentId, "issued", actorUserId);
+        finalEntity = await repo.setStatus(client, orgId, documentId, "issued", actorUserId, {
+          issued_at: new Date(),
+          issued_by: actorUserId
+        });
       }
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: `${entityType}.${finalAction}ed`,
+        entityType,
+        entityId: documentId,
+        before: header,
+        after: finalEntity,
+        client
+      });
+
       await client.query("COMMIT");
       return finalEntity;
     } catch (e) {
@@ -357,7 +377,57 @@ function createOpsDocService(config) {
   }
 
   async function voidDocument({ orgId, actorUserId, documentId, reason }) {
-    return repo.voidDocument({ orgId, moduleCode, actorUserId, documentId, reason });
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const header = await repo.getLockedDocument(client, orgId, documentId);
+      if (!header || header.module_code !== moduleCode) throw new AppError(404, "Document not found");
+      if (header.status === "void") {
+        await client.query("COMMIT");
+        return header;
+      }
+      if (!["issued", "posted"].includes(header.status)) {
+        throw new AppError(409, "Only issued or posted documents can be voided");
+      }
+
+      let reversalJournalId = header.reversal_journal_entry_id || null;
+      if (header.journal_entry_id && !reversalJournalId) {
+        const reversal = await journalIF.voidPostedJournal({
+          orgId,
+          journalId: header.journal_entry_id,
+          actorUserId,
+          reason: reason || `Void ${moduleCode} ${header.document_no}`,
+          client
+        });
+        reversalJournalId = reversal?.reversalJournalId || reversal?.journalId || reversal?.id || reversal?.journal_id || null;
+      }
+
+      const finalEntity = await repo.setStatus(client, orgId, documentId, "void", actorUserId, {
+        voided_at: new Date(),
+        voided_by: actorUserId,
+        void_reason: reason || null,
+        reversal_journal_entry_id: reversalJournalId
+      });
+
+      await writeAudit({
+        organizationId: orgId,
+        actorUserId,
+        action: `${entityType}.voided`,
+        entityType,
+        entityId: documentId,
+        before: header,
+        after: finalEntity,
+        client
+      });
+
+      await client.query("COMMIT");
+      return finalEntity;
+    } catch (e) {
+      await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   return {

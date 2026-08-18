@@ -1,5 +1,6 @@
 const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");
+const { moneyUnits, moneyStringFromUnits, normalizeMoney, addMoney, moneyNumber } = require("../../shared/utils/financialMath");
 
 function assertDate(value, fieldName) {
   if (!value) throw new AppError(400, `${fieldName} is required`);
@@ -108,36 +109,36 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
     );
 
     const byCustomer = new Map();
-    const totals = { total: 0 };
-    for (const b of defaultBuckets) totals[b.label] = 0;
+    const totals = { total: "0.00" };
+    for (const b of defaultBuckets) totals[b.label] = "0.00";
 
     for (const r of rows) {
       const bucket = assignBucketLabel(defaultBuckets, Number(r.days_past_due || 0));
-      const outstanding = Number(r.outstanding || 0);
+      const outstanding = normalizeMoney(r.outstanding || "0");
       if (!byCustomer.has(r.customer_id)) {
         byCustomer.set(r.customer_id, {
           customer_id: r.customer_id,
           customer_name: r.customer_name,
-          buckets: Object.assign({ total: 0 }, Object.fromEntries(defaultBuckets.map(b => [b.label, 0]))),
+          buckets: Object.assign({ total: "0.00" }, Object.fromEntries(defaultBuckets.map(b => [b.label, "0.00"]))),
           invoices: []
         });
       }
       const c = byCustomer.get(r.customer_id);
-      c.buckets[bucket] += outstanding;
-      c.buckets.total += outstanding;
-      totals[bucket] += outstanding;
-      totals.total += outstanding;
+      c.buckets[bucket] = addMoney(c.buckets[bucket], outstanding);
+      c.buckets.total = addMoney(c.buckets.total, outstanding);
+      totals[bucket] = addMoney(totals[bucket], outstanding);
+      totals.total = addMoney(totals.total, outstanding);
       c.invoices.push({
         invoice_id: r.invoice_id,
         invoice_no: r.invoice_no,
         invoice_date: r.invoice_date,
         due_date: r.due_date,
         currency_code: r.currency_code,
-        total: Number(r.total || 0),
-        allocated: Number(r.allocated || 0),
-        notes_applied: Number(r.notes_applied || 0),
-        written_off: Number(r.written_off || 0),
-        outstanding,
+        total: moneyNumber(r.total || "0"),
+        allocated: moneyNumber(r.allocated || "0"),
+        notes_applied: moneyNumber(r.notes_applied || "0"),
+        written_off: moneyNumber(r.written_off || "0"),
+        outstanding: moneyNumber(outstanding),
         days_past_due: Number(r.days_past_due || 0),
         bucket
       });
@@ -145,8 +146,11 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
 
     return {
       as_of_date: asOfDate,
-      totals,
-      customers: Array.from(byCustomer.values())
+      totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, moneyNumber(value)])),
+      customers: Array.from(byCustomer.values()).map((customer) => ({
+        ...customer,
+        buckets: Object.fromEntries(Object.entries(customer.buckets).map(([key, value]) => [key, moneyNumber(value)])),
+      }))
     };
   }
 
@@ -181,36 +185,36 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
   );
 
   const byCustomer = new Map();
-  const totals = { total: 0 };
-  for (const b of buckets) totals[b.label] = 0;
+  const totals = { total: "0.00" };
+  for (const b of buckets) totals[b.label] = "0.00";
 
   for (const r of rows) {
     const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0));
-    const outstanding = Number(r.outstanding || 0);
+    const outstanding = normalizeMoney(r.outstanding || "0");
     if (!byCustomer.has(r.customer_id)) {
       byCustomer.set(r.customer_id, {
         customer_id: r.customer_id,
         customer_name: r.customer_name,
-        buckets: Object.assign({ total: 0 }, Object.fromEntries(buckets.map(b => [b.label, 0]))),
+        buckets: Object.assign({ total: "0.00" }, Object.fromEntries(buckets.map(b => [b.label, "0.00"]))),
         invoices: []
       });
     }
     const c = byCustomer.get(r.customer_id);
-    c.buckets[bucket] += outstanding;
-    c.buckets.total += outstanding;
-    totals[bucket] += outstanding;
-    totals.total += outstanding;
+    c.buckets[bucket] = addMoney(c.buckets[bucket], outstanding);
+    c.buckets.total = addMoney(c.buckets.total, outstanding);
+    totals[bucket] = addMoney(totals[bucket], outstanding);
+    totals.total = addMoney(totals.total, outstanding);
     c.invoices.push({
       invoice_id: r.invoice_id,
       invoice_no: r.invoice_no,
       invoice_date: r.invoice_date,
       due_date: r.due_date,
       currency_code: r.currency_code,
-      total: Number(r.total || 0),
-      allocated: Number(r.allocated || 0),
-      notes_applied: Number(r.notes_applied || 0),
-      written_off: Number(r.written_off || 0),
-      outstanding,
+      total: moneyNumber(r.total || "0"),
+      allocated: moneyNumber(r.allocated || "0"),
+      notes_applied: moneyNumber(r.notes_applied || "0"),
+      written_off: moneyNumber(r.written_off || "0"),
+      outstanding: moneyNumber(outstanding),
       days_past_due: Number(r.days_past_due || 0),
       bucket
     });
@@ -218,8 +222,11 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
 
   return {
     as_of_date: asOfDate,
-    totals,
-    customers: Array.from(byCustomer.values())
+    totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, moneyNumber(value)])),
+    customers: Array.from(byCustomer.values()).map((customer) => ({
+      ...customer,
+      buckets: Object.fromEntries(Object.entries(customer.buckets).map(([key, value]) => [key, moneyNumber(value)])),
+    }))
   };
 }
 async function customerStatement({ orgId, customerId, fromDate, toDate }) {
@@ -228,8 +235,8 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
   assertDate(toDate, "to");
 
   const { rows: customerRows } = await pool.query(
-    `SELECT id, name FROM business_partners WHERE id=$1`,
-    [customerId]
+    `SELECT id, name FROM business_partners WHERE organization_id=$1 AND id=$2`,
+    [orgId, customerId]
   );
   if (!customerRows.length) throw new AppError(404, "Customer not found");
 
@@ -258,7 +265,8 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     `,
     [orgId, customerId, fromDate]
   );
-  const opening = Number(openingRows[0]?.opening || 0);
+  const openingCents = moneyUnits(openingRows[0]?.opening || "0");
+  const opening = moneyStringFromUnits(openingCents);
 
   // Activity: invoices and receipts within [fromDate, toDate]
   const { rows: invoices } = await pool.query(
@@ -301,8 +309,8 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
       type: "invoice",
       reference: i.invoice_no,
       description: i.memo || null,
-      debit: Number(i.total || 0),
-      credit: 0
+      debit: normalizeMoney(i.total || "0"),
+      credit: "0.00"
     });
   }
   for (const r of receipts) {
@@ -312,13 +320,13 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
       type: "receipt",
       reference: r.receipt_no,
       description: r.memo || null,
-      debit: 0,
-      credit: Number(r.allocated_total || r.amount_total || 0)
+      debit: "0.00",
+      credit: normalizeMoney(r.allocated_total || r.amount_total || "0")
     });
   }
   entries.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference)));
 
-  let running = opening;
+  let runningCents = openingCents;
   const lines = [{
     date: fromDate,
     type: "opening_balance",
@@ -326,19 +334,24 @@ async function customerStatement({ orgId, customerId, fromDate, toDate }) {
     description: "Opening balance",
     debit: 0,
     credit: 0,
-    balance: running
+    balance: moneyNumber(opening)
   }];
-  for (const e of entries) {
-    running += Number(e.debit || 0) - Number(e.credit || 0);
-    lines.push({ ...e, balance: running });
+  for (const entry of entries) {
+    runningCents += moneyUnits(entry.debit || "0") - moneyUnits(entry.credit || "0");
+    lines.push({
+      ...entry,
+      debit: moneyNumber(entry.debit || "0"),
+      credit: moneyNumber(entry.credit || "0"),
+      balance: moneyNumber(moneyStringFromUnits(runningCents)),
+    });
   }
 
   return {
     customer: customerRows[0],
     from: fromDate,
     to: toDate,
-    opening_balance: opening,
-    closing_balance: running,
+    opening_balance: moneyNumber(opening),
+    closing_balance: moneyNumber(moneyStringFromUnits(runningCents)),
     lines
   };
 }

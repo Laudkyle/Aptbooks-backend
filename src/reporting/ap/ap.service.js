@@ -1,5 +1,6 @@
 const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");
+const { moneyUnits, moneyStringFromUnits, normalizeMoney, addMoney, moneyNumber } = require("../../shared/utils/financialMath");
 
 function assertDate(value, fieldName) {
   if (!value) throw new AppError(400, `${fieldName} is required`);
@@ -107,36 +108,36 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
     );
 
     const byVendor = new Map();
-    const totals = { total: 0 };
-    for (const b of defaultBuckets) totals[b.label] = 0;
+    const totals = { total: "0.00" };
+    for (const b of defaultBuckets) totals[b.label] = "0.00";
 
     for (const r of rows) {
       const bucket = assignBucketLabel(defaultBuckets, Number(r.days_past_due || 0));
-      const outstanding = Number(r.outstanding || 0);
+      const outstanding = normalizeMoney(r.outstanding || "0");
       if (!byVendor.has(r.vendor_id)) {
         byVendor.set(r.vendor_id, {
           vendor_id: r.vendor_id,
           vendor_name: r.vendor_name,
-          buckets: Object.assign({ total: 0 }, Object.fromEntries(defaultBuckets.map(b => [b.label, 0]))),
+          buckets: Object.assign({ total: "0.00" }, Object.fromEntries(defaultBuckets.map(b => [b.label, "0.00"]))),
           bills: []
         });
       }
       const v = byVendor.get(r.vendor_id);
-      v.buckets[bucket] += outstanding;
-      v.buckets.total += outstanding;
-      totals[bucket] += outstanding;
-      totals.total += outstanding;
+      v.buckets[bucket] = addMoney(v.buckets[bucket], outstanding);
+      v.buckets.total = addMoney(v.buckets.total, outstanding);
+      totals[bucket] = addMoney(totals[bucket], outstanding);
+      totals.total = addMoney(totals.total, outstanding);
       v.bills.push({
         bill_id: r.bill_id,
         bill_no: r.bill_no,
         bill_date: r.bill_date,
         due_date: r.due_date,
         currency_code: r.currency_code,
-        total: Number(r.total || 0),
-        allocated: Number(r.allocated || 0),
-        notes_applied: Number(r.notes_applied || 0),
-        written_off: Number(r.written_off || 0),
-        outstanding,
+        total: moneyNumber(r.total || "0"),
+        allocated: moneyNumber(r.allocated || "0"),
+        notes_applied: moneyNumber(r.notes_applied || "0"),
+        written_off: moneyNumber(r.written_off || "0"),
+        outstanding: moneyNumber(outstanding),
         days_past_due: Number(r.days_past_due || 0),
         bucket
       });
@@ -144,8 +145,11 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
 
     return { 
       as_of_date: asOfDate, 
-      totals, 
-      vendors: Array.from(byVendor.values()) 
+      totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, moneyNumber(value)])), 
+      vendors: Array.from(byVendor.values()).map((vendor) => ({
+        ...vendor,
+        buckets: Object.fromEntries(Object.entries(vendor.buckets).map(([key, value]) => [key, moneyNumber(value)])),
+      })) 
     };
   }
 
@@ -179,36 +183,36 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
   );
 
   const byVendor = new Map();
-  const totals = { total: 0 };
-  for (const b of buckets) totals[b.label] = 0;
+  const totals = { total: "0.00" };
+  for (const b of buckets) totals[b.label] = "0.00";
 
   for (const r of rows) {
     const bucket = assignBucketLabel(buckets, Number(r.days_past_due || 0));
-    const outstanding = Number(r.outstanding || 0);
+    const outstanding = normalizeMoney(r.outstanding || "0");
     if (!byVendor.has(r.vendor_id)) {
       byVendor.set(r.vendor_id, {
         vendor_id: r.vendor_id,
         vendor_name: r.vendor_name,
-        buckets: Object.assign({ total: 0 }, Object.fromEntries(buckets.map(b => [b.label, 0]))),
+        buckets: Object.assign({ total: "0.00" }, Object.fromEntries(buckets.map(b => [b.label, "0.00"]))),
         bills: []
       });
     }
     const v = byVendor.get(r.vendor_id);
-    v.buckets[bucket] += outstanding;
-    v.buckets.total += outstanding;
-    totals[bucket] += outstanding;
-    totals.total += outstanding;
+    v.buckets[bucket] = addMoney(v.buckets[bucket], outstanding);
+    v.buckets.total = addMoney(v.buckets.total, outstanding);
+    totals[bucket] = addMoney(totals[bucket], outstanding);
+    totals.total = addMoney(totals.total, outstanding);
     v.bills.push({
       bill_id: r.bill_id,
       bill_no: r.bill_no,
       bill_date: r.bill_date,
       due_date: r.due_date,
       currency_code: r.currency_code,
-      total: Number(r.total || 0),
-      allocated: Number(r.allocated || 0),
-      notes_applied: Number(r.notes_applied || 0),
-      written_off: Number(r.written_off || 0),
-      outstanding,
+      total: moneyNumber(r.total || "0"),
+      allocated: moneyNumber(r.allocated || "0"),
+      notes_applied: moneyNumber(r.notes_applied || "0"),
+      written_off: moneyNumber(r.written_off || "0"),
+      outstanding: moneyNumber(outstanding),
       days_past_due: Number(r.days_past_due || 0),
       bucket
     });
@@ -216,8 +220,11 @@ async function agedPayables({ orgId, asOfDate, bucketSetId }) {
 
   return { 
     as_of_date: asOfDate, 
-    totals, 
-    vendors: Array.from(byVendor.values()) 
+    totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, moneyNumber(value)])), 
+    vendors: Array.from(byVendor.values()).map((vendor) => ({
+      ...vendor,
+      buckets: Object.fromEntries(Object.entries(vendor.buckets).map(([key, value]) => [key, moneyNumber(value)])),
+    })) 
   };
 }
 async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
@@ -226,8 +233,8 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
   assertDate(toDate, "to");
 
   const { rows: vendorRows } = await pool.query(
-    `SELECT id, name FROM business_partners WHERE id=$1`,
-    [vendorId]
+    `SELECT id, name FROM business_partners WHERE organization_id=$1 AND id=$2`,
+    [orgId, vendorId]
   );
   if (!vendorRows.length) throw new AppError(404, "Vendor not found");
 
@@ -255,7 +262,8 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     `,
     [orgId, vendorId, fromDate]
   );
-  const opening = Number(openingRows[0]?.opening || 0);
+  const openingCents = moneyUnits(openingRows[0]?.opening || "0");
+  const opening = moneyStringFromUnits(openingCents);
 
   const { rows: bills } = await pool.query(
     `
@@ -296,8 +304,8 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
       type: "bill",
       reference: b.bill_no,
       description: b.memo || null,
-      debit: Number(b.total || 0),
-      credit: 0
+      debit: normalizeMoney(b.total || "0"),
+      credit: "0.00"
     });
   }
   for (const p of payments) {
@@ -307,13 +315,13 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
       type: "payment",
       reference: p.payment_no,
       description: null,
-      debit: 0,
-      credit: Number(p.allocated_total || p.amount_total || 0)
+      debit: "0.00",
+      credit: normalizeMoney(p.allocated_total || p.amount_total || "0")
     });
   }
   entries.sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference)));
 
-  let running = opening;
+  let runningCents = openingCents;
   const lines = [{
     date: fromDate,
     type: "opening_balance",
@@ -321,19 +329,24 @@ async function vendorStatement({ orgId, vendorId, fromDate, toDate }) {
     description: "Opening balance",
     debit: 0,
     credit: 0,
-    balance: running
+    balance: moneyNumber(opening)
   }];
-  for (const e of entries) {
-    running += Number(e.debit || 0) - Number(e.credit || 0);
-    lines.push({ ...e, balance: running });
+  for (const entry of entries) {
+    runningCents += moneyUnits(entry.debit || "0") - moneyUnits(entry.credit || "0");
+    lines.push({
+      ...entry,
+      debit: moneyNumber(entry.debit || "0"),
+      credit: moneyNumber(entry.credit || "0"),
+      balance: moneyNumber(moneyStringFromUnits(runningCents)),
+    });
   }
 
   return {
     vendor: vendorRows[0],
     from: fromDate,
     to: toDate,
-    opening_balance: opening,
-    closing_balance: running,
+    opening_balance: moneyNumber(opening),
+    closing_balance: moneyNumber(moneyStringFromUnits(runningCents)),
     lines
   };
 }

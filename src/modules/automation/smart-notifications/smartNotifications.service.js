@@ -9,30 +9,24 @@ async function createRule(orgId, userId, payload) {
   if (!payload?.code) throw new AppError(400, 'code is required');
   if (!payload?.name) throw new AppError(400, 'name is required');
   if (!payload?.triggerType) throw new AppError(400, 'triggerType is required');
+  if (payload.triggerType === 'scheduler_failures') throw new AppError(400, 'scheduler_failures is a platform-only trigger');
   return { data: await repo.createRule(orgId, userId, payload) };
 }
-async function updateRule(orgId, id, payload) { const row = await repo.updateRule(orgId, id, payload || {}); if (!row) throw new AppError(404, 'Smart notification rule not found'); return { data: row }; }
+async function updateRule(orgId, id, payload) {
+  const requestedTrigger = payload?.triggerType ?? payload?.trigger_type;
+  if (requestedTrigger === 'scheduler_failures') throw new AppError(400, 'scheduler_failures is a platform-only trigger');
+  const row = await repo.updateRule(orgId, id, payload || {});
+  if (!row) throw new AppError(404, 'Smart notification rule not found');
+  return { data: row };
+}
 
 async function evaluateRule(orgId, actorUserId, rule) {
   const cfg = rule.config_json || {};
   const created = [];
   if (rule.trigger_type === 'scheduler_failures') {
-    const { rows } = await pool.query(
-      `SELECT task_code, COUNT(*)::int AS failed_count
-       FROM scheduled_task_runs
-       WHERE status='failed' AND started_at >= (NOW() - make_interval(days => $1::int))
-       GROUP BY task_code`,
-      [cfg.windowDays || 1]
-    ).catch(() => ({ rows: [] }));
-    for (const r of rows || []) {
-      created.push(await notifSvc.createNotification({ orgId, actorUserId, payload: {
-        userId: rule.target_user_id || null,
-        type: 'automation', severity: rule.severity || 'warning',
-        title: `Scheduled task failures detected`,
-        body: `${r.task_code} failed ${r.failed_count} time(s) in the monitoring window.`,
-        entityType: 'scheduled_task', entityId: r.task_code
-      }}));
-    }
+    // scheduled_task_runs is a global control-plane table with no tenant key.
+    // Tenant automation rules must never inspect it. Legacy rules are skipped.
+    return created;
   } else if (rule.trigger_type === 'recurring_due') {
     const due = await recurringRepo.listDue(orgId, new Date().toISOString().slice(0,10));
     for (const item of due.slice(0, Number(cfg.maxItems || 20))) {

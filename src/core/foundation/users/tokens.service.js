@@ -3,10 +3,11 @@ const jwt = require("jsonwebtoken");
 const { env } = require("../../../config/env");
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
+const logger = require("../../../config/logger");
 
 function sha256(input) {
   if (!input) {
-    console.error('sha256 called with falsy input:', input);
+    logger.warn("sha256 called without required input");
     throw new Error('sha256: input cannot be undefined or null');
   }
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -30,19 +31,19 @@ function jwtOptions() {
   return opts;
 }
 
-function signAccessToken({ userId, organizationId, email }) {
+function signAccessToken({ userId, organizationId, email, authVersion = 1 }) {
   return jwt.sign(
-    { id: userId, organization_id: organizationId, email, typ: "access" },
+    { id: userId, organization_id: organizationId, email, ver: Number(authVersion || 1), typ: "access" },
     env.JWT_SECRET,
     { expiresIn: env.JWT_EXPIRES_IN, ...jwtOptions() }
   );
 }
 
-function signRefreshToken({ userId, organizationId, email, familyId }) {
+function signRefreshToken({ userId, organizationId, email, familyId, authVersion = 1 }) {
   const jti = uuid();
   const fid = familyId || uuid();
   const token = jwt.sign(
-    { sub: userId, organization_id: organizationId, email, jti, fid, typ: "refresh" },
+    { sub: userId, organization_id: organizationId, email, jti, fid, ver: Number(authVersion || 1), typ: "refresh" },
     env.JWT_REFRESH_SECRET,
     { expiresIn: env.JWT_REFRESH_EXPIRES_IN, ...jwtOptions() }
   );
@@ -139,7 +140,7 @@ async function revokeAllOtherRefreshTokens({ organizationId, userId, exceptJti =
   
   const { rowCount } = await pool.query(query, params);
   
-  console.log(`Revoked ${rowCount} other refresh tokens for user ${userId} (except: ${exceptJti || exceptFamilyId || 'none'})`);
+  logger.info({ organizationId, userId, revokedCount: rowCount }, "Revoked other refresh sessions");
   return rowCount;
 }
 
@@ -252,7 +253,7 @@ async function rotateRefreshToken({ token, ip = null, userAgent = null }) {
     // Re-check account and organization membership at refresh time so disabling
     // a user takes effect without waiting for the refresh token to expire.
     const { rows: userRows } = await client.query(
-      `SELECT u.id, u.organization_id, u.email, u.status, u.is_system
+      `SELECT u.id, u.organization_id, u.email, u.status, u.is_system, u.auth_version
          FROM users u
          JOIN user_organizations uo
            ON uo.user_id=u.id AND uo.organization_id=$2
@@ -275,11 +276,28 @@ async function rotateRefreshToken({ token, ip = null, userAgent = null }) {
       throw new AppError(401, "Session is no longer active");
     }
 
+    // Legacy refresh tokens implicitly carry version 1. Once auth_version is
+    // incremented (password/admin session reset/org switch), old refresh tokens
+    // cannot mint a fresh access token with the new version.
+    if (Number(payload.ver || 1) !== Number(user.auth_version)) {
+      await client.query(
+        `UPDATE refresh_tokens
+            SET revoked_at=COALESCE(revoked_at, now()),
+                revoke_reason=COALESCE(revoke_reason, 'session_version_revoked')
+          WHERE family_id=$1 AND organization_id=$2 AND user_id=$3`,
+        [familyId, organizationId, userId]
+      );
+      await client.query("COMMIT");
+      inTransaction = false;
+      throw new AppError(401, "Session has been revoked");
+    }
+
     const next = signRefreshToken({
       userId,
       organizationId,
       email: user.email,
       familyId,
+      authVersion: user.auth_version,
     });
 
     await client.query(
@@ -322,6 +340,7 @@ async function rotateRefreshToken({ token, ip = null, userAgent = null }) {
       userId,
       organizationId,
       email: user.email,
+      authVersion: user.auth_version,
     });
 
     return {

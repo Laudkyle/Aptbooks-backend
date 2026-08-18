@@ -1,4 +1,5 @@
 const { pool } = require("../../../db/pool");
+const { quantityUnits, quantityString, minUnits, unitCostString } = require("../../../shared/utils/financialMath");
 
 function resolveDb(a, b, c) {
   if (a && typeof a.query === "function") return { db: a, orgId: b, txnId: c };
@@ -186,8 +187,8 @@ async function createFifoLayer(client, orgId, warehouseId, itemId, receivedTxnLi
 
 async function consumeFifoLayers(client, orgId, warehouseId, itemId, txnLineId, qtyNeeded) {
   const consumptions = [];
-  let remaining = Number(qtyNeeded);
-  while (remaining > 0) {
+  let remainingUnits = quantityUnits(qtyNeeded);
+  while (remainingUnits > 0n) {
     const { rows: layers } = await client.query(
       `SELECT id, qty_remaining, unit_cost
        FROM inventory_cost_layers
@@ -199,18 +200,19 @@ async function consumeFifoLayers(client, orgId, warehouseId, itemId, txnLineId, 
     );
     if (!layers.length) break;
     const layer = layers[0];
-    const take = Math.min(remaining, Number(layer.qty_remaining));
+    const takeUnits = minUnits(remainingUnits, quantityUnits(layer.qty_remaining));
+    const take = quantityString(takeUnits);
     await client.query(`UPDATE inventory_cost_layers SET qty_remaining = qty_remaining - $2 WHERE id=$1`, [layer.id, take]);
     await client.query(
       `INSERT INTO inventory_layer_consumptions(txn_line_id, layer_id, quantity, unit_cost)
        VALUES($1,$2,$3,$4)`,
-      [txnLineId, layer.id, take, layer.unit_cost]
+      [txnLineId, layer.id, take, unitCostString(layer.unit_cost)]
     );
-    consumptions.push({ layerId: layer.id, quantity: take, unitCost: Number(layer.unit_cost) });
-    remaining -= take;
+    consumptions.push({ layerId: layer.id, quantity: take, unitCost: unitCostString(layer.unit_cost) });
+    remainingUnits -= takeUnits;
   }
-  if (remaining > 0) return { ok: false, consumptions, remaining };
-  return { ok: true, consumptions, remaining: 0 };
+  if (remainingUnits > 0n) return { ok: false, consumptions, remaining: quantityString(remainingUnits) };
+  return { ok: true, consumptions, remaining: "0.000000" };
 }
 
 module.exports = {

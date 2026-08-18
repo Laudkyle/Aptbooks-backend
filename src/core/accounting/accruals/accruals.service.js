@@ -1,5 +1,6 @@
 const { pool } = require("../../../db/pool");
 const { AppError } = require("../../../shared/errors/AppError");
+const logger = require("../../../config/logger");
 
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
@@ -649,7 +650,7 @@ async function runOne({
         asOfDate: asOfYMD,
       };
   }
-console.log("Running accrual rule", { orgId, ruleId, asOfDate: asOfYMD, periodIdOverride });
+logger.debug({ orgId, ruleId, asOfDate: asOfYMD, periodIdOverride }, "Running accrual rule");
   // Determine period
   let period = null;
   if (periodIdOverride) {
@@ -686,7 +687,7 @@ console.log("Running accrual rule", { orgId, ruleId, asOfDate: asOfYMD, periodId
       };
     }
   }
-  console.log("Finding open period for date", { orgId, asOfDate: asOfYMD, foundPeriodId: period.id });
+  logger.debug({ orgId, asOfDate: asOfYMD, foundPeriodId: period.id }, "Resolved accrual accounting period");
   
   // v1: fixed-only rule line totals
   const totals = sumFixedLines(

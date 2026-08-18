@@ -9,6 +9,26 @@
   - BigInt integer of minor units (e.g., cents) where scale=2.
 */
 
+
+const FINANCIAL_SCALE = Object.freeze({
+  money: 2,
+  documentQuantity: 4,
+  documentUnitPrice: 2,
+  quantity: 6,
+  unitPrice: 6,
+  unitCost: 6,
+  percentagePoints: 6,
+  fraction: 6,
+  exchangeRate: 6,
+});
+
+function powerOfTen(scale) {
+  if (!Number.isInteger(scale) || scale < 0 || scale > 18) {
+    throw new Error("Invalid fixed-point scale");
+  }
+  return 10n ** BigInt(scale);
+}
+
 function assertFiniteNumber(n) {
   if (typeof n !== "number" || !Number.isFinite(n)) {
     throw new Error("Invalid number");
@@ -54,6 +74,25 @@ function parseDecimalToBigInt(value, scale = 2) {
   const combined = intPart + fracPart;
   const bi = BigInt(combined || "0");
   return sign * bi;
+}
+
+/**
+ * Parse a decimal value to a target scale and round excess fractional digits
+ * using round-half-up. Use this at explicit accounting rounding boundaries.
+ */
+function parseDecimalRoundedToBigInt(value, scale = 2, maxInputScale = 18) {
+  const raw = normaliseToString(value);
+  const match = raw.match(/^([+-])?(\d+)(?:\.(\d+))?$/);
+  if (!match) throw new Error("Invalid decimal format");
+  const sign = match[1] === "-" ? -1n : 1n;
+  const whole = match[2];
+  const fraction = match[3] || "";
+  if (fraction.length > maxInputScale) throw new Error(`Too many decimal places; max ${maxInputScale}`);
+  const kept = fraction.slice(0, scale).padEnd(scale, "0");
+  let units = BigInt(`${whole}${kept}` || "0");
+  const discarded = fraction.slice(scale);
+  if (discarded && discarded[0] >= "5") units += 1n;
+  return sign * units;
 }
 
 /**
@@ -113,9 +152,60 @@ function multiplyQtyByUnitPriceToMoney(qty, unitPrice, qtyScale = 6, moneyScale 
   return rounded;
 }
 
+/**
+ * Multiply two scaled decimal values and return a BigInt at outputScale.
+ * All down-scaling uses the same round-half-up policy as the journal/tax kernels.
+ */
+function multiplyScaledDecimals(left, leftScale, right, rightScale, outputScale) {
+  const leftUnits = parseDecimalToBigInt(left, leftScale);
+  const rightUnits = parseDecimalToBigInt(right, rightScale);
+  const product = leftUnits * rightUnits;
+  const productScale = leftScale + rightScale;
+  if (productScale === outputScale) return product;
+  if (productScale < outputScale) return product * powerOfTen(outputScale - productScale);
+  return divideAndRoundHalfUp(product, powerOfTen(productScale - outputScale));
+}
+
+/** Percentage-point semantics: 1.000000 means 1 percent, not 100 percent. */
+function parsePercentagePoints(value, scale = FINANCIAL_SCALE.percentagePoints) {
+  const units = parseDecimalToBigInt(value == null || value === "" ? "0" : value, scale);
+  if (units < 0n) throw new Error("Percentage rate cannot be negative");
+  return units;
+}
+
+function applyPercentagePointUnits(amountUnits, rateUnits, rateScale = FINANCIAL_SCALE.percentagePoints) {
+  if (typeof amountUnits !== "bigint" || typeof rateUnits !== "bigint") {
+    throw new Error("amountUnits and rateUnits must be BigInt values");
+  }
+  if (rateUnits < 0n) throw new Error("Percentage rate cannot be negative");
+  const denominator = 100n * powerOfTen(rateScale);
+  return divideAndRoundHalfUp(amountUnits * rateUnits, denominator);
+}
+
+function applyPercentagePoints(amountUnits, rate, rateScale = FINANCIAL_SCALE.percentagePoints) {
+  return applyPercentagePointUnits(amountUnits, parsePercentagePoints(rate, rateScale), rateScale);
+}
+
+function calculateInclusiveTaxUnits(grossUnits, rate, rateScale = FINANCIAL_SCALE.percentagePoints) {
+  if (typeof grossUnits !== "bigint") throw new Error("grossUnits must be a BigInt");
+  const rateUnits = parsePercentagePoints(rate, rateScale);
+  if (rateUnits === 0n) return { baseUnits: grossUnits, taxUnits: 0n };
+  const hundred = 100n * powerOfTen(rateScale);
+  const baseUnits = divideAndRoundHalfUp(grossUnits * hundred, hundred + rateUnits);
+  return { baseUnits, taxUnits: grossUnits - baseUnits };
+}
+
 module.exports = {
+  FINANCIAL_SCALE,
+  powerOfTen,
   parseDecimalToBigInt,
+  parseDecimalRoundedToBigInt,
   bigIntToDecimalString,
   multiplyQtyByUnitPriceToMoney,
+  multiplyScaledDecimals,
+  parsePercentagePoints,
+  applyPercentagePointUnits,
+  applyPercentagePoints,
+  calculateInclusiveTaxUnits,
   divideAndRoundHalfUp
 };

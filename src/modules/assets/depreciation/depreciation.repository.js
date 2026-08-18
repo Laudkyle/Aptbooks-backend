@@ -179,10 +179,100 @@ async function deleteScheduleIfNoPostings({ orgId, scheduleId }) {
   return rows[0] || null;
 }
 
+
+async function hasPostings({ orgId, scheduleId, client = pool }) {
+  const { rows } = await client.query(
+    `SELECT 1
+       FROM asset_depreciation_transactions
+      WHERE organization_id=$1 AND schedule_id=$2
+      LIMIT 1`,
+    [orgId, scheduleId]
+  );
+  return rows.length > 0;
+}
+
+async function deleteSchedule({ orgId, scheduleId, client = pool }) {
+  const { rows } = await client.query(
+    `DELETE FROM asset_depreciation_schedules
+      WHERE organization_id=$1 AND id=$2
+      RETURNING id`,
+    [orgId, scheduleId]
+  );
+  return rows[0] || null;
+}
+
+async function getRunByPeriod({ orgId, periodId, client = pool }) {
+  const { rows } = await client.query(
+    `SELECT r.*, p.journal_entry_id
+       FROM asset_depreciation_runs r
+       LEFT JOIN asset_depreciation_run_postings p ON p.depreciation_run_id=r.id
+      WHERE r.organization_id=$1 AND r.period_id=$2`,
+    [orgId, periodId]
+  );
+  return rows[0] || null;
+}
+
+async function createRun({ orgId, periodId, actorUserId, client = pool }) {
+  const { rows } = await client.query(
+    `INSERT INTO asset_depreciation_runs(organization_id, period_id, status, actor_user_id)
+     VALUES ($1,$2,'running',$3)
+     RETURNING *`,
+    [orgId, periodId, actorUserId || null]
+  );
+  return rows[0];
+}
+
+async function markRun({ orgId, runId, status, error = null, client = pool }) {
+  const { rows } = await client.query(
+    `UPDATE asset_depreciation_runs
+        SET status=$3,
+            error=$4,
+            completed_at=CASE WHEN $3='running' THEN NULL ELSE NOW() END
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *`,
+    [orgId, runId, status, error]
+  );
+  return rows[0] || null;
+}
+
+async function linkRunPosting({ runId, journalId, client = pool }) {
+  const { rows } = await client.query(
+    `INSERT INTO asset_depreciation_run_postings(depreciation_run_id, journal_entry_id)
+     VALUES ($1,$2)
+     ON CONFLICT (depreciation_run_id)
+     DO UPDATE SET journal_entry_id=EXCLUDED.journal_entry_id, posted_at=NOW()
+     RETURNING *`,
+    [runId, journalId]
+  );
+  return rows[0];
+}
+
+async function insertDepreciationTransactions({ orgId, periodId, postings, client = pool }) {
+  const inserted = [];
+  for (const posting of postings || []) {
+    const { rows } = await client.query(
+      `INSERT INTO asset_depreciation_transactions(
+         organization_id, asset_id, schedule_id, period_id, amount, entry_type
+       ) VALUES ($1,$2,$3,$4,$5,'depreciation')
+       RETURNING *`,
+      [orgId, posting.assetId, posting.scheduleId, periodId, posting.amount]
+    );
+    inserted.push(rows[0]);
+  }
+  return inserted;
+}
+
 module.exports = {
   createSchedule,
   listSchedules,
   getSchedule,
   updateSchedule,
   deleteScheduleIfNoPostings,
+  hasPostings,
+  deleteSchedule,
+  getRunByPeriod,
+  createRun,
+  markRun,
+  linkRunPosting,
+  insertDepreciationTransactions,
 };

@@ -157,17 +157,6 @@ router.post("/:id/issue", idempotency({ required: true }), requirePermission("tr
 
     const issued = await svc.issueInvoice({ orgId, actorUserId, invoiceId: req.params.id });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "invoice.issued",
-      entityType: "invoices",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: issued
-    });
-
     res.json(issued);
   } catch (e) { next(e); }
 });
@@ -180,17 +169,6 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("tra
 
     const out = await svc.voidInvoice({
       orgId, actorUserId, invoiceId: req.params.id, reason: payload.reason
-    });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "invoice.voided",
-      entityType: "invoices",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
     });
 
     res.json(out);

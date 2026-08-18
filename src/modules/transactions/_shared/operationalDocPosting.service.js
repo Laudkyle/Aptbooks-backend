@@ -2,14 +2,12 @@ const { AppError } = require("../../../shared/errors/AppError");
 const partnerIF = require("../../../interfaces/partnerManagement.interface");
 const periodIF = require("../../../interfaces/periodManagement.interface");
 const journalIF = require("../../../interfaces/journalPosting.interface");
-
-function round2(n) {
-  return Number((Number(n || 0)).toFixed(2));
-}
+const { moneyUnits, moneyStringFromUnits } = require("../../../shared/utils/financialMath");
 
 function amountFromHeaderOrLines(header, lines) {
-  if (header.amount_total != null) return round2(header.amount_total);
-  return round2((lines || []).reduce((sum, line) => sum + Number(line.line_total || 0), 0));
+  if (header.amount_total != null) return moneyStringFromUnits(moneyUnits(header.amount_total));
+  const totalUnits = (lines || []).reduce((sum, line) => sum + moneyUnits(line.line_total || "0"), 0n);
+  return moneyStringFromUnits(totalUnits);
 }
 
 function requireAccountId(accountId, message) {
@@ -23,31 +21,39 @@ function groupBaseAmounts(lines, requireLineAccounts = true) {
     const accountId = line.account_id || line.accountId || null;
     if (requireLineAccounts && !accountId) throw new AppError(400, "All posting lines must have accountId");
     if (!accountId) continue;
-    const baseAmount = round2(line.taxable_amount ?? line.taxableAmount ?? Math.max(Number(line.line_total || 0) - Number(line.tax_amount || line.taxAmount || 0), 0));
-    grouped.set(accountId, round2((grouped.get(accountId) || 0) + baseAmount));
+    const explicitBase = line.taxable_amount ?? line.taxableAmount;
+    let baseUnits;
+    if (explicitBase != null) {
+      baseUnits = moneyUnits(explicitBase);
+    } else {
+      const derived = moneyUnits(line.line_total || "0") - moneyUnits(line.tax_amount || line.taxAmount || "0");
+      baseUnits = derived > 0n ? derived : 0n;
+    }
+    grouped.set(accountId, (grouped.get(accountId) || 0n) + baseUnits);
   }
   return grouped;
 }
 
 function buildGroupedBaseSide({ lines, side, descriptionPrefix, requireLineAccounts = true }) {
-  return Array.from(groupBaseAmounts(lines, requireLineAccounts).entries()).map(([accountId, amount]) => ({
+  return Array.from(groupBaseAmounts(lines, requireLineAccounts).entries()).map(([accountId, amountUnits]) => ({
     accountId,
-    debit: side === "debit" ? amount : 0,
-    credit: side === "credit" ? amount : 0,
+    debit: side === "debit" ? moneyStringFromUnits(amountUnits) : "0.00",
+    credit: side === "credit" ? moneyStringFromUnits(amountUnits) : "0.00",
     description: descriptionPrefix
   }));
 }
 
 function buildTaxLines({ header, lines, side, taxAccountId, descriptionPrefix, requiredAccountMessage }) {
-  const totalTax = round2((lines || []).reduce((sum, line) => sum + Number(line.tax_amount || line.taxAmount || 0), 0));
-  if (!totalTax) return [];
+  const totalTaxUnits = (lines || []).reduce((sum, line) => sum + moneyUnits(line.tax_amount || line.taxAmount || "0"), 0n);
+  if (totalTaxUnits === 0n) return [];
+  const totalTax = moneyStringFromUnits(totalTaxUnits);
   if (!taxAccountId) {
     throw new AppError(409, requiredAccountMessage || "Tax account is not configured");
   }
   return [{
     accountId: taxAccountId,
-    debit: side === "debit" ? totalTax : 0,
-    credit: side === "credit" ? totalTax : 0,
+    debit: side === "debit" ? totalTax : "0.00",
+    credit: side === "credit" ? totalTax : "0.00",
     description: `${descriptionPrefix} tax ${header.document_no}`
   }];
 }
@@ -69,14 +75,14 @@ async function buildReturnLines({ orgId, header, lines, client }) {
     return [
       ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Sales return ${header.document_no}` }),
       ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.output_tax_account_id, descriptionPrefix: "Sales return", requiredAccountMessage: "Output tax account is not configured (tax_settings.output_tax_account_id)" }),
-      { accountId: arAccountId, debit: 0, credit: total, description: `A/R reversal for ${header.document_no}` }
+      { accountId: arAccountId, debit: "0.00", credit: total, description: `A/R reversal for ${header.document_no}` }
     ];
   }
 
   if (type === "purchase_return") {
     const apAccountId = requireAccountId(partner.default_payable_account_id, "Vendor missing defaultPayableAccountId");
     return [
-      { accountId: apAccountId, debit: total, credit: 0, description: `A/P reversal for ${header.document_no}` },
+      { accountId: apAccountId, debit: total, credit: "0.00", description: `A/P reversal for ${header.document_no}` },
       ...buildGroupedBaseSide({ lines, side: "credit", descriptionPrefix: `Purchase return ${header.document_no}` }),
       ...buildTaxLines({ header, lines, side: "credit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Purchase return", requiredAccountMessage: "Input tax account is not configured (tax_settings.input_tax_account_id)" })
     ];
@@ -96,7 +102,7 @@ async function buildPostingLines({ orgId, header, lines, client }) {
       return [
         ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Expense ${header.document_no}` }),
         ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Expense", requiredAccountMessage: "Input tax account is not configured (tax_settings.input_tax_account_id)" }),
-        { accountId: contraAccountId, debit: 0, credit: total, description: `Expense offset for ${header.document_no}` }
+        { accountId: contraAccountId, debit: "0.00", credit: total, description: `Expense offset for ${header.document_no}` }
       ];
     }
     case "petty_cash": {
@@ -104,30 +110,30 @@ async function buildPostingLines({ orgId, header, lines, client }) {
       return [
         ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Petty cash ${header.document_no}` }),
         ...buildTaxLines({ header, lines, side: "debit", taxAccountId: taxSettings?.input_tax_account_id, descriptionPrefix: "Petty cash", requiredAccountMessage: "Input tax account is not configured (tax_settings.input_tax_account_id)" }),
-        { accountId: cashAccountId, debit: 0, credit: total, description: `Petty cash offset for ${header.document_no}` }
+        { accountId: cashAccountId, debit: "0.00", credit: total, description: `Petty cash offset for ${header.document_no}` }
       ];
     }
     case "advance": {
       const advanceAccountId = requireAccountId(header.primary_account_id, "Advance requires primaryAccountId for posting");
       const cashAccountId = requireAccountId(header.cash_account_id, "Advance requires cashAccountId for posting");
       return [
-        { accountId: advanceAccountId, debit: total, credit: 0, description: `Advance ${header.document_no}` },
-        { accountId: cashAccountId, debit: 0, credit: total, description: `Advance cash for ${header.document_no}` }
+        { accountId: advanceAccountId, debit: total, credit: "0.00", description: `Advance ${header.document_no}` },
+        { accountId: cashAccountId, debit: "0.00", credit: total, description: `Advance cash for ${header.document_no}` }
       ];
     }
     case "refund": {
       const settlementAccountId = requireAccountId(header.primary_account_id, "Refund requires primaryAccountId for posting");
       const cashAccountId = requireAccountId(header.cash_account_id, "Refund requires cashAccountId for posting");
       return [
-        { accountId: settlementAccountId, debit: total, credit: 0, description: `Refund settlement for ${header.document_no}` },
-        { accountId: cashAccountId, debit: 0, credit: total, description: `Refund cash for ${header.document_no}` }
+        { accountId: settlementAccountId, debit: total, credit: "0.00", description: `Refund settlement for ${header.document_no}` },
+        { accountId: cashAccountId, debit: "0.00", credit: total, description: `Refund cash for ${header.document_no}` }
       ];
     }
     case "goods_receipt": {
       const clearingAccountId = requireAccountId(header.primary_account_id, "Goods receipt requires primaryAccountId (clearing/accrual account) for posting");
       return [
         ...buildGroupedBaseSide({ lines, side: "debit", descriptionPrefix: `Goods receipt ${header.document_no}` }),
-        { accountId: clearingAccountId, debit: 0, credit: total, description: `Goods receipt clearing for ${header.document_no}` }
+        { accountId: clearingAccountId, debit: "0.00", credit: total, description: `Goods receipt clearing for ${header.document_no}` }
       ];
     }
     default:

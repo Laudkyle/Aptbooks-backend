@@ -1,4 +1,5 @@
 const Decimal = require('decimal.js');
+const logger = require('../../config/logger');
 
 // Configure Decimal.js for financial calculations
 Decimal.set({
@@ -18,7 +19,7 @@ function toDecimal(value, defaultValue = new Decimal(0)) {
   try {
     return new Decimal(value);
   } catch (error) {
-    console.warn(`Failed to convert value to Decimal: ${value}`, error);
+    logger.warn({ err: error?.message, valueType: typeof value }, "Failed to convert value to Decimal");
     return defaultValue;
   }
 }

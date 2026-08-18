@@ -185,8 +185,9 @@ async function deletePaymentMethod({ orgId, id }) {
   return rowCount > 0;
 }
 
-async function getPaymentSettings({ orgId }) {
-  const { rows } = await pool.query(
+async function getPaymentSettings({ orgId, client = null }) {
+  const db = client || pool;
+  const { rows } = await db.query(
     `SELECT * FROM payment_settings WHERE organization_id=$1`,
     [orgId]
   );

@@ -1,4 +1,4 @@
-const { Decimal, AppError, toDecimal, toCurrencyNumber, toISODate, addMonths } = require('./common');
+const { Decimal, AppError, toDecimal, toCurrencyString, toISODate, addMonths } = require('./common');
 
 function calculatePresentValue({ payment, annualDiscountRate, periods, paymentsPerYear = 12, paymentTiming = 'arrears' }) {
   const PMT = toDecimal(payment); const ppy = toDecimal(paymentsPerYear); const r = toDecimal(annualDiscountRate).div(ppy); const n = toDecimal(periods);
@@ -133,12 +133,12 @@ function generateScheduleLines({ lease, measurement, startDate, openingLiability
     lines.push({
       line_no: i,
       due_date: toISODate(dueDate),
-      opening_balance: opening.toDecimalPlaces(6).toNumber(),
-      payment_amount: currentPayment.toDecimalPlaces(6).toNumber(),
-      interest_amount: interest.toDecimalPlaces(6).toNumber(),
-      principal_amount: principal.toDecimalPlaces(6).toNumber(),
-      closing_balance: closing.toDecimalPlaces(6).toNumber(),
-      depreciation_amount: Decimal.max(depreciationForPeriod, 0).toDecimalPlaces(6).toNumber(),
+      opening_balance: opening.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6),
+      payment_amount: currentPayment.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6),
+      interest_amount: interest.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6),
+      principal_amount: principal.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6),
+      closing_balance: closing.toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6),
+      depreciation_amount: Decimal.max(depreciationForPeriod, 0).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toFixed(6),
     });
     opening = closing;
   }
@@ -162,16 +162,16 @@ async function persistMeasurementSnapshot({ client, orgId, actorUserId, leaseId,
        )`,
       [
         orgId, leaseId, modificationId, snapshotType, measurement.effectiveDate,
-        measurement.paymentTiming, Number(payload.term_months || 0), Number(payload.payments_per_year || 0), measurement.annualDiscountRate.toNumber(), measurement.paymentAmount.toNumber(),
-        measurement.leaseLiability.toNumber(), measurement.initialRouAsset.toNumber(), measurement.initialRouAsset.toNumber(), measurement.depreciationMonths,
-        measurement.initialDirectCosts.toNumber(), measurement.leaseIncentives.toNumber(), measurement.restorationProvision.toNumber(), measurement.residualValueGuarantee.toNumber(), measurement.purchaseOptionAmount.toNumber(),
-        measurement.prepaidLeasePayments.toNumber(), measurement.accruedLeasePayments.toNumber(), payload, reason, actorUserId,
+        measurement.paymentTiming, Number(payload.term_months || 0), Number(payload.payments_per_year || 0), measurement.annualDiscountRate.toFixed(6), measurement.paymentAmount.toFixed(6),
+        measurement.leaseLiability.toFixed(6), measurement.initialRouAsset.toFixed(6), measurement.initialRouAsset.toFixed(6), measurement.depreciationMonths,
+        measurement.initialDirectCosts.toFixed(6), measurement.leaseIncentives.toFixed(6), measurement.restorationProvision.toFixed(6), measurement.residualValueGuarantee.toFixed(6), measurement.purchaseOptionAmount.toFixed(6),
+        measurement.prepaidLeasePayments.toFixed(6), measurement.accruedLeasePayments.toFixed(6), payload, reason, actorUserId,
       ]
     );
 }
 
 function journalLine(accountId, debit, credit, memo) {
-  return { accountId, debit: toCurrencyNumber(debit), credit: toCurrencyNumber(credit), memo };
+  return { accountId, debit: toCurrencyString(debit), credit: toCurrencyString(credit), memo };
 }
 
 module.exports = {

@@ -2,6 +2,7 @@
 const express = require("express");
 const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
+const { idempotency } = require("../../middleware/idempotency.middleware");
 const { validate } = require("../../shared/validators/validate");
 
 const svc = require("./ifrs9.service");
@@ -9,6 +10,11 @@ const v = require("./ifrs9.validators");
 
 const router = express.Router();
 router.use(authRequired);
+const requireMutationIdempotency = idempotency({ required: true });
+router.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  return requireMutationIdempotency(req, res, next);
+});
 
 router.get("/settings", requirePermission("compliance.ifrs9.read"), async (req, res, next) => {
   try {

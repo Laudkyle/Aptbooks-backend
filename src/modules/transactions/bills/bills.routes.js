@@ -142,17 +142,6 @@ router.post("/:id/issue", idempotency({ required: true }), requirePermission("tr
 
     const out = await svc.issueBill({ orgId, actorUserId, billId: req.params.id });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "bill.issued",
-      entityType: "bills",
-      entityId: out.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
-
     res.json(out);
   } catch (e) { next(e); }
 });
@@ -164,17 +153,6 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("tra
 
     const body = validate(voidBillSchema, req.body || {});
     const out = await svc.voidBill({ orgId, actorUserId, billId: req.params.id, reason: body.reason });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "bill.voided",
-      entityType: "bills",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
 
     res.json(out);
   } catch (e) { next(e); }

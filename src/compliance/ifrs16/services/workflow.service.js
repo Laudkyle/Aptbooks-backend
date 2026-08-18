@@ -110,7 +110,7 @@ async function applyLeaseModification({ orgId, actorUserId, leaseId, modificatio
         ON CONFLICT (lease_id, due_date, payment_type, is_actual, reference) DO NOTHING`, [leaseId, orgId, inserted[0].due_date, inserted[0].payment_amount, inserted[0].id, actorUserId, `schedule:mod:${line.line_no}`]);
     }
 
-    await client.query(`UPDATE leases SET initial_lease_liability=$3, monthly_depreciation_amount=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, leaseId, newMeasurement.leaseLiability.toNumber(), newMeasurement.periodicDepreciation.toNumber()]);
+    await client.query(`UPDATE leases SET initial_lease_liability=$3, monthly_depreciation_amount=$4, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, leaseId, newMeasurement.leaseLiability.toFixed(6), newMeasurement.periodicDepreciation.toFixed(6)]);
     await client.query(`UPDATE lease_modifications SET status='applied', applied_at=NOW(), applied_by=$4, updated_at=NOW() WHERE organization_id=$1 AND lease_id=$2 AND id=$3`, [orgId, leaseId, modificationId, actorUserId]);
 
     let postedJournal = null;
@@ -132,9 +132,9 @@ async function applyLeaseModification({ orgId, actorUserId, leaseId, modificatio
       await recordLeasePostingLedger({ client, orgId, actorUserId, leaseId, scheduleLineId: null, modificationId, action:'modification', idempotencyKey, journalEntryId: postedJournal.journalId });
     }
     await persistMeasurementSnapshot({ client, orgId, actorUserId, leaseId, modificationId, snapshotType: 'modification', measurement: newMeasurement, reason: modification.reason || null, payload: nextValues });
-    await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'MODIFICATION_APPLIED', payload:{ modification_id: modificationId, journal_id: postedJournal?.journalId || null, previous_liability: remainingLiability.toNumber(), revised_liability: newMeasurement.leaseLiability.toNumber(), delta: delta.toNumber() } });
+    await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'MODIFICATION_APPLIED', payload:{ modification_id: modificationId, journal_id: postedJournal?.journalId || null, previous_liability: remainingLiability.toFixed(6), revised_liability: newMeasurement.leaseLiability.toFixed(6), delta: delta.toFixed(6) } });
     await client.query('COMMIT');
-    return { applied: true, modification_id: modificationId, journal_id: postedJournal?.journalId || null, liability_delta: delta.toNumber() };
+    return { applied: true, modification_id: modificationId, journal_id: postedJournal?.journalId || null, liability_delta: Number(delta.toFixed(6)) };
   } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }
 

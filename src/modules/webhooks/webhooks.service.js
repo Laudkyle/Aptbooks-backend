@@ -220,18 +220,24 @@ async function postJson({ url, body, headers }) {
   }
 }
 
-async function claimPending({ limit }) {
+async function claimPending({ limit, orgId = null }) {
   const client = await pool.connect();
   const claimToken = crypto.randomUUID();
   try {
     await client.query("BEGIN");
+    const params = [limit, claimToken];
+    const orgClause = orgId ? ` AND organization_id=$3` : "";
+    if (orgId) params.push(orgId);
     const { rows: events } = await client.query(
       `
       WITH candidates AS (
         SELECT id
           FROM webhook_outbox
-         WHERE (status='pending' AND next_attempt_at <= NOW())
-            OR (status='processing' AND claimed_at <= NOW() - INTERVAL '30 minutes')
+         WHERE (
+                (status='pending' AND next_attempt_at <= NOW())
+             OR (status='processing' AND claimed_at <= NOW() - INTERVAL '30 minutes')
+               )
+           ${orgClause}
          ORDER BY created_at
          LIMIT $1
          FOR UPDATE SKIP LOCKED
@@ -245,7 +251,7 @@ async function claimPending({ limit }) {
       RETURNING o.id, o.organization_id, o.event_type, o.payload,
                 o.attempts, o.created_at, o.claim_token
       `,
-      [limit, claimToken]
+      params
     );
 
     await client.query("COMMIT");
@@ -258,9 +264,9 @@ async function claimPending({ limit }) {
   }
 }
 
-async function dispatchPending({ limit = 50 }) {
+async function dispatchPending({ limit = 50, orgId = null }) {
   const safeLimit = Math.max(1, Math.min(200, Number.parseInt(limit, 10) || 50));
-  const events = await claimPending({ limit: safeLimit });
+  const events = await claimPending({ limit: safeLimit, orgId });
   const results = [];
 
   for (const evt of events) {

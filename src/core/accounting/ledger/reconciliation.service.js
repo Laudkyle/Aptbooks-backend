@@ -2,6 +2,7 @@ const { pool } = require("../../../db/pool");
 const { withTransaction } = require("../../../db/tx");
 const { AppError } = require("../../../shared/errors/AppError");
 const { writeAudit } = require("../../foundation/audit-logs/audit.service");
+const { moneyUnits, moneyStringFromUnits, moneyNumber, absUnits } = require("../../../shared/utils/financialMath");
 
 const POLICY_KEY = "accounting.reconciliation.policy";
 const DEFAULT_POLICY = {
@@ -13,15 +14,11 @@ const DEFAULT_POLICY = {
     REVENUE: 0.01,
     EXPENSE: 0.01,
   },
-  exactMatchTolerance: 0.005,
+  exactMatchTolerance: 0,
 };
 
 function num(v) {
   return Number(v || 0);
-}
-
-function toFixedNumber(v) {
-  return Number(num(v).toFixed(2));
 }
 
 function normalisedTypeCode(code) {
@@ -109,11 +106,13 @@ async function upsertPolicy({ orgId, actorUserId, body, audit = {} }) {
   return next;
 }
 
-function calculateBalance({ debit, credit, normalBalance }) {
+function calculateBalanceUnits({ debit, credit, normalBalance }) {
+  const debitCents = typeof debit === "bigint" ? debit : moneyUnits(debit || "0");
+  const creditCents = typeof credit === "bigint" ? credit : moneyUnits(credit || "0");
   if (String(normalBalance || "debit").toLowerCase() === "credit") {
-    return num(credit) - num(debit);
+    return creditCents - debitCents;
   }
-  return num(debit) - num(credit);
+  return debitCents - creditCents;
 }
 
 async function buildReconciliationData({ orgId, periodId, onlyMismatches = false, client = pool }) {
@@ -181,7 +180,7 @@ async function buildReconciliationData({ orgId, periodId, onlyMismatches = false
   const diffs = [];
   let exactMismatchCount = 0;
   let mismatchCount = 0;
-  let totalVariance = 0;
+  let totalVarianceCents = 0n;
   let correctableAccounts = 0;
 
   for (const id of allAccountIds) {
@@ -197,28 +196,42 @@ async function buildReconciliationData({ orgId, periodId, onlyMismatches = false
       status: null,
     };
 
-    const glDebit = num(a.debit_total);
-    const glCredit = num(a.credit_total);
-    const recomputedDebit = num(b.debit_total);
-    const recomputedCredit = num(b.credit_total);
-    const diffDebit = toFixedNumber(glDebit - recomputedDebit);
-    const diffCredit = toFixedNumber(glCredit - recomputedCredit);
+    const glDebitCents = moneyUnits(a.debit_total || "0");
+    const glCreditCents = moneyUnits(a.credit_total || "0");
+    const recomputedDebitCents = moneyUnits(b.debit_total || "0");
+    const recomputedCreditCents = moneyUnits(b.credit_total || "0");
+    const diffDebitCents = glDebitCents - recomputedDebitCents;
+    const diffCreditCents = glCreditCents - recomputedCreditCents;
 
-    const glBalance = toFixedNumber(calculateBalance({ debit: glDebit, credit: glCredit, normalBalance: acc.normal_balance }));
-    const recomputedBalance = toFixedNumber(calculateBalance({ debit: recomputedDebit, credit: recomputedCredit, normalBalance: acc.normal_balance }));
-    const balanceDifference = toFixedNumber(glBalance - recomputedBalance);
-    const absoluteVariance = toFixedNumber(Math.abs(balanceDifference));
+    const glBalanceCents = calculateBalanceUnits({ debit: glDebitCents, credit: glCreditCents, normalBalance: acc.normal_balance });
+    const recomputedBalanceCents = calculateBalanceUnits({ debit: recomputedDebitCents, credit: recomputedCreditCents, normalBalance: acc.normal_balance });
+    const balanceDifferenceCents = glBalanceCents - recomputedBalanceCents;
+    const absoluteVarianceCents = absUnits(balanceDifferenceCents);
 
     const accountTypeCode = normalisedTypeCode(acc.account_type_code);
-    const materialityThreshold = num(policy.thresholdsByAccountType?.[accountTypeCode] ?? policy.defaultThreshold);
-    const technicalMatch = Math.abs(diffDebit) <= policy.exactMatchTolerance && Math.abs(diffCredit) <= policy.exactMatchTolerance;
-    const isMatch = absoluteVariance <= materialityThreshold && technicalMatch;
-    const isCorrectable = !technicalMatch && absoluteVariance <= materialityThreshold;
+    const materialityThreshold = policy.thresholdsByAccountType?.[accountTypeCode] ?? policy.defaultThreshold;
+    const materialityThresholdCents = moneyUnits(materialityThreshold || "0");
+    // Canonical ledger amounts have a two-decimal boundary, so an exact match is
+    // exact minor-unit equality. Floating tolerances are neither needed nor safe.
+    const technicalMatch = diffDebitCents === 0n && diffCreditCents === 0n;
+    const isMatch = technicalMatch;
+    const isCorrectable = !technicalMatch && absoluteVarianceCents <= materialityThresholdCents;
 
     if (!technicalMatch) exactMismatchCount += 1;
     if (!isMatch) mismatchCount += 1;
-    if (absoluteVariance > 0) totalVariance += absoluteVariance;
+    if (absoluteVarianceCents > 0n) totalVarianceCents += absoluteVarianceCents;
     if (isCorrectable) correctableAccounts += 1;
+
+    const glDebit = moneyNumber(moneyStringFromUnits(glDebitCents));
+    const glCredit = moneyNumber(moneyStringFromUnits(glCreditCents));
+    const recomputedDebit = moneyNumber(moneyStringFromUnits(recomputedDebitCents));
+    const recomputedCredit = moneyNumber(moneyStringFromUnits(recomputedCreditCents));
+    const diffDebit = moneyNumber(moneyStringFromUnits(diffDebitCents));
+    const diffCredit = moneyNumber(moneyStringFromUnits(diffCreditCents));
+    const glBalance = moneyNumber(moneyStringFromUnits(glBalanceCents));
+    const recomputedBalance = moneyNumber(moneyStringFromUnits(recomputedBalanceCents));
+    const balanceDifference = moneyNumber(moneyStringFromUnits(balanceDifferenceCents));
+    const absoluteVariance = moneyNumber(moneyStringFromUnits(absoluteVarianceCents));
 
     diffs.push({
       accountId: id,
@@ -272,7 +285,7 @@ async function buildReconciliationData({ orgId, periodId, onlyMismatches = false
       mismatches: mismatchCount,
       exactMismatches: exactMismatchCount,
       correctableAccounts,
-      totalVariance: toFixedNumber(totalVariance),
+      totalVariance: moneyNumber(moneyStringFromUnits(totalVarianceCents)),
     },
     diffs: filteredDiffs,
   };
@@ -290,7 +303,7 @@ async function saveHistory({ orgId, actorUserId, periodId, actionType, status, s
       status,
       Number(summary.accountsCompared || 0),
       Number(summary.mismatches || 0),
-      num(summary.totalVariance || 0),
+      moneyStringFromUnits(moneyUnits(summary.totalVariance || "0")),
       JSON.stringify(thresholdJson || {}),
       JSON.stringify(summary || {}),
       JSON.stringify(metaJson || {}),
@@ -348,15 +361,19 @@ async function getDiscrepancyDetails({ orgId, periodId, accountId }) {
     [orgId, periodId, accountId]
   );
 
-  let runningBalance = 0;
+  let runningBalanceCents = 0n;
   const transactions = txns.rows.map((txn) => {
-    const type = num(txn.debit) > 0 ? "debit" : "credit";
-    const amount = num(txn.amount_base || (type === "debit" ? txn.debit : txn.credit));
-    runningBalance = toFixedNumber(runningBalance + calculateBalance({
-      debit: type === "debit" ? amount : 0,
-      credit: type === "credit" ? amount : 0,
+    const debitCents = moneyUnits(txn.debit || "0");
+    const creditCents = moneyUnits(txn.credit || "0");
+    const type = debitCents > 0n ? "debit" : "credit";
+    const amountCents = moneyUnits(txn.amount_base || (type === "debit" ? txn.debit : txn.credit) || "0");
+    runningBalanceCents += calculateBalanceUnits({
+      debit: type === "debit" ? amountCents : 0n,
+      credit: type === "credit" ? amountCents : 0n,
       normalBalance: row.normalBalance,
-    }));
+    });
+    const amount = moneyNumber(moneyStringFromUnits(amountCents));
+    const runningBalance = moneyNumber(moneyStringFromUnits(runningBalanceCents));
     return {
       lineId: txn.line_id,
       journalEntryId: txn.journal_entry_id,
@@ -403,11 +420,12 @@ async function getDiscrepancyDetails({ orgId, periodId, accountId }) {
 async function autoCorrect({ orgId, actorUserId, periodId, threshold, dryRun = true, audit = {} }) {
   if (!periodId) throw new AppError(400, "periodId is required");
   const data = await buildReconciliationData({ orgId, periodId, onlyMismatches: false });
-  const effectiveThreshold = threshold == null ? data.policy.defaultThreshold : num(threshold);
-  if (effectiveThreshold < 0) throw new AppError(400, "threshold must be zero or greater");
+  const effectiveThreshold = threshold == null ? data.policy.defaultThreshold : threshold;
+  const effectiveThresholdCents = moneyUnits(effectiveThreshold || "0");
+  if (effectiveThresholdCents < 0n) throw new AppError(400, "threshold must be zero or greater");
 
   const corrections = data.diffs
-    .filter((d) => !d.technicalMatch && d.absoluteVariance <= effectiveThreshold)
+    .filter((d) => !d.technicalMatch && moneyUnits(d.absoluteVariance || "0") <= effectiveThresholdCents)
     .map((d) => ({
       accountId: d.accountId,
       accountCode: d.accountCode,
@@ -422,11 +440,11 @@ async function autoCorrect({ orgId, actorUserId, periodId, threshold, dryRun = t
   const result = {
     dryRun,
     periodId,
-    threshold: effectiveThreshold,
+    threshold: moneyNumber(moneyStringFromUnits(effectiveThresholdCents)),
     summary: {
       totalMismatches: data.summary.exactMismatches,
       correctableAccounts: corrections.length,
-      totalVarianceCorrected: toFixedNumber(corrections.reduce((s, r) => s + Math.abs(num(r.variance)), 0)),
+      totalVarianceCorrected: moneyNumber(moneyStringFromUnits(corrections.reduce((sum, row) => sum + absUnits(moneyUnits(row.variance || "0")), 0n))),
     },
     corrections,
   };
@@ -443,7 +461,7 @@ async function autoCorrect({ orgId, actorUserId, periodId, threshold, dryRun = t
         mismatches: data.summary.mismatches,
         totalVariance: result.summary.totalVarianceCorrected,
       },
-      thresholdJson: { threshold: effectiveThreshold },
+      thresholdJson: { threshold: moneyNumber(moneyStringFromUnits(effectiveThresholdCents)) },
       metaJson: { corrections },
     });
     return result;
@@ -473,7 +491,7 @@ async function autoCorrect({ orgId, actorUserId, periodId, threshold, dryRun = t
         mismatches: Math.max(data.summary.mismatches - corrections.length, 0),
         totalVariance: result.summary.totalVarianceCorrected,
       },
-      thresholdJson: { threshold: effectiveThreshold },
+      thresholdJson: { threshold: moneyNumber(moneyStringFromUnits(effectiveThresholdCents)) },
       metaJson: { corrections },
       client,
     });

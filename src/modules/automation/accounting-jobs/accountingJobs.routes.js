@@ -1,18 +1,13 @@
 const router = require('express').Router();
-const { requirePermission } = require('../../../middleware/permission.middleware');
-const svc = require('./accountingJobs.service');
+const { AppError } = require('../../../shared/errors/AppError');
 
-router.get('/', requirePermission('automation.jobs.read'), async (req, res, next) => {
-  try { res.json(await svc.listTasks()); } catch (e) { next(e); }
-});
-router.get('/:code/runs', requirePermission('automation.jobs.read'), async (req, res, next) => {
-  try { res.json(await svc.listRuns(req.params.code, req.query.limit)); } catch (e) { next(e); }
-});
-router.post('/:code/run', requirePermission('automation.jobs.run'), async (req, res, next) => {
-  try { res.json(await svc.runNow(req.params.code, req.user.id)); } catch (e) { next(e); }
-});
-router.post('/:code/toggle', requirePermission('automation.jobs.manage'), async (req, res, next) => {
-  try { res.json(await svc.toggle(req.params.code, req.body?.isEnabled)); } catch (e) { next(e); }
+// These endpoints expose the same global scheduled_tasks control plane as
+// /utilities/scheduled-tasks. Tenant RBAC is not an adequate authorization
+// boundary for jobs that may iterate across all organizations. The parent
+// automation router already requires authentication; all tenant HTTP access is
+// denied here until AptBooks has a separately authenticated platform operator.
+router.use((_req, _res, next) => {
+  next(new AppError(403, 'Accounting job administration is internal-only.'));
 });
 
 module.exports = router;

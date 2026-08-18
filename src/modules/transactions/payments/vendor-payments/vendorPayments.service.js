@@ -12,8 +12,18 @@ const {
   parseDecimalToBigInt,
   bigIntToDecimalString
 } = require("../../../../shared/utils/money");
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  normalizeMoney,
+  addMoney,
+  applyFractionToMoneyUnits,
+  minUnits,
+  moneyNumber,
+} = require("../../../../shared/utils/financialMath");
 const { buildDetailMeta, round2 } = require("../../_shared/detailEnrichment");
 const ghWithholdingSvc = require("../../../../core/accounting/tax/ghanaWithholding.service");
+const { writeAudit } = require("../../../../core/foundation/audit-logs/audit.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -53,7 +63,7 @@ async function getBillOutstanding(orgId, billId, client = null) {
     [orgId, billId]
   );
   if (!rows.length) return null;
-  return Number(rows[0].outstanding || 0);
+  return normalizeMoney(rows[0].outstanding || "0");
 }
 
 async function getPaymentTerm({ orgId, paymentTermsId, client = null }) {
@@ -67,24 +77,25 @@ async function getPaymentTerm({ orgId, paymentTermsId, client = null }) {
 }
 
 function computeEarlyPaymentDiscount({ outstanding, cashApplied, term, paymentDate, billDate }) {
-  if (!term) return 0;
-  if (term.discount_days == null || term.discount_rate == null) return 0;
-  const rate = Number(term.discount_rate || 0);
-  if (!rate || rate <= 0) return 0;
+  if (!term || term.discount_days == null || term.discount_rate == null) return "0.00";
+
+  const outstandingCents = moneyUnits(outstanding);
+  const cashAppliedCents = moneyUnits(cashApplied);
+  const maxDiscountCents = applyFractionToMoneyUnits(outstandingCents, term.discount_rate || "0");
+  if (maxDiscountCents <= 0n) return "0.00";
 
   const billDt = new Date(billDate);
   const cutoff = new Date(billDt);
   cutoff.setDate(cutoff.getDate() + Number(term.discount_days));
   const pdt = new Date(paymentDate);
-  if (pdt.getTime() > cutoff.getTime()) return 0;
+  if (pdt.getTime() > cutoff.getTime()) return "0.00";
 
-  const maxDiscount = Number((outstanding * rate).toFixed(2));
-  const requiredCash = Number((outstanding - maxDiscount).toFixed(2));
-  if (cashApplied + 1e-9 < requiredCash) return 0;
+  const requiredCashCents = outstandingCents - maxDiscountCents;
+  if (cashAppliedCents < requiredCashCents) return "0.00";
 
-  const raw = Number((outstanding - cashApplied).toFixed(2));
-  if (raw <= 0) return 0;
-  return Number(Math.min(maxDiscount, raw).toFixed(2));
+  const rawDiscountCents = outstandingCents - cashAppliedCents;
+  if (rawDiscountCents <= 0n) return "0.00";
+  return moneyStringFromUnits(minUnits(maxDiscountCents, rawDiscountCents));
 }
 
 async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
@@ -178,31 +189,34 @@ async function autoAllocateVendorPayment({ orgId, actorUserId, id, rule }) {
     [orgId, vp.vendor_id]
   );
 
-  let remaining = Number(vp.amount_total || 0);
+  let remainingCents = moneyUnits(vp.amount_total || "0");
   const proposed = [];
 
   for (const r of rows) {
-    if (remaining <= 0) break;
-    const outstanding = Number(r.outstanding || 0);
-    if (outstanding <= 0) continue;
+    if (remainingCents <= 0n) break;
+    const outstandingCents = moneyUnits(r.outstanding || "0");
+    if (outstandingCents <= 0n) continue;
 
-    // Try discount settlement first (if eligible)
     if (term && term.discount_days != null && term.discount_rate != null) {
-      const rate = Number(term.discount_rate || 0);
-      if (rate > 0) {
-        const maxD = Number((outstanding * rate).toFixed(2));
-        const requiredCash = Number((outstanding - maxD).toFixed(2));
-        if (remaining + 1e-9 >= requiredCash) {
-          proposed.push({ billId: r.bill_id, amountApplied: Number(requiredCash.toFixed(2)), discountTaken: Number(maxD.toFixed(2)) });
-          remaining = Number((remaining - requiredCash).toFixed(2));
-          continue;
-        }
+      const maxDiscountCents = applyFractionToMoneyUnits(outstandingCents, term.discount_rate || "0");
+      const requiredCashCents = outstandingCents - maxDiscountCents;
+      const discount = computeEarlyPaymentDiscount({
+        outstanding: moneyStringFromUnits(outstandingCents),
+        cashApplied: moneyStringFromUnits(requiredCashCents),
+        term,
+        paymentDate: vp.payment_date,
+        billDate: r.bill_date
+      });
+      if (moneyUnits(discount) > 0n && remainingCents >= requiredCashCents) {
+        proposed.push({ billId: r.bill_id, amountApplied: moneyStringFromUnits(requiredCashCents), discountTaken: discount });
+        remainingCents -= requiredCashCents;
+        continue;
       }
     }
 
-    const cash = Math.min(remaining, outstanding);
-    proposed.push({ billId: r.bill_id, amountApplied: Number(cash.toFixed(2)), discountTaken: 0 });
-    remaining = Number((remaining - cash).toFixed(2));
+    const cashCents = minUnits(remainingCents, outstandingCents);
+    proposed.push({ billId: r.bill_id, amountApplied: moneyStringFromUnits(cashCents), discountTaken: "0.00" });
+    remainingCents -= cashCents;
   }
 
   const client = await pool.connect();
@@ -248,9 +262,9 @@ async function reallocateVendorPayment({ orgId, actorUserId, id, allocations }) 
   }
 
   if (isPosted) {
-    const expectedCash = Number((Number(vp.amount_total || 0) - Number(vp.unapplied_amount || 0)).toFixed(2));
-    const sumCash = Number((allocations || []).reduce((s, a) => s + Number(a.amountApplied || 0), 0).toFixed(2));
-    if (Math.abs(sumCash - expectedCash) > 1e-6) {
+    const expectedCashCents = moneyUnits(vp.amount_total || "0") - moneyUnits(vp.unapplied_amount || "0");
+    const sumCashCents = (allocations || []).reduce((sum, allocation) => sum + moneyUnits(allocation.amountApplied || "0"), 0n);
+    if (sumCashCents !== expectedCashCents) {
       throw new AppError(409, "Posted payment reallocation must preserve applied cash amount");
     }
   }
@@ -268,10 +282,11 @@ async function reallocateVendorPayment({ orgId, actorUserId, id, allocations }) 
     if (bill.status !== "issued" && bill.status !== "paid") throw new AppError(409, "Can only allocate to issued/paid bills");
 
     const outstanding = await getBillOutstanding(orgId, a.billId);
-    const cashApplied = Number(a.amountApplied || 0);
+    const cashAppliedCents = moneyUnits(a.amountApplied || "0");
     if (outstanding === null) throw new AppError(400, `Invalid billId: ${a.billId}`);
-    if (cashApplied <= 0) throw new AppError(400, "Allocation amountApplied must be > 0");
-    if (cashApplied - 1e-9 > outstanding) throw new AppError(409, "Allocation exceeds bill outstanding");
+    if (cashAppliedCents <= 0n) throw new AppError(400, "Allocation amountApplied must be > 0");
+    if (cashAppliedCents > moneyUnits(outstanding)) throw new AppError(409, "Allocation exceeds bill outstanding");
+    const cashApplied = moneyStringFromUnits(cashAppliedCents);
 
     const discount = computeEarlyPaymentDiscount({
       outstanding,
@@ -281,13 +296,13 @@ async function reallocateVendorPayment({ orgId, actorUserId, id, allocations }) 
       billDate: bill.bill_date
     });
 
-    const settlement = Number((cashApplied + discount).toFixed(2));
-    if (settlement - 1e-9 > outstanding) {
+    const settlementCents = cashAppliedCents + moneyUnits(discount);
+    if (settlementCents > moneyUnits(outstanding)) {
       throw new AppError(409, "Allocation (cash+discount) exceeds bill outstanding");
     }
 
     proposed.push({ billId: a.billId, amountApplied: cashApplied, discountTaken: discount });
-    sumCashCents += parseDecimalToBigInt(cashApplied, 2);
+    sumCashCents += cashAppliedCents;
   }
 
   const amountTotalCents = parseDecimalToBigInt(vp.amount_total, 2);
@@ -348,7 +363,7 @@ async function getVendorPaymentDetails({ orgId, id, currentUserId }) {
       display_amounts: {
         amount_applied: round2(allocation.amount_applied || 0),
         discount_taken: round2(allocation.discount_taken || 0),
-        settled_total: round2(Number(allocation.amount_applied || 0) + Number(allocation.discount_taken || 0)),
+        settled_total: moneyNumber(addMoney(allocation.amount_applied || "0", allocation.discount_taken || "0")),
       }
     };
   });
@@ -358,8 +373,8 @@ async function getVendorPaymentDetails({ orgId, id, currentUserId }) {
     detail_meta: buildDetailMeta({ header: vp, lines: [], extra: { outstanding: vp.unapplied_amount ?? 0 } }),
     allocation_summary: {
       allocation_count: enrichedAllocations.length,
-      applied_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.amount_applied || 0), 0)),
-      discount_total: round2(enrichedAllocations.reduce((sum, item) => sum + Number(item.discount_taken || 0), 0)),
+      applied_total: moneyNumber(moneyStringFromUnits(enrichedAllocations.reduce((sum, item) => sum + moneyUnits(item.amount_applied || "0"), 0n))),
+      discount_total: moneyNumber(moneyStringFromUnits(enrichedAllocations.reduce((sum, item) => sum + moneyUnits(item.discount_taken || "0"), 0n))),
       unapplied_amount: round2(vp.unapplied_amount || 0),
     }
   };
@@ -514,7 +529,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
     await assertPostableActiveAccount({ orgId, accountId: vp.cash_account_id, errMsg: "Invalid cashAccountId", client });
 
     const term = await getPaymentTerm({ orgId, paymentTermsId: vendor.payment_terms_id, client });
-    const settings = await paymentIF.getPaymentSettings({ orgId });
+    const settings = await paymentIF.getPaymentSettings({ orgId, client });
 
     // Re-validate allocations at post-time (race safety), compute discounts
     let cashAppliedCents = 0n;
@@ -529,9 +544,10 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
       if (bill.status === "voided") throw new AppError(409, "Cannot allocate to voided bill");
 
       const outstanding = await getBillOutstanding(orgId, a.bill_id, client);
-      const cashApplied = Number(a.amount_applied || 0);
-      if (cashApplied <= 0) throw new AppError(400, "Allocation amount_applied must be > 0");
-      if (cashApplied - 1e-9 > outstanding) throw new AppError(409, "Allocation exceeds bill outstanding");
+      const cashAppliedCentsCurrent = moneyUnits(a.amount_applied || "0");
+      if (cashAppliedCentsCurrent <= 0n) throw new AppError(400, "Allocation amount_applied must be > 0");
+      if (cashAppliedCentsCurrent > moneyUnits(outstanding)) throw new AppError(409, "Allocation exceeds bill outstanding");
+      const cashApplied = moneyStringFromUnits(cashAppliedCentsCurrent);
 
       const discount = computeEarlyPaymentDiscount({
         outstanding,
@@ -549,7 +565,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
         client,
       });
       const whvatCents = parseDecimalToBigInt(whvat.withheldAmount || '0', 2);
-      const settlementCurrentCents = parseDecimalToBigInt(cashApplied, 2) + parseDecimalToBigInt(discount, 2) + whvatCents;
+      const settlementCurrentCents = cashAppliedCentsCurrent + moneyUnits(discount) + whvatCents;
       const outstandingCents = parseDecimalToBigInt(outstanding, 2);
       if (settlementCurrentCents > outstandingCents) throw new AppError(409, "Allocation (cash + discount + VAT withholding) exceeds bill outstanding");
 
@@ -557,11 +573,11 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
         `UPDATE vendor_payment_allocations
             SET discount_taken=$3,vat_withholding_basis=$4,vat_withholding_applied=$5
           WHERE vendor_payment_id=$1 AND bill_id=$2`,
-        [id, a.bill_id, discount.toFixed(2), whvat.taxableBasis || '0.00', whvat.withheldAmount || '0.00']
+        [id, a.bill_id, discount, whvat.taxableBasis || '0.00', whvat.withheldAmount || '0.00']
       );
 
-      cashAppliedCents += parseDecimalToBigInt(cashApplied, 2);
-      discountCents += parseDecimalToBigInt(discount, 2);
+      cashAppliedCents += cashAppliedCentsCurrent;
+      discountCents += moneyUnits(discount);
       vatWithholdingCents += whvatCents;
       settlementCents += settlementCurrentCents;
     }
@@ -682,7 +698,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
     // Update each bill status to paid if fully settled (based on all posted allocations)
     for (const a of allocations) {
       const outstandingAfter = await getBillOutstanding(orgId, a.bill_id, client);
-      if (outstandingAfter !== null && outstandingAfter <= 0) {
+      if (outstandingAfter !== null && moneyUnits(outstandingAfter) <= 0n) {
         await client.query(
           `
           UPDATE bills
@@ -694,7 +710,18 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
       }
     }
 
-    return updatedVP[0];
+    const postedPayment = updatedVP[0];
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "vendor_payment.posted",
+      entityType: "vendor_payments",
+      entityId: id,
+      after: postedPayment,
+      client
+    });
+
+    return postedPayment;
   });
 }
 
@@ -743,7 +770,7 @@ async function voidVendorPayment({ orgId, actorUserId, id, reason }) {
 
     for (const r of affectedBills) {
       const outstanding = await getBillOutstanding(orgId, r.bill_id, client);
-      if (outstanding !== null && outstanding > 0) {
+      if (outstanding !== null && moneyUnits(outstanding) > 0n) {
         await client.query(
           `
           UPDATE bills
@@ -755,7 +782,18 @@ async function voidVendorPayment({ orgId, actorUserId, id, reason }) {
       }
     }
 
-    return { vendorPayment: rows[0], reversalJournalId: out.reversalJournalId };
+    const result = { vendorPayment: rows[0], reversalJournalId: out.reversalJournalId };
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "vendor_payment.voided",
+      entityType: "vendor_payments",
+      entityId: id,
+      after: result,
+      client
+    });
+
+    return result;
   });
 }
 

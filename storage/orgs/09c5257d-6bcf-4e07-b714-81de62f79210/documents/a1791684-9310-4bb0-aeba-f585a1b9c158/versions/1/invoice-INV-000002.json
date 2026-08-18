@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "865a7b2c-9dcc-4b76-98a4-3d4f3b7f1e3e",
+  "snapshot_at": "2026-08-16T21:34:02.183Z",
+  "header": {
+    "id": "865a7b2c-9dcc-4b76-98a4-3d4f3b7f1e3e",
+    "organization_id": "09c5257d-6bcf-4e07-b714-81de62f79210",
+    "customer_id": "eb65258c-d937-4cd2-9bee-209ec281d81e",
+    "invoice_no": "INV-000002",
+    "invoice_date": "2026-08-16T00:00:00.000Z",
+    "due_date": "2026-08-16T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": null,
+    "subtotal": "4334.00",
+    "total": "4334.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "c07e9a49-781d-483f-b26f-9436d1dcacf8",
+    "created_at": "2026-08-16T21:33:47.278Z",
+    "updated_at": "2026-08-16T21:33:47.278Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "4334.00"
+  },
+  "lines": [
+    {
+      "id": "0f22b4d1-bafc-43a1-9893-8b10d8cf38b7",
+      "invoice_id": "865a7b2c-9dcc-4b76-98a4-3d4f3b7f1e3e",
+      "line_no": 1,
+      "description": "fdsgds",
+      "quantity": "1.0000",
+      "unit_price": "4334.00",
+      "line_total": "4334.00",
+      "revenue_account_id": "c39a40c2-42ef-4964-bd38-990c8e0dfee8",
+      "created_at": "2026-08-16T21:33:47.278Z",
+      "tax_code_id": "004a049d-5f2e-4947-8e77-7ecefea20a02",
+      "tax_amount": "0.00",
+      "taxable_amount": "4334.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "eb65258c-d937-4cd2-9bee-209ec281d81e",
+          "supplyType": "goods",
+          "partnerType": "customer",
+          "documentDate": "2026-08-16",
+          "documentType": "invoice",
+          "jurisdictionId": "cf5bd19b-c9db-49fa-af83-1ea708db05de",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": "ZERO_RATED",
+            "taxCode": "GH_VAT_ZERO_0",
+            "taxType": "VAT",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "goods",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "zero_rated",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "004a049d-5f2e-4947-8e77-7ecefea20a02",
+            "taxCodeName": "VAT Zero-rated Supply 0%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": true,
+            "taxableAmount": "4334.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "004a049d-5f2e-4947-8e77-7ecefea20a02",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "004a049d-5f2e-4947-8e77-7ecefea20a02",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": "gfsd"
+          },
+          {
+            "rate": "0.000000",
+            "boxCode": "WHVAT_PAYABLE",
+            "taxCode": "GH_WHVAT_7",
+            "taxType": "WITHHOLDING",
+            "metadata": {
+              "overlay": "withholding",
+              "installedFromPack": "GH-TAX-2026-COMPLETE",
+              "partnerTaxProfileId": "bf325c59-5422-4687-9c3b-932448eb417e"
+            },
+            "taxScope": "withholding",
+            "direction": "withholding",
+            "taxAmount": "0.00",
+            "taxCodeId": "e0866cc2-02ab-49ea-a357-fa0d2fd07409",
+            "taxCodeName": "Ghana VAT Withholding 7%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "4334.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "e0866cc2-02ab-49ea-a357-fa0d2fd07409",
+            "postingAccountId": null,
+            "calculationMethod": "withholding",
+            "selectedTaxCodeId": "e0866cc2-02ab-49ea-a357-fa0d2fd07409",
+            "recoverablePercent": "0",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "4334.00",
+        "classification": {
+          "supplyType": "goods",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "004a049d-5f2e-4947-8e77-7ecefea20a02",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "4334.00",
+    "total": "4334.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

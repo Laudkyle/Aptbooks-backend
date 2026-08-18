@@ -10,8 +10,9 @@ function toDecimal(value, defaultValue = new Decimal(0)) {
   if (value === null || value === undefined || value === '') return defaultValue;
   try { return new Decimal(value); } catch { return defaultValue; }
 }
-function roundCurrency(value, decimals = 2) { return toDecimal(value).toDecimalPlaces(decimals, Decimal.ROUND_HALF_EVEN); }
+function roundCurrency(value, decimals = 2) { return toDecimal(value).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP); }
 function toCurrencyNumber(value, decimals = 2) { return roundCurrency(value, decimals).toNumber(); }
+function toCurrencyString(value, decimals = 2) { return toDecimal(value).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP).toFixed(decimals); }
 function toISODate(d) { return workflow.toISODate(d); }
 function buildIfrs16IdempotencyKey(parts) { return workflow.buildIfrs16IdempotencyKey(parts); }
 function addMonths(date, months) {
@@ -87,6 +88,6 @@ async function getLeaseSnapshot({ orgId, leaseId, client = pool }) {
 
 module.exports = {
   pool, AppError, Decimal, workflow,
-  toDecimal, roundCurrency, toCurrencyNumber, toISODate, buildIfrs16IdempotencyKey, addMonths, assertLeaseStatusAllowed,
+  toDecimal, roundCurrency, toCurrencyNumber, toCurrencyString, toISODate, buildIfrs16IdempotencyKey, addMonths, assertLeaseStatusAllowed,
   recordLeasePostingLedger, recordLeaseEvent, assertPostableAccount, getValidCurrencyCode, getLeaseBase, getLeaseSnapshot,
 };

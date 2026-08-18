@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const {
@@ -13,6 +14,11 @@ const { writeAudit } = require("../../foundation/audit-logs/audit.service");
 const { AppError } = require("../../../shared/errors/AppError");
 
 router.use(authRequired);
+const requireMutationIdempotency = idempotency({ required: true });
+router.use((req, res, next) => {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
+  return requireMutationIdempotency(req, res, next);
+});
 
 // Create accrual rule
 router.post("/", requirePermission("accounting.accruals.manage"), async (req, res, next) => {

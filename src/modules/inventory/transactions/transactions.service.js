@@ -4,10 +4,20 @@ const repo = require("./transactions.repository");
 const { getSetting, upsertSetting } = require("../inventory.settings.repository");
 const { createDraftJournal, postDraftJournal } = require("../../../interfaces/journalPosting.interface");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
-
-function round6(n) {
-  return Math.round((Number(n) + Number.EPSILON) * 1e6) / 1e6;
-}
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  quantityUnits,
+  quantityString,
+  unitCostString,
+  unitCostUnits,
+  inventoryValueString,
+  multiplyQuantityByUnitCost,
+  weightedAverageUnitCost,
+  weightedAverageUnitCostFromValue,
+  unitCostFromExtendedValue,
+  inventoryValueToJournalMoney,
+} = require("../../../shared/utils/financialMath");
 
 function getInventoryTxnEntityType(txnType) {
   if (txnType === "receipt") return "stock_receive";
@@ -44,14 +54,19 @@ async function assertPeriodOpen(client, orgId, periodId, txnDate) {
 
 function aggregateJournalLines(lines) {
   const map = new Map();
-  for (const l of lines) {
-    const key = String(l.accountId);
-    const prev = map.get(key) || { accountId: l.accountId, debit: 0, credit: 0, memo: l.memo };
-    prev.debit += Number(l.debit || 0);
-    prev.credit += Number(l.credit || 0);
-    map.set(key, prev);
+  for (const line of lines) {
+    const key = String(line.accountId);
+    const previous = map.get(key) || { accountId: line.accountId, debitCents: 0n, creditCents: 0n, memo: line.memo };
+    previous.debitCents += moneyUnits(line.debit || "0");
+    previous.creditCents += moneyUnits(line.credit || "0");
+    map.set(key, previous);
   }
-  return Array.from(map.values()).map((x) => ({ ...x, debit: round6(x.debit), credit: round6(x.credit) }));
+  return Array.from(map.values()).map((line) => ({
+    accountId: line.accountId,
+    debit: moneyStringFromUnits(line.debitCents),
+    credit: moneyStringFromUnits(line.creditCents),
+    memo: line.memo,
+  }));
 }
 
 async function buildTransactionSnapshot({ orgId, transactionId, client = null }) {
@@ -137,15 +152,15 @@ async function createDraftTransaction({ orgId, actorUserId, payload }) {
 
     for (const l of lines) {
       if (!l.itemId || l.quantity == null) throw new AppError(400, "Each line requires itemId and quantity");
-      if (Number(l.quantity) <= 0) throw new AppError(400, "quantity must be > 0");
+      if (quantityUnits(l.quantity) <= 0n) throw new AppError(400, "quantity must be > 0");
       if (txnType === "receipt" && l.unitCost == null) throw new AppError(400, "unitCost is required for receipt lines");
       if (txnType === "adjustment") {
         if (l.direction !== "increase" && l.direction !== "decrease") throw new AppError(400, "direction must be 'increase' or 'decrease'");
       }
       await repo.insertTxnLine(client, txn.id, {
         itemId: l.itemId,
-        quantity: Number(l.quantity),
-        unitCost: l.unitCost == null ? null : Number(l.unitCost),
+        quantity: quantityString(l.quantity),
+        unitCost: l.unitCost == null ? null : unitCostString(l.unitCost),
         extendedCost: null,
         direction: l.direction || null,
       });
@@ -339,155 +354,185 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypa
     const itemMap = new Map(items.map((r) => [r.item_id, r]));
     for (const l of lineRows) {
       if (!itemMap.has(l.item_id)) throw new AppError(400, `Unknown itemId ${l.item_id}`);
-      if (Number(l.quantity) <= 0) throw new AppError(400, "quantity must be > 0");
+      if (quantityUnits(l.quantity) <= 0n) throw new AppError(400, "quantity must be > 0");
     }
 
     const journalLines = [];
     const getBal = (warehouseId, itemId) => repo.getBalanceForUpdate(client, orgId, warehouseId, itemId);
+    const journalPair = (debitAccountId, creditAccountId, extendedUnits, memo) => {
+      const journalAmount = inventoryValueToJournalMoney(extendedUnits);
+      if (moneyUnits(journalAmount) === 0n) return;
+      journalLines.push({ accountId: debitAccountId, debit: journalAmount, credit: "0.00", memo });
+      journalLines.push({ accountId: creditAccountId, debit: "0.00", credit: journalAmount, memo });
+    };
+    const fifoValue = (consumptions) => consumptions.reduce(
+      (sum, consumption) => sum + multiplyQuantityByUnitCost(consumption.quantity, consumption.unitCost),
+      0n
+    );
 
     const txnType = txn.txn_type;
 
     if (txnType === "receipt") {
       if (!txn.dest_warehouse_id) throw new AppError(400, "destWarehouseId is required for receipt");
-      for (const l of lineRows) {
-        if (l.unit_cost == null) throw new AppError(400, "unitCost is required for receipt lines");
-        const bal = await getBal(txn.dest_warehouse_id, l.item_id);
-        const qty = Number(l.quantity);
-        const unitCost = Number(l.unit_cost);
-        const ext = round6(qty * unitCost);
+      for (const line of lineRows) {
+        if (line.unit_cost == null) throw new AppError(400, "unitCost is required for receipt lines");
+        const bal = await getBal(txn.dest_warehouse_id, line.item_id);
+        const qtyUnits = quantityUnits(line.quantity);
+        const qty = quantityString(qtyUnits);
+        const unitCost = unitCostString(line.unit_cost);
+        const extUnits = multiplyQuantityByUnitCost(qty, unitCost);
+        const ext = inventoryValueString(extUnits);
 
-        const oldQty = Number(bal.qty_on_hand);
-        const oldAvg = Number(bal.avg_unit_cost);
-        const newQty = round6(oldQty + qty);
-        const newAvg = newQty === 0 ? 0 : round6(((oldQty * oldAvg) + (qty * unitCost)) / newQty);
+        const oldQtyUnits = quantityUnits(bal.qty_on_hand);
+        const newQtyUnits = oldQtyUnits + qtyUnits;
+        const newAvgUnits = weightedAverageUnitCost({
+          oldQuantity: bal.qty_on_hand,
+          oldUnitCost: bal.avg_unit_cost,
+          incomingQuantity: qty,
+          incomingUnitCost: unitCost,
+        });
 
         await client.query(
           `UPDATE inventory_balances SET qty_on_hand=$4, avg_unit_cost=$5, updated_at=NOW() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`,
-          [orgId, txn.dest_warehouse_id, l.item_id, newQty, newAvg]
+          [orgId, txn.dest_warehouse_id, line.item_id, quantityString(newQtyUnits), unitCostString(newAvgUnits)]
         );
-        await client.query(
-          `UPDATE inventory_transaction_lines SET extended_cost=$2 WHERE id=$1`,
-          [l.id, ext]
-        );
+        await client.query(`UPDATE inventory_transaction_lines SET extended_cost=$2 WHERE id=$1`, [line.id, ext]);
         if (method === "FIFO") {
-          await repo.createFifoLayer(client, orgId, txn.dest_warehouse_id, l.item_id, l.id, qty, unitCost);
+          await repo.createFifoLayer(client, orgId, txn.dest_warehouse_id, line.item_id, line.id, qty, unitCost);
         }
 
-        const acc = itemMap.get(l.item_id);
-        journalLines.push({ accountId: acc.inventory_account_id, debit: ext, credit: 0, memo: "Inventory receipt" });
-        journalLines.push({ accountId: acc.clearing_account_id, debit: 0, credit: ext, memo: "Inventory receipt" });
+        const acc = itemMap.get(line.item_id);
+        journalPair(acc.inventory_account_id, acc.clearing_account_id, extUnits, "Inventory receipt");
       }
     } else if (txnType === "issue") {
       if (!txn.source_warehouse_id) throw new AppError(400, "sourceWarehouseId is required for issue");
-      for (const l of lineRows) {
-        const bal = await getBal(txn.source_warehouse_id, l.item_id);
-        const qty = Number(l.quantity);
-        const onHand = Number(bal.qty_on_hand);
-        if (onHand < qty) throw new AppError(409, `Insufficient stock for item ${l.item_id}`);
+      for (const line of lineRows) {
+        const bal = await getBal(txn.source_warehouse_id, line.item_id);
+        const qtyUnits = quantityUnits(line.quantity);
+        const onHandUnits = quantityUnits(bal.qty_on_hand);
+        if (onHandUnits < qtyUnits) throw new AppError(409, `Insufficient stock for item ${line.item_id}`);
+        const qty = quantityString(qtyUnits);
 
-        let unitCost = Number(bal.avg_unit_cost);
-        let ext = round6(qty * unitCost);
+        let unitCost = unitCostString(bal.avg_unit_cost);
+        let extUnits = multiplyQuantityByUnitCost(qty, unitCost);
         if (method === "FIFO") {
-          const r = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, l.item_id, l.id, qty);
-          if (!r.ok) throw new AppError(409, `Insufficient FIFO layers for item ${l.item_id}`);
-          ext = round6(r.consumptions.reduce((s, c) => s + Number(c.quantity) * Number(c.unitCost), 0));
-          unitCost = round6(ext / qty);
+          const consumed = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, line.item_id, line.id, qty);
+          if (!consumed.ok) throw new AppError(409, `Insufficient FIFO layers for item ${line.item_id}`);
+          extUnits = fifoValue(consumed.consumptions);
+          unitCost = unitCostString(unitCostFromExtendedValue(extUnits, qty));
         }
+        const ext = inventoryValueString(extUnits);
 
-        await client.query(
-          `UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`,
-          [l.id, unitCost, ext]
-        );
+        await client.query(`UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`, [line.id, unitCost, ext]);
         await client.query(
           `UPDATE inventory_balances SET qty_on_hand=$4, updated_at=NOW() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`,
-          [orgId, txn.source_warehouse_id, l.item_id, round6(onHand - qty)]
+          [orgId, txn.source_warehouse_id, line.item_id, quantityString(onHandUnits - qtyUnits)]
         );
 
-        const acc = itemMap.get(l.item_id);
-        journalLines.push({ accountId: acc.cogs_account_id, debit: ext, credit: 0, memo: "Inventory issue" });
-        journalLines.push({ accountId: acc.inventory_account_id, debit: 0, credit: ext, memo: "Inventory issue" });
+        const acc = itemMap.get(line.item_id);
+        journalPair(acc.cogs_account_id, acc.inventory_account_id, extUnits, "Inventory issue");
       }
     } else if (txnType === "transfer") {
       if (!txn.source_warehouse_id || !txn.dest_warehouse_id) throw new AppError(400, "sourceWarehouseId and destWarehouseId are required for transfer");
       if (txn.source_warehouse_id === txn.dest_warehouse_id) throw new AppError(400, "sourceWarehouseId cannot equal destWarehouseId");
-      for (const l of lineRows) {
-        const srcBal = await getBal(txn.source_warehouse_id, l.item_id);
-        const qty = Number(l.quantity);
-        const onHand = Number(srcBal.qty_on_hand);
-        if (onHand < qty) throw new AppError(409, `Insufficient stock for item ${l.item_id}`);
+      for (const line of lineRows) {
+        const srcBal = await getBal(txn.source_warehouse_id, line.item_id);
+        const qtyUnits = quantityUnits(line.quantity);
+        const onHandUnits = quantityUnits(srcBal.qty_on_hand);
+        if (onHandUnits < qtyUnits) throw new AppError(409, `Insufficient stock for item ${line.item_id}`);
+        const qty = quantityString(qtyUnits);
 
-        let unitCost = Number(srcBal.avg_unit_cost);
-        let ext = round6(qty * unitCost);
+        let unitCost = unitCostString(srcBal.avg_unit_cost);
+        let extUnits = multiplyQuantityByUnitCost(qty, unitCost);
         if (method === "FIFO") {
-          const r = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, l.item_id, l.id, qty);
-          if (!r.ok) throw new AppError(409, `Insufficient FIFO layers for item ${l.item_id}`);
-          ext = round6(r.consumptions.reduce((s, c) => s + Number(c.quantity) * Number(c.unitCost), 0));
-          unitCost = round6(ext / qty);
-          await repo.createFifoLayer(client, orgId, txn.dest_warehouse_id, l.item_id, l.id, qty, unitCost);
+          const consumed = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, line.item_id, line.id, qty);
+          if (!consumed.ok) throw new AppError(409, `Insufficient FIFO layers for item ${line.item_id}`);
+          extUnits = fifoValue(consumed.consumptions);
+          unitCost = unitCostString(unitCostFromExtendedValue(extUnits, qty));
+          // Preserve the source FIFO layer economics at the destination rather than collapsing
+          // multiple consumed costs into one synthetic average layer.
+          for (const consumption of consumed.consumptions) {
+            await repo.createFifoLayer(
+              client,
+              orgId,
+              txn.dest_warehouse_id,
+              line.item_id,
+              line.id,
+              consumption.quantity,
+              consumption.unitCost
+            );
+          }
         }
 
-        await client.query(
-          `UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`,
-          [l.id, unitCost, ext]
-        );
-
+        await client.query(`UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`, [line.id, unitCost, inventoryValueString(extUnits)]);
         await client.query(
           `UPDATE inventory_balances SET qty_on_hand=$4, updated_at=NOW() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`,
-          [orgId, txn.source_warehouse_id, l.item_id, round6(onHand - qty)]
+          [orgId, txn.source_warehouse_id, line.item_id, quantityString(onHandUnits - qtyUnits)]
         );
 
-        const dstBal = await getBal(txn.dest_warehouse_id, l.item_id);
-        const dstQty = Number(dstBal.qty_on_hand);
-        const dstAvg = Number(dstBal.avg_unit_cost);
-        const newDstQty = round6(dstQty + qty);
-        const newDstAvg = newDstQty === 0 ? 0 : round6(((dstQty * dstAvg) + (qty * unitCost)) / newDstQty);
+        const dstBal = await getBal(txn.dest_warehouse_id, line.item_id);
+        const dstQtyUnits = quantityUnits(dstBal.qty_on_hand);
+        const newDstQtyUnits = dstQtyUnits + qtyUnits;
+        const newDstAvgUnits = method === "FIFO"
+          ? weightedAverageUnitCostFromValue({
+              oldQuantity: dstBal.qty_on_hand,
+              oldUnitCost: dstBal.avg_unit_cost,
+              incomingQuantity: qty,
+              incomingValue: extUnits,
+            })
+          : weightedAverageUnitCost({
+              oldQuantity: dstBal.qty_on_hand,
+              oldUnitCost: dstBal.avg_unit_cost,
+              incomingQuantity: qty,
+              incomingUnitCost: unitCost,
+            });
         await client.query(
           `UPDATE inventory_balances SET qty_on_hand=$4, avg_unit_cost=$5, updated_at=NOW() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`,
-          [orgId, txn.dest_warehouse_id, l.item_id, newDstQty, newDstAvg]
+          [orgId, txn.dest_warehouse_id, line.item_id, quantityString(newDstQtyUnits), unitCostString(newDstAvgUnits)]
         );
       }
     } else if (txnType === "adjustment") {
       if (!txn.source_warehouse_id) throw new AppError(400, "sourceWarehouseId is required for adjustment");
-      for (const l of lineRows) {
-        const dir = l.direction;
-        if (dir !== "increase" && dir !== "decrease") throw new AppError(400, "direction is required for adjustment lines");
-        const bal = await getBal(txn.source_warehouse_id, l.item_id);
-        const qty = Number(l.quantity);
-        const acc = itemMap.get(l.item_id);
+      for (const line of lineRows) {
+        const direction = line.direction;
+        if (direction !== "increase" && direction !== "decrease") throw new AppError(400, "direction is required for adjustment lines");
+        const bal = await getBal(txn.source_warehouse_id, line.item_id);
+        const qtyUnits = quantityUnits(line.quantity);
+        const qty = quantityString(qtyUnits);
+        const acc = itemMap.get(line.item_id);
 
-        if (dir === "increase") {
-          const unitCost = Number(l.unit_cost ?? bal.avg_unit_cost ?? 0);
-          const ext = round6(qty * unitCost);
-          const oldQty = Number(bal.qty_on_hand);
-          const oldAvg = Number(bal.avg_unit_cost);
-          const newQty = round6(oldQty + qty);
-          const newAvg = method === "WEIGHTED_AVERAGE" ? (newQty === 0 ? 0 : round6(((oldQty * oldAvg) + (qty * unitCost)) / newQty)) : oldAvg;
+        if (direction === "increase") {
+          const unitCost = unitCostString(line.unit_cost ?? bal.avg_unit_cost ?? "0");
+          const extUnits = multiplyQuantityByUnitCost(qty, unitCost);
+          const oldQtyUnits = quantityUnits(bal.qty_on_hand);
+          const newQtyUnits = oldQtyUnits + qtyUnits;
+          const newAvgUnits = method === "WEIGHTED_AVERAGE"
+            ? weightedAverageUnitCost({ oldQuantity: bal.qty_on_hand, oldUnitCost: bal.avg_unit_cost, incomingQuantity: qty, incomingUnitCost: unitCost })
+            : unitCostUnits(bal.avg_unit_cost);
           await client.query(
             `UPDATE inventory_balances SET qty_on_hand=$4, avg_unit_cost=$5, updated_at=NOW() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`,
-            [orgId, txn.source_warehouse_id, l.item_id, newQty, newAvg]
+            [orgId, txn.source_warehouse_id, line.item_id, quantityString(newQtyUnits), unitCostString(newAvgUnits)]
           );
-          await client.query(`UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`, [l.id, unitCost, ext]);
-          if (method === "FIFO") await repo.createFifoLayer(client, orgId, txn.source_warehouse_id, l.item_id, l.id, qty, unitCost);
-          journalLines.push({ accountId: acc.inventory_account_id, debit: ext, credit: 0, memo: "Inventory adjustment increase" });
-          journalLines.push({ accountId: acc.adjustment_account_id, debit: 0, credit: ext, memo: "Inventory adjustment increase" });
+          await client.query(`UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`, [line.id, unitCost, inventoryValueString(extUnits)]);
+          if (method === "FIFO") await repo.createFifoLayer(client, orgId, txn.source_warehouse_id, line.item_id, line.id, qty, unitCost);
+          journalPair(acc.inventory_account_id, acc.adjustment_account_id, extUnits, "Inventory adjustment increase");
         } else {
-          const onHand = Number(bal.qty_on_hand);
-          if (onHand < qty) throw new AppError(409, `Insufficient stock for item ${l.item_id}`);
-          let unitCost = Number(bal.avg_unit_cost);
-          let ext = round6(qty * unitCost);
+          const onHandUnits = quantityUnits(bal.qty_on_hand);
+          if (onHandUnits < qtyUnits) throw new AppError(409, `Insufficient stock for item ${line.item_id}`);
+          let unitCost = unitCostString(bal.avg_unit_cost);
+          let extUnits = multiplyQuantityByUnitCost(qty, unitCost);
           if (method === "FIFO") {
-            const r = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, l.item_id, l.id, qty);
-            if (!r.ok) throw new AppError(409, `Insufficient FIFO layers for item ${l.item_id}`);
-            ext = round6(r.consumptions.reduce((s, c) => s + Number(c.quantity) * Number(c.unitCost), 0));
-            unitCost = round6(ext / qty);
+            const consumed = await repo.consumeFifoLayers(client, orgId, txn.source_warehouse_id, line.item_id, line.id, qty);
+            if (!consumed.ok) throw new AppError(409, `Insufficient FIFO layers for item ${line.item_id}`);
+            extUnits = fifoValue(consumed.consumptions);
+            unitCost = unitCostString(unitCostFromExtendedValue(extUnits, qty));
           }
-          await client.query(`UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`, [l.id, unitCost, ext]);
+          await client.query(`UPDATE inventory_transaction_lines SET unit_cost=$2, extended_cost=$3 WHERE id=$1`, [line.id, unitCost, inventoryValueString(extUnits)]);
           await client.query(
             `UPDATE inventory_balances SET qty_on_hand=$4, updated_at=NOW() WHERE organization_id=$1 AND warehouse_id=$2 AND item_id=$3`,
-            [orgId, txn.source_warehouse_id, l.item_id, round6(onHand - qty)]
+            [orgId, txn.source_warehouse_id, line.item_id, quantityString(onHandUnits - qtyUnits)]
           );
-          journalLines.push({ accountId: acc.adjustment_account_id, debit: ext, credit: 0, memo: "Inventory adjustment decrease" });
-          journalLines.push({ accountId: acc.inventory_account_id, debit: 0, credit: ext, memo: "Inventory adjustment decrease" });
+          journalPair(acc.adjustment_account_id, acc.inventory_account_id, extUnits, "Inventory adjustment decrease");
         }
       }
     } else {
@@ -497,9 +542,9 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypa
     let postedJournalId = null;
     if (journalLines.length) {
       const agg = aggregateJournalLines(journalLines);
-      const debit = round6(agg.reduce((s, l) => s + Number(l.debit || 0), 0));
-      const credit = round6(agg.reduce((s, l) => s + Number(l.credit || 0), 0));
-      if (debit !== credit) throw new AppError(500, "Inventory journal not balanced");
+      const debitCents = agg.reduce((sum, line) => sum + moneyUnits(line.debit || "0"), 0n);
+      const creditCents = agg.reduce((sum, line) => sum + moneyUnits(line.credit || "0"), 0n);
+      if (debitCents !== creditCents) throw new AppError(500, "Inventory journal not balanced");
 
       const draft = await createDraftJournal({
         orgId,
@@ -549,13 +594,13 @@ async function reversePostedTransaction({ orgId, actorUserId, transactionId, rea
     destWarehouseId: orig.txn.dest_warehouse_id,
     reference: `REV:${orig.txn.id}`,
     memo: reason ? `Reversal: ${reason}` : `Reversal of ${orig.txn.id}`,
-    lines: orig.lines.map((l) => {
-      const q = Number(l.quantity);
-      if (orig.txn.txn_type === "receipt") return { itemId: l.item_id, quantity: q, direction: "decrease" };
-      if (orig.txn.txn_type === "issue") return { itemId: l.item_id, quantity: q, direction: "increase", unitCost: Number(l.unit_cost || 0) };
-      if (orig.txn.txn_type === "transfer") return { itemId: l.item_id, quantity: q };
-      const dir = l.direction === "increase" ? "decrease" : "increase";
-      return { itemId: l.item_id, quantity: q, direction: dir, unitCost: Number(l.unit_cost || 0) };
+    lines: orig.lines.map((line) => {
+      const quantity = quantityString(line.quantity);
+      if (orig.txn.txn_type === "receipt") return { itemId: line.item_id, quantity, direction: "decrease" };
+      if (orig.txn.txn_type === "issue") return { itemId: line.item_id, quantity, direction: "increase", unitCost: unitCostString(line.unit_cost || "0") };
+      if (orig.txn.txn_type === "transfer") return { itemId: line.item_id, quantity };
+      const direction = line.direction === "increase" ? "decrease" : "increase";
+      return { itemId: line.item_id, quantity, direction, unitCost: unitCostString(line.unit_cost || "0") };
     }),
   };
 

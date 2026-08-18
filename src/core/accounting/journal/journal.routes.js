@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
+const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
 const {
   journalCreateSchema,
@@ -20,34 +21,23 @@ const notificationsSvc = require("../../../notifications/notifications.service")
 
 router.use(authRequired);
 
-// Create draft journal (validated + auditable)
-router.post("/", requirePermission("accounting.journal.create"), async (req, res, next) => {
+// Create draft journal. Bind the HTTP idempotency key to the journal's DB key.
+router.post("/", idempotency({ required: true }), requirePermission("accounting.journal.create"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-
     const payload = validate(journalCreateSchema, req.body);
+    if (payload.idempotencyKey && payload.idempotencyKey !== req.idempotency.key) {
+      throw new AppError(409, "Body idempotencyKey must match Idempotency-Key header");
+    }
+    payload.idempotencyKey = req.idempotency.key;
     const out = await journalAPI.createDraftJournal({ orgId, actorUserId, payload });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.created",
-      entityType: "journal_entries",
-      entityId: out.journalId,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: { ...payload, journalId: out.journalId }
-    });
-
     res.status(201).json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
 // Update draft header
-router.patch("/:id", requirePermission("accounting.journal.edit"), async (req, res, next) => {
+router.patch("/:id", idempotency({ required: true }), requirePermission("accounting.journal.edit"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -76,7 +66,7 @@ router.patch("/:id", requirePermission("accounting.journal.edit"), async (req, r
 });
 
 // Replace all draft lines
-router.put("/:id/lines", requirePermission("accounting.journal.edit"), async (req, res, next) => {
+router.put("/:id/lines", idempotency({ required: true }), requirePermission("accounting.journal.edit"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -105,7 +95,7 @@ router.put("/:id/lines", requirePermission("accounting.journal.edit"), async (re
 });
 
 // Add a draft line (convenience)
-router.post("/:id/lines", requirePermission("accounting.journal.edit"), async (req, res, next) => {
+router.post("/:id/lines", idempotency({ required: true }), requirePermission("accounting.journal.edit"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -142,7 +132,7 @@ router.post("/:id/lines", requirePermission("accounting.journal.edit"), async (r
 });
 
 // Update a draft line by line number (1-based)
-router.patch("/:id/lines/:lineNo", requirePermission("accounting.journal.edit"), async (req, res, next) => {
+router.patch("/:id/lines/:lineNo", idempotency({ required: true }), requirePermission("accounting.journal.edit"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -187,7 +177,7 @@ router.patch("/:id/lines/:lineNo", requirePermission("accounting.journal.edit"),
 });
 
 // Delete a draft line by line number (1-based)
-router.delete("/:id/lines/:lineNo", requirePermission("accounting.journal.edit"), async (req, res, next) => {
+router.delete("/:id/lines/:lineNo", idempotency({ required: true }), requirePermission("accounting.journal.edit"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -226,29 +216,15 @@ router.delete("/:id/lines/:lineNo", requirePermission("accounting.journal.edit")
   }
 });
 
-// Submit for approval
-router.post("/:id/submit", requirePermission("accounting.journal.submit"), async (req, res, next) => {
+// Submit for approval. Audit persistence is inside the journal transaction.
+router.post("/:id/submit", idempotency({ required: true }), requirePermission("accounting.journal.submit"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-
-    const before = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
     const out = await journalAPI.submitDraftJournal({ orgId, journalId: req.params.id, actorUserId });
-    const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.submitted",
-      entityType: "journal_entries",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      before,
-      after
-    });
-
-    // Broadcast notification so admins/approvers see it in Notifications.
+    // Notification delivery is non-authoritative. A notification failure must not
+    // turn an already-committed accounting transition into an HTTP failure/retry.
     await notificationsSvc.createNotification({
       orgId,
       actorUserId,
@@ -260,103 +236,52 @@ router.post("/:id/submit", requirePermission("accounting.journal.submit"), async
         entityType: "journal_entries",
         entityId: req.params.id
       }
-    });
-
+    }).catch(() => null);
     res.json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
-// Approve
-router.post("/:id/approve", requirePermission("accounting.journal.approve"), async (req, res, next) => {
+// Approve. Audit persistence is inside the journal transaction.
+router.post("/:id/approve", idempotency({ required: true }), requirePermission("accounting.journal.approve"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
-
-    const before = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-    const out = await journalAPI.approveSubmittedJournal({ orgId, journalId: req.params.id, actorUserId });
-    const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.approved",
-      entityType: "journal_entries",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      before,
-      after
+    const out = await journalAPI.approveSubmittedJournal({
+      orgId: req.user.organization_id,
+      journalId: req.params.id,
+      actorUserId: req.user.id
     });
-
     res.json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
-// Reject
-router.post("/:id/reject", requirePermission("accounting.journal.reject"), async (req, res, next) => {
+// Reject. Audit persistence is inside the journal transaction.
+router.post("/:id/reject", idempotency({ required: true }), requirePermission("accounting.journal.reject"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
-
     const payload = validate(journalRejectSchema, req.body);
     if (!payload.reason) throw new AppError(400, "reason required");
-
-    const before = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-    const out = await journalAPI.rejectSubmittedJournal({ orgId, journalId: req.params.id, actorUserId, reason: payload.reason });
-    const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.rejected",
-      entityType: "journal_entries",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      before,
-      after
+    const out = await journalAPI.rejectSubmittedJournal({
+      orgId: req.user.organization_id,
+      journalId: req.params.id,
+      actorUserId: req.user.id,
+      reason: payload.reason
     });
-
     res.json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
-// Cancel draft
-router.post("/:id/cancel", requirePermission("accounting.journal.cancel"), async (req, res, next) => {
+// Cancel draft. Audit persistence is inside the journal transaction.
+router.post("/:id/cancel", idempotency({ required: true }), requirePermission("accounting.journal.cancel"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
-
-    const before = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-    const out = await journalAPI.cancelDraftJournal({ orgId, journalId: req.params.id, actorUserId });
-    const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.canceled",
-      entityType: "journal_entries",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      before,
-      after
+    const out = await journalAPI.cancelDraftJournal({
+      orgId: req.user.organization_id,
+      journalId: req.params.id,
+      actorUserId: req.user.id
     });
-
     res.json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
 // Batch post
-router.post("/batch/post", requirePermission("accounting.journal.batch_post"), async (req, res, next) => {
+router.post("/batch/post", idempotency({ required: true }), requirePermission("accounting.journal.batch_post"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -381,65 +306,31 @@ router.post("/batch/post", requirePermission("accounting.journal.batch_post"), a
   }
 });
 
-// Post (auditable)
-router.post("/:id/post", requirePermission("accounting.journal.post"), async (req, res, next) => {
+// Post. The journal service writes its audit row in the same DB transaction.
+router.post("/:id/post", idempotency({ required: true }), requirePermission("accounting.journal.post"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
-
-    const before = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-    const out = await journalAPI.postDraftJournal({ orgId, journalId: req.params.id, actorUserId });
-    const after = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.posted",
-      entityType: "journal_entries",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      before,
-      after
+    const out = await journalAPI.postDraftJournal({
+      orgId: req.user.organization_id,
+      journalId: req.params.id,
+      actorUserId: req.user.id
     });
-
     res.json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
-// Void by reversal (validated + auditable)
-router.post("/:id/void", requirePermission("accounting.journal.void"), async (req, res, next) => {
+// Void by reversal. Audit persistence is inside the same accounting transaction.
+router.post("/:id/void", idempotency({ required: true }), requirePermission("accounting.journal.void"), async (req, res, next) => {
   try {
-    const orgId = req.user.organization_id;
-    const actorUserId = req.user.id;
-
     const payload = validate(voidSchema, req.body);
     if (!payload.reason) throw new AppError(400, "reason required");
-
     const out = await journalAPI.voidPostedJournal({
-      orgId,
+      orgId: req.user.organization_id,
       journalId: req.params.id,
-      actorUserId,
+      actorUserId: req.user.id,
       reason: payload.reason
     });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "journal.voided_by_reversal",
-      entityType: "journal_entries",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
-
     res.json(out);
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
 // Read journal + lines

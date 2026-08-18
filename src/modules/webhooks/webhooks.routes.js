@@ -1,8 +1,10 @@
 const express = require("express");
+const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const svc = require("./webhooks.service");
 
 const router = express.Router();
+router.use(authRequired);
 
 router.get("/subscriptions", requirePermission("webhooks.manage"), async (req, res, next) => {
   try {
@@ -47,8 +49,9 @@ router.post("/subscriptions/:id/rotate-secret", requirePermission("webhooks.mana
 // Manual dispatch (no background worker)
 router.post("/dispatch", requirePermission("webhooks.dispatch"), async (req, res, next) => {
   try {
+    const { organization_id: orgId } = req.user;
     const limit = Number(req.query.limit || 50);
-    const data = await svc.dispatchPending({ limit });
+    const data = await svc.dispatchPending({ limit, orgId });
     res.json({ data });
   } catch (e) {
     next(e);

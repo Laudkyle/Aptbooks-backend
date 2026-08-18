@@ -16,7 +16,7 @@ const svc = require("./customerReceipts.service");
 
 router.use(authRequired);
 
-router.post("/", requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
+router.post("/", idempotency({ required: true }), requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -53,7 +53,7 @@ router.get("/:id", requirePermission("transactions.customer_receipt.read"), asyn
   } catch (e) { next(e); }
 });
 
-router.post("/:id/auto-allocate", requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
+router.post("/:id/auto-allocate", idempotency({ required: true }), requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -76,7 +76,7 @@ router.post("/:id/auto-allocate", requirePermission("transactions.customer_recei
   } catch (e) { next(e); }
 });
 
-router.post("/:id/reallocate", requirePermission("transactions.allocations.reallocate"), async (req, res, next) => {
+router.post("/:id/reallocate", idempotency({ required: true }), requirePermission("transactions.allocations.reallocate"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
@@ -132,46 +132,24 @@ router.post("/:id/reject", idempotency({ required: true }), requirePermission("a
   } catch (e) { next(e); }
 });
 
-router.post("/:id/post", requirePermission("transactions.customer_receipt.post"), async (req, res, next) => {
+router.post("/:id/post", idempotency({ required: true }), requirePermission("transactions.customer_receipt.post"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
 
     const out = await svc.postCustomerReceipt({ orgId, actorUserId, id: req.params.id });
 
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "customer_receipt.posted",
-      entityType: "customer_receipts",
-      entityId: out.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
-
     res.json(out);
   } catch (e) { next(e); }
 });
 
-router.post("/:id/void", requirePermission("transactions.customer_receipt.void"), async (req, res, next) => {
+router.post("/:id/void", idempotency({ required: true }), requirePermission("transactions.customer_receipt.void"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
 
     const body = validate(voidCustomerReceiptSchema, req.body || {});
     const out = await svc.voidCustomerReceipt({ orgId, actorUserId, id: req.params.id, reason: body.reason });
-
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId,
-      action: "customer_receipt.voided",
-      entityType: "customer_receipts",
-      entityId: req.params.id,
-      ip: req.audit?.ip,
-      userAgent: req.audit?.userAgent,
-      after: out
-    });
 
     res.json(out);
   } catch (e) { next(e); }

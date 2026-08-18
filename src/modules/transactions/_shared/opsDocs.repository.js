@@ -105,7 +105,6 @@ function resolveDbArgs(a, b, c,d) {
 
 async function getDocumentById(a, b, c, d) {
   const { orgId, documentId, currentUserId, db} = resolveDbArgs(a, b, c, d);
-console.log({ orgId, documentId, currentUserId });
   const { rows } = await db.query(
     `
     SELECT d.*,
@@ -162,7 +161,6 @@ console.log({ orgId, documentId, currentUserId });
     `,
     [orgId, documentId, currentUserId]
   );
-console.log({ doc: rows[0] });
   return rows[0] || null;
 }
 async function getDocumentLines(documentId, db = pool) {

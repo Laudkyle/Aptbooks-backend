@@ -40,12 +40,12 @@ async function generateScheduleWithClient({ orgId, actorUserId, leaseId, payload
   const lines = generateScheduleLines({ lease, measurement, startDate: new Date(lease.commencement_date) });
   await replaceScheduleLines({ client, orgId, actorUserId, leaseId, lines });
   await client.query(`UPDATE leases SET initial_lease_liability=$2, monthly_depreciation_amount=$3, updated_at=NOW() WHERE id=$1 AND organization_id=$4`,
-    [leaseId, measurement.leaseLiability.toNumber(), measurement.periodicDepreciation.toNumber(), orgId]);
-  await client.query(`UPDATE lease_assets SET rou_cost=COALESCE(rou_cost,$3), updated_at=NOW() WHERE lease_id=$1 AND organization_id=$2 AND is_primary=TRUE`, [leaseId, orgId, measurement.initialRouAsset.toNumber()]);
+    [leaseId, measurement.leaseLiability.toFixed(6), measurement.periodicDepreciation.toFixed(6), orgId]);
+  await client.query(`UPDATE lease_assets SET rou_cost=COALESCE(rou_cost,$3), updated_at=NOW() WHERE lease_id=$1 AND organization_id=$2 AND is_primary=TRUE`, [leaseId, orgId, measurement.initialRouAsset.toFixed(6)]);
   await persistMeasurementSnapshot({ client, orgId, actorUserId, leaseId, snapshotType: 'initial', measurement, payload: {
     term_months: lease.term_months, payments_per_year: lease.payments_per_year,
   } });
-  await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'SCHEDULE_GENERATED', payload:{ periods: lines.length, replaced: !!payload.replace, rou_asset_amount: measurement.initialRouAsset.toNumber() } });
+  await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'SCHEDULE_GENERATED', payload:{ periods: lines.length, replaced: !!payload.replace, rou_asset_amount: measurement.initialRouAsset.toFixed(6) } });
   return {
     lease_id: leaseId,
     initial_lease_liability: toCurrencyNumber(measurement.leaseLiability),
@@ -123,13 +123,13 @@ async function postInitialRecognition({ orgId, actorUserId, leaseId, payload }) 
       payload: { periodId: period.id, entryDate, memo: payload?.memo || `IFRS16 Lease ${lease.code} - initial recognition`, idempotencyKey, lines },
     });
     await client.query(`UPDATE leases SET initial_recognition_journal_id=$2, initial_recognition_date=$3, initial_lease_liability=$4, monthly_depreciation_amount=$5, status='active', activated_at=COALESCE(activated_at,NOW()), updated_at=NOW() WHERE id=$1 AND organization_id=$6`,
-      [leaseId, postedJournal.journalId, entryDate, measurement.leaseLiability.toNumber(), measurement.periodicDepreciation.toNumber(), orgId]);
-    await client.query(`UPDATE lease_assets SET rou_cost=$3, updated_at=NOW() WHERE lease_id=$1 AND organization_id=$2 AND is_primary=TRUE`, [leaseId, orgId, measurement.initialRouAsset.toNumber()]);
+      [leaseId, postedJournal.journalId, entryDate, measurement.leaseLiability.toFixed(6), measurement.periodicDepreciation.toFixed(6), orgId]);
+    await client.query(`UPDATE lease_assets SET rou_cost=$3, updated_at=NOW() WHERE lease_id=$1 AND organization_id=$2 AND is_primary=TRUE`, [leaseId, orgId, measurement.initialRouAsset.toFixed(6)]);
     await persistMeasurementSnapshot({ client, orgId, actorUserId, leaseId, snapshotType: 'initial', measurement, payload: { term_months: lease.term_months, payments_per_year: lease.payments_per_year } });
     await recordLeasePostingLedger({ client, orgId, actorUserId, leaseId, scheduleLineId:null, modificationId:null, action:'initial_recognition', idempotencyKey, journalEntryId: postedJournal.journalId });
-    await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'INITIAL_RECOGNITION_POSTED', payload:{ entry_date: entryDate, journal_id: postedJournal.journalId, lease_liability_amount: measurement.leaseLiability.toNumber(), rou_asset_amount: measurement.initialRouAsset.toNumber() } });
+    await recordLeaseEvent({ client, orgId, actorUserId, leaseId, eventType:'INITIAL_RECOGNITION_POSTED', payload:{ entry_date: entryDate, journal_id: postedJournal.journalId, lease_liability_amount: measurement.leaseLiability.toFixed(6), rou_asset_amount: measurement.initialRouAsset.toFixed(6) } });
     await client.query('COMMIT');
-    return { already_posted:false, journal_id: postedJournal.journalId, recognition_date: entryDate, amount: toCurrencyNumber(measurement.leaseLiability), rou_asset_amount: toCurrencyNumber(measurement.initialRouAsset), precise_amount: measurement.leaseLiability.toNumber(), currency_decimals:2, calculation_decimals:6 };
+    return { already_posted:false, journal_id: postedJournal.journalId, recognition_date: entryDate, amount: toCurrencyNumber(measurement.leaseLiability), rou_asset_amount: toCurrencyNumber(measurement.initialRouAsset), precise_amount: Number(measurement.leaseLiability.toFixed(6)), currency_decimals:2, calculation_decimals:6 };
   } catch(e){ await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 }
 

@@ -26,6 +26,12 @@ function bucketsToNumbers(buckets) {
   );
 }
 
+function bucketsToStrings(buckets) {
+  return Object.fromEntries(
+    Object.entries(buckets).map(([key, value]) => [key, minorUnitsToMoney(value)])
+  );
+}
+
 function summarizeLineTaxDetails(lines = []) {
   const minor = {
     totalTax: 0n,
@@ -38,6 +44,7 @@ function summarizeLineTaxDetails(lines = []) {
   };
   const byPostingAccountMinor = new Map();
   const byLineId = new Map();
+  const byLineIdExact = new Map();
 
   for (const line of lines) {
     const details = Array.isArray(line.taxDetails) ? line.taxDetails : [];
@@ -87,6 +94,7 @@ function summarizeLineTaxDetails(lines = []) {
     }
 
     byLineId.set(line.id, bucketsToNumbers(buckets));
+    byLineIdExact.set(line.id, bucketsToStrings(buckets));
   }
 
   const byPostingAccount = new Map(
@@ -97,6 +105,7 @@ function summarizeLineTaxDetails(lines = []) {
   );
 
   return {
+    // Legacy presentation-compatible Number fields. New accounting decisions should use `exact` below.
     totalTax: Number(minorUnitsToMoney(minor.totalTax)),
     recoverableInputTax: Number(minorUnitsToMoney(minor.recoverableInputTax)),
     nonRecoverableInputTax: Number(minorUnitsToMoney(minor.nonRecoverableInputTax)),
@@ -106,6 +115,17 @@ function summarizeLineTaxDetails(lines = []) {
     withholdingPayable: Number(minorUnitsToMoney(minor.withholdingPayable)),
     byPostingAccount,
     byLineId,
+    exact: {
+      totalTax: minorUnitsToMoney(minor.totalTax),
+      recoverableInputTax: minorUnitsToMoney(minor.recoverableInputTax),
+      nonRecoverableInputTax: minorUnitsToMoney(minor.nonRecoverableInputTax),
+      reverseChargeTax: minorUnitsToMoney(minor.reverseChargeTax),
+      outputTax: minorUnitsToMoney(minor.outputTax),
+      withholdingReceivable: minorUnitsToMoney(minor.withholdingReceivable),
+      withholdingPayable: minorUnitsToMoney(minor.withholdingPayable),
+      byPostingAccount: new Map(Array.from(byPostingAccountMinor.entries()).map(([accountId, value]) => [accountId, minorUnitsToMoney(value)])),
+      byLineId: byLineIdExact,
+    },
   };
 }
 

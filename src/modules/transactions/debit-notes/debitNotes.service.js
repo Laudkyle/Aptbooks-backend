@@ -10,6 +10,7 @@ const repo = require("./debitNotes.repository");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 async function calcTotals({ client, orgId, lines, payload = {} }) {
   let subtotalCents = 0n;
@@ -371,7 +372,7 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
 
     const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
 
-    return repo.setIssued({
+    const issued = await repo.setIssued({
       orgId,
       id,
       periodId: period.id,
@@ -379,6 +380,11 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
       actorUserId,
       client
     });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "debit_note.issued",
+      entityType: "debit_notes", entityId: id, before: dn, after: issued, client
+    });
+    return issued;
   });
 }
 
@@ -423,7 +429,12 @@ async function applyDebitNote({ orgId, actorUserId, id, payload }) {
 
     await refreshBillPaidStatus({ orgId, billId: normalizedPayload.billId, client });
     const balance = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
-    return { ...app, balance, is_available_for_application: balance.remaining > 0 };
+    const result = { ...app, balance, is_available_for_application: balance.remaining > 0 };
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "debit_note.applied",
+      entityType: "debit_notes", entityId: id, before: dn, after: result, client
+    });
+    return result;
   });
 }
 
@@ -448,14 +459,19 @@ async function voidDebitNote({ orgId, actorUserId, id, reason }) {
       client
     });
 
-    return repo.setVoided({
+    const out = await repo.setVoided({
       orgId,
       id,
-      reversalJournalEntryId: rev.journalEntryId,
+      reversalJournalEntryId: rev.reversalJournalId,
       actorUserId,
       reason: reason || null,
       client
     });
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: "debit_note.voided",
+      entityType: "debit_notes", entityId: id, before: dn, after: out, client
+    });
+    return out;
   });
 }
 

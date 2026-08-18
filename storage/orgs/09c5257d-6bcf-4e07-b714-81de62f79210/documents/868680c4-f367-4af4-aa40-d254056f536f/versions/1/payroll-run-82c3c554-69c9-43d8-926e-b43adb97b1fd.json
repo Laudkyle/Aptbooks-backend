@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "entity_type": "payroll_run",
+  "entity_id": "82c3c554-69c9-43d8-926e-b43adb97b1fd",
+  "snapshot_at": "2026-08-16T21:50:56.075Z",
+  "header": {
+    "id": "82c3c554-69c9-43d8-926e-b43adb97b1fd",
+    "organization_id": "09c5257d-6bcf-4e07-b714-81de62f79210",
+    "period_id": "2e793eea-30da-41b2-8fe7-2a21be3adc81",
+    "pay_date": "2026-10-22T00:00:00.000Z",
+    "currency": "GHS",
+    "status": "calculated",
+    "created_by": "c07e9a49-781d-483f-b26f-9436d1dcacf8",
+    "updated_by": "c07e9a49-781d-483f-b26f-9436d1dcacf8",
+    "created_at": "2026-08-16T21:50:51.991Z",
+    "updated_at": "2026-08-16T21:50:54.946Z",
+    "workflow_document_id": null,
+    "statutory_country_code": "GH",
+    "paye_rule_version_id": "7c500a20-3cf5-4446-9417-5dc1e1309ffa",
+    "pension_rule_version_id": "3221499b-1748-4a69-b867-21450385031e"
+  },
+  "lines": [
+    {
+      "id": "48a165f9-ea79-40be-8cf8-757540c8bc4d",
+      "organization_id": "09c5257d-6bcf-4e07-b714-81de62f79210",
+      "payroll_run_id": "82c3c554-69c9-43d8-926e-b43adb97b1fd",
+      "line_no": 1,
+      "employee_id": "198831ca-e2ba-47dc-b35d-76abb9e33043",
+      "base_salary": "7000.00",
+      "total_earnings": "240.00",
+      "total_deductions": "1697.25",
+      "gross_pay": "7240.00",
+      "net_pay": "5542.75",
+      "currency": "GHS",
+      "breakdown_json": {
+        "ghana": {
+          "paye": {
+            "method": "resident_graduated",
+            "bonusTax": "0.00",
+            "finalTax": "0.00",
+            "totalTax": "1312.25",
+            "overtimeTax": "0.00",
+            "graduatedTax": "1312.25",
+            "chargeableIncome": "6855.00",
+            "bonusExcessAmount": "0.00",
+            "bonusConcessionAmount": "0.00"
+          },
+          "bonus": "0.00",
+          "pension": {
+            "tier2Payable": "350.00",
+            "insurableEarnings": "7000.00",
+            "ssnitTier1Payable": "945.00",
+            "totalContribution": "1295.00",
+            "employeeContribution": "385.00",
+            "employerContribution": "910.00"
+          },
+          "overtime": "0.00",
+          "rule_versions": {
+            "paye": "7c500a20-3cf5-4446-9417-5dc1e1309ffa",
+            "pension": "3221499b-1748-4a69-b867-21450385031e"
+          },
+          "tax_residency": "resident",
+          "approved_relief": "0.00",
+          "regular_earnings": "240.00",
+          "non_taxable_earnings": "0.00",
+          "worker_classification": "regular"
+        },
+        "benefits": [],
+        "earnings": [
+          {
+            "code": "PAY!",
+            "amount": "240.00",
+            "component_id": "7d807426-f4ee-4062-9722-f1532d694885",
+            "ghana_category": "regular"
+          }
+        ],
+        "statutory": [
+          {
+            "code": "GH_PAYE",
+            "name": "Ghana PAYE",
+            "rule_type": "income_tax",
+            "employee_amount": "1312.25",
+            "employer_amount": "0.00",
+            "expense_account_id": null,
+            "liability_account_id": "d3a6035a-bdd0-47dd-bbd5-e28da33c4950"
+          },
+          {
+            "code": "GH_SSNIT_TIER1",
+            "name": "SSNIT Tier 1/NHIA remittance",
+            "rule_type": "social_security",
+            "employee_amount": "385.00",
+            "employer_amount": "560.00",
+            "expense_account_id": "f2ec5c60-237c-4527-a7c9-8f162c7da9c4",
+            "liability_account_id": "d3a6035a-bdd0-47dd-bbd5-e28da33c4950"
+          },
+          {
+            "code": "GH_TIER2",
+            "name": "Mandatory Tier 2 pension",
+            "rule_type": "pension",
+            "employee_amount": "0.00",
+            "employer_amount": "350.00",
+            "expense_account_id": "f2ec5c60-237c-4527-a7c9-8f162c7da9c4",
+            "liability_account_id": "d3a6035a-bdd0-47dd-bbd5-e28da33c4950"
+          }
+        ],
+        "deductions": [],
+        "base_salary": "7000.00",
+        "employer_contributions_total": "910.00"
+      },
+      "created_at": "2026-08-16T21:50:54.791Z",
+      "updated_at": "2026-08-16T21:50:54.791Z",
+      "taxable_earnings": "7240.00",
+      "chargeable_income": "6855.00",
+      "paye_tax": "1312.25",
+      "bonus_tax": "0.00",
+      "overtime_tax": "0.00",
+      "insurable_earnings": "7000.00",
+      "ssnit_employee": "385.00",
+      "ssnit_employer": "910.00",
+      "ssnit_tier1_payable": "945.00",
+      "tier2_payable": "350.00",
+      "total_employer_cost": "8150.00",
+      "employee_no": "001",
+      "first_name": "abrhaam",
+      "last_name": "boakye"
+    }
+  ],
+  "related": {
+    "journal": null
+  },
+  "meta": {
+    "status": "calculated"
+  }
+}

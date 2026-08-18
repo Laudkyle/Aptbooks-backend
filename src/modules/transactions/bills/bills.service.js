@@ -15,10 +15,16 @@ const {
 } = require("../../../shared/utils/money");
 
 const repo = require("./bills.repository");
-const { resolveLineTaxes, round2, loadLineTaxDetails, upsertDocumentTaxSnapshot, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
+const { resolveLineTaxes, loadLineTaxDetails, upsertDocumentTaxSnapshot, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
+const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const {
+  moneyUnits,
+  moneyStringFromUnits,
+  moneyNumber,
+} = require("../../../shared/utils/financialMath");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -187,10 +193,14 @@ async function getBillDetails({ orgId, billId, currentUserId }) {
     [billId, orgId]
   );
 
-  const paid = Number(paidRows[0]?.paid || 0);
-  const debitApplied = Number(paidRows[0]?.debit_applied || 0);
-  const settlementTotal = Number(bill.net_settlement_total ?? bill.total);
-  const outstanding = Number((settlementTotal - paid - debitApplied).toFixed(2));
+  const paidUnits = moneyUnits(paidRows[0]?.paid || "0");
+  const debitAppliedUnits = moneyUnits(paidRows[0]?.debit_applied || "0");
+  const settlementUnits = moneyUnits(bill.net_settlement_total ?? bill.total ?? "0");
+  const rawOutstandingUnits = settlementUnits - paidUnits - debitAppliedUnits;
+  const outstandingUnits = rawOutstandingUnits > 0n ? rawOutstandingUnits : 0n;
+  const paid = moneyNumber(moneyStringFromUnits(paidUnits));
+  const debitApplied = moneyNumber(moneyStringFromUnits(debitAppliedUnits));
+  const outstanding = moneyNumber(moneyStringFromUnits(outstandingUnits));
 
   const enrichedLines = await enrichLines({ client: pool, lines: lines.map((l) => ({ ...l, taxes: taxMap.get(l.id) || [] })) });
 
@@ -244,12 +254,13 @@ async function issueBill({ orgId, actorUserId, billId }) {
     const taxMap = await loadLineTaxDetails({ client, tableName: "bill_line_tax_details", lineIds: lines.map((l) => l.id) });
     const postingLines = lines.map((l) => ({ ...l, taxDetails: taxMap.get(l.id) || [] }));
     const taxSummary = summarizeLineTaxDetails(postingLines);
+    const exactTaxSummary = taxSummary.exact;
     const expenseMap = new Map();
     for (const l of postingLines) {
       await assertPostableActiveAccount({ orgId, accountId: l.expense_account_id, errMsg: "Invalid expenseAccountId" });
-      const taxBuckets = taxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
-      const expenseAmount = Number((Number((l.taxable_amount ?? l.line_total ?? 0)) + Number(taxBuckets.nonRecoverable || 0)).toFixed(2));
-      expenseMap.set(l.expense_account_id, (expenseMap.get(l.expense_account_id) || 0) + expenseAmount);
+      const taxBuckets = exactTaxSummary.byLineId.get(l.id) || { nonRecoverable: 0 };
+      const expenseUnits = moneyUnits(l.taxable_amount ?? l.line_total ?? "0") + moneyUnits(taxBuckets.nonRecoverable || "0");
+      expenseMap.set(l.expense_account_id, (expenseMap.get(l.expense_account_id) || 0n) + expenseUnits);
     }
 
     const apAccountId = vendor.default_payable_account_id;
@@ -259,35 +270,37 @@ async function issueBill({ orgId, actorUserId, billId }) {
     const reverseChargeTaxAccountId = settings.reverse_charge_tax_account_id || inputTaxAccountId || null;
 
     const journalLines = [];
-    for (const [accountId, amt] of expenseMap.entries()) {
-      journalLines.push({ accountId, debit: Number(amt.toFixed(2)), credit: 0, description: `Expense for ${bill.bill_no}` });
+    for (const [accountId, amountUnits] of expenseMap.entries()) {
+      journalLines.push({ accountId, debit: moneyStringFromUnits(amountUnits), credit: "0.00", description: `Expense for ${bill.bill_no}` });
     }
-    if (taxSummary.recoverableInputTax > 0) {
+    const recoverableInputTaxUnits = moneyUnits(exactTaxSummary.recoverableInputTax || "0");
+    if (recoverableInputTaxUnits > 0n) {
       if (!inputTaxAccountId) throw new AppError(409, 'Input tax account is not configured (tax_settings.input_tax_account_id)');
-      journalLines.push({ accountId: inputTaxAccountId, debit: taxSummary.recoverableInputTax, credit: 0, description: `Recoverable input tax for ${bill.bill_no}` });
+      journalLines.push({ accountId: inputTaxAccountId, debit: moneyStringFromUnits(recoverableInputTaxUnits), credit: "0.00", description: `Recoverable input tax for ${bill.bill_no}` });
     }
-    if (taxSummary.reverseChargeTax > 0 && reverseChargeTaxAccountId) {
-      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: taxSummary.reverseChargeTax, credit: 0, description: `Reverse charge tax debit for ${bill.bill_no}` });
-      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: 0, credit: taxSummary.reverseChargeTax, description: `Reverse charge tax credit for ${bill.bill_no}` });
+    const reverseChargeTaxUnits = moneyUnits(exactTaxSummary.reverseChargeTax || "0");
+    if (reverseChargeTaxUnits > 0n && reverseChargeTaxAccountId) {
+      const reverseChargeAmount = moneyStringFromUnits(reverseChargeTaxUnits);
+      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: reverseChargeAmount, credit: "0.00", description: `Reverse charge tax debit for ${bill.bill_no}` });
+      journalLines.push({ accountId: reverseChargeTaxAccountId, debit: "0.00", credit: reverseChargeAmount, description: `Reverse charge tax credit for ${bill.bill_no}` });
     }
-    if (taxSummary.withholdingPayable > 0) {
+    const withholdingPayableUnits = moneyUnits(exactTaxSummary.withholdingPayable || "0");
+    if (withholdingPayableUnits > 0n) {
       const withholdingPayableAccountId = settings.withholding_tax_payable_account_id || null;
       if (!withholdingPayableAccountId) {
         throw new AppError(409, 'Withholding tax payable account is not configured (tax_settings.withholding_tax_payable_account_id)');
       }
-      journalLines.push({ accountId: withholdingPayableAccountId, debit: 0, credit: taxSummary.withholdingPayable, description: `Withholding tax payable for ${bill.bill_no}` });
+      journalLines.push({ accountId: withholdingPayableAccountId, debit: "0.00", credit: moneyStringFromUnits(withholdingPayableUnits), description: `Withholding tax payable for ${bill.bill_no}` });
     }
 
-    const computedPayable = Number(
-      (
-        journalLines.reduce((sum, line) => sum + Number(line.debit || 0), 0) -
-        journalLines.reduce((sum, line) => sum + Number(line.credit || 0), 0)
-      ).toFixed(2)
+    const computedPayableUnits = journalLines.reduce(
+      (sum, line) => sum + moneyUnits(line.debit || "0") - moneyUnits(line.credit || "0"),
+      0n
     );
-    if (computedPayable <= 0) {
+    if (computedPayableUnits <= 0n) {
       throw new AppError(400, `Computed payable is invalid for ${bill.bill_no}`);
     }
-    journalLines.push({ accountId: apAccountId, debit: 0, credit: computedPayable, description: `A/P for ${bill.bill_no}` });
+    journalLines.push({ accountId: apAccountId, debit: "0.00", credit: moneyStringFromUnits(computedPayableUnits), description: `A/P for ${bill.bill_no}` });
 
     const idempotencyKey = `bill:${billId}:issue`;
 
@@ -351,7 +364,18 @@ async function issueBill({ orgId, actorUserId, billId }) {
       [orgId, billId, period.id, posted.journalId, actorUserId]
     );
 
-    return rows[0];
+    const issuedBill = rows[0];
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "bill.issued",
+      entityType: "bills",
+      entityId: billId,
+      after: issuedBill,
+      client
+    });
+
+    return issuedBill;
   });
 }
 
@@ -439,6 +463,68 @@ async function rejectBillWorkflow({ orgId, actorUserId, billId, comment }) {
   });
 }
 
+async function voidBill({ orgId, actorUserId, billId, reason }) {
+  return withTransaction(async (client) => {
+    const { rows: billRows } = await client.query(
+      `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, billId]
+    );
+    if (!billRows.length) throw new AppError(404, "Bill not found");
+
+    const bill = billRows[0];
+    if (bill.status !== "issued") throw new AppError(409, "Only issued bills can be voided");
+    if (!bill.journal_entry_id) throw new AppError(500, "Bill missing journal reference");
+
+    const { rows: settlementRows } = await client.query(
+      `SELECT 1
+         FROM vendor_payment_allocations a
+         JOIN vendor_payments p ON p.id=a.vendor_payment_id
+        WHERE a.bill_id=$1 AND p.organization_id=$2 AND p.status='posted'
+        LIMIT 1`,
+      [billId, orgId]
+    );
+    if (settlementRows.length) {
+      throw new AppError(409, "Cannot void a bill with posted vendor payments; void the payments first");
+    }
+
+    const out = await journalIF.voidPostedJournal({
+      orgId,
+      journalId: bill.journal_entry_id,
+      actorUserId,
+      reason,
+      client
+    });
+
+    const { rows } = await client.query(
+      `
+      UPDATE bills
+      SET status='voided',
+          voided_at=NOW(),
+          voided_by=$3,
+          void_reason=$4,
+          reversal_journal_entry_id=$5,
+          updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *
+      `,
+      [orgId, billId, actorUserId, reason, out.reversalJournalId || null]
+    );
+
+    const result = { bill: rows[0], reversalJournalId: out.reversalJournalId };
+    await writeAudit({
+      organizationId: orgId,
+      actorUserId,
+      action: "bill.voided",
+      entityType: "bills",
+      entityId: billId,
+      after: result,
+      client
+    });
+
+    return result;
+  });
+}
+
 module.exports = {
   createDraftBill,
   getBillDetails,
@@ -446,5 +532,6 @@ module.exports = {
   issueBill,
   submitBillForApproval,
   approveBillWorkflow,
-  rejectBillWorkflow
+  rejectBillWorkflow,
+  voidBill
 };

@@ -7,6 +7,7 @@ const {
   computeTaxMoney,
 } = require('./taxMath');
 const { syncLineTaxDetailToLedger } = require('./taxLedger');
+const { stripClientCalculatedTaxAmounts } = require('./authoritativeInput');
 
 const ALLOWED_DETAIL_TABLES = new Set([
   'invoice_line_tax_details',
@@ -103,8 +104,12 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
   });
 }
 
-async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = '0.00', context = {} }) {
-  const selections = await determineTaxSelections({ client, orgId, line, context });
+async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = '0.00', context = {}, allowExplicitAmounts = false }) {
+  // Monetary amounts supplied by the browser are previews only. Normal transaction
+  // creation recalculates them server-side; controlled import/recovery callers must
+  // opt in explicitly if they truly need amount overrides.
+  const effectiveLine = allowExplicitAmounts ? line : stripClientCalculatedTaxAmounts(line);
+  const selections = await determineTaxSelections({ client, orgId, line: effectiveLine, context });
 
   const components = [];
   for (const selection of selections) {
@@ -123,7 +128,7 @@ async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = '0
   const taxableAmount = normalizeMoney(defaultTaxableAmount);
 
   return {
-    selectedTaxCodeId: line.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
+    selectedTaxCodeId: effectiveLine.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
     taxAmount,
     withholdingTaxAmount,
     grossComputedTaxAmount,
@@ -131,16 +136,16 @@ async function resolveLineTaxes({ client, orgId, line, defaultTaxableAmount = '0
     components,
     snapshot: {
       context,
-      selectedTaxCodeId: line.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
+      selectedTaxCodeId: effectiveLine.taxCodeId || (selections.length === 1 ? selections[0].taxCodeId : null),
       taxAmount,
       withholdingTaxAmount,
       grossComputedTaxAmount,
       taxableAmount,
       rateSemantics: 'percentage_points',
       classification: {
-        supplyType: line.supplyType || context.supplyType || null,
-        taxCategory: line.itemTaxCategory || line.taxCategory || line.taxTreatment || null,
-        taxProfileId: line.taxProfileId || null
+        supplyType: effectiveLine.supplyType || context.supplyType || null,
+        taxCategory: effectiveLine.itemTaxCategory || effectiveLine.taxCategory || effectiveLine.taxTreatment || null,
+        taxProfileId: effectiveLine.taxProfileId || null
       },
       components
     }

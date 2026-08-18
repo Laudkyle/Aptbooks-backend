@@ -149,7 +149,6 @@ router.get(
 router.get(
   "/:reportId/shares",
   requirePermission("reporting.reports.manage"),
-  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.listShares(ctx(req), req.params.reportId);
@@ -163,7 +162,6 @@ router.get(
 router.post(
   "/:reportId/shares",
   requirePermission("reporting.reports.manage"),
-  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.upsertShare(ctx(req), req.params.reportId, req.body || {});
@@ -192,7 +190,6 @@ router.delete(
 router.get(
   "/:reportId/schedules",
   requirePermission("reporting.reports.manage"),
-  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.listSchedules(ctx(req), req.params.reportId);
@@ -206,7 +203,6 @@ router.get(
 router.post(
   "/:reportId/schedules",
   requirePermission("reporting.reports.manage"),
-  idempotency({ required: true }),
   async (req, res, next) => {
     try {
       const out = await svc.createSchedule(ctx(req), req.params.reportId, req.body || {});

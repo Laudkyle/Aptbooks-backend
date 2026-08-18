@@ -119,22 +119,15 @@ router.post("/login", async (req, res, next) => {
     assertNotRateLimited(req, email);
 
     const { rows } = await pool.query(
-      `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled
+      `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled, auth_version
          FROM users WHERE email=$1`,
       [email],
     );
 
     if (!rows.length) {
-      await writeAudit({
-        organizationId: null,
-        actorUserId: null,
-        action: "auth.login_failed",
-        entityType: "users",
-        entityId: null,
-        ip: req.audit?.ip,
-        userAgent: req.audit?.userAgent,
-        after: { email, reason: "not_found" },
-      });
+      // audit_logs is tenant-bound (organization_id NOT NULL). An unknown email
+      // has no trustworthy tenant context, so do not manufacture one or turn a
+      // normal authentication failure into a database constraint error.
       throw new AppError(401, "Invalid credentials");
     }
 
@@ -213,12 +206,14 @@ router.post("/login", async (req, res, next) => {
       userId: user.id,
       organizationId: user.organization_id,
       email,
+      authVersion: user.auth_version,
     });
 
     const refresh = signRefreshToken({
       userId: user.id,
       organizationId: user.organization_id,
       email,
+      authVersion: user.auth_version,
     });
 
     await persistRefreshToken({
@@ -488,7 +483,7 @@ router.post("/register", async (req, res, next) => {
 
     // Get the user that was created by initializeOrganizationDefaults
     const { rows: userRows } = await client.query(
-      `SELECT id, email, organization_id, status, created_at FROM users WHERE organization_id=$1 AND email=$2`,
+      `SELECT id, email, organization_id, status, created_at, auth_version FROM users WHERE organization_id=$1 AND email=$2`,
       [org.id, email],
     );
     const user = userRows[0];
@@ -506,11 +501,13 @@ router.post("/register", async (req, res, next) => {
       userId: user.id,
       organizationId: org.id,
       email: user.email,
+      authVersion: user.auth_version,
     });
     const refresh = signRefreshToken({
       userId: user.id,
       organizationId: org.id,
       email: user.email,
+      authVersion: user.auth_version,
     });
     await persistRefreshToken({
       organizationId: org.id,
@@ -701,7 +698,7 @@ router.post("/reset-password", async (req, res, next) => {
       const passwordHash = await bcrypt.hash(newPassword, env.BCRYPT_ROUNDS);
 
       await client.query(
-        `UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2`,
+        `UPDATE users SET password_hash=$1, auth_version=auth_version+1, updated_at=NOW() WHERE id=$2`,
         [passwordHash, rec.user_id],
       );
       await client.query(
@@ -716,8 +713,6 @@ router.post("/reset-password", async (req, res, next) => {
         client,
       });
 
-      await client.query("COMMIT");
-
       await writeAudit({
         organizationId: rec.organization_id,
         actorUserId: rec.user_id,
@@ -727,8 +722,10 @@ router.post("/reset-password", async (req, res, next) => {
         ip: req.audit?.ip,
         userAgent: req.audit?.userAgent,
         after: { email: rec.email },
+        client,
       });
 
+      await client.query("COMMIT");
       res.json({ ok: true });
     } catch (e) {
       await client.query("ROLLBACK");
@@ -835,6 +832,8 @@ router.post("/logout", async (req, res, next) => {
 });
 
 router.post("/logout-all", async (req, res, next) => {
+  let client = null;
+  let inTransaction = false;
   try {
     const rt = getRefreshTokenFromRequest(req);
     if (!rt) throw new AppError(400, "refreshToken required");
@@ -856,19 +855,42 @@ router.post("/logout-all", async (req, res, next) => {
       throw new AppError(401, "Invalid refresh token");
     }
 
-    if (payload?.typ !== "refresh")
-      throw new AppError(401, "Invalid refresh token");
+    if (payload?.typ !== "refresh") throw new AppError(401, "Invalid refresh token");
 
     const userId = payload.sub;
     const organizationId = payload.organization_id;
     const familyId = payload.fid;
-
-    if (!userId || !organizationId || !familyId)
+    const jti = payload.jti;
+    if (!userId || !organizationId || !familyId || !jti) {
       throw new AppError(401, "Invalid refresh token");
+    }
 
-    await revokeAllRefreshTokensAcrossOrganizations({ userId, reason: "logout_all" });
+    client = await pool.connect();
+    await client.query("BEGIN");
+    inTransaction = true;
 
-    clearRefreshCookie(res);
+    // A previously revoked/stolen old refresh token must not be able to keep
+    // invalidating a user's newer sessions. Verify the presented token is an
+    // active persisted session before authorizing logout-all.
+    const tokenHash = crypto.createHash("sha256").update(rt).digest("hex");
+    const { rows: activeTokens } = await client.query(
+      `SELECT id FROM refresh_tokens
+        WHERE token_jti=$1 AND organization_id=$2 AND user_id=$3
+          AND token_hash=$4 AND revoked_at IS NULL AND expires_at > NOW()
+        FOR UPDATE`,
+      [jti, organizationId, userId, tokenHash],
+    );
+    if (!activeTokens.length) throw new AppError(401, "Refresh token is no longer active");
+
+    await revokeAllRefreshTokensAcrossOrganizations({
+      userId,
+      reason: "logout_all",
+      client,
+    });
+    await client.query(
+      `UPDATE users SET auth_version=auth_version+1, updated_at=NOW() WHERE id=$1`,
+      [userId],
+    );
 
     await writeAudit({
       organizationId,
@@ -879,11 +901,20 @@ router.post("/logout-all", async (req, res, next) => {
       ip: req.audit?.ip,
       userAgent: req.audit?.userAgent,
       after: { familyId },
+      client,
     });
 
+    await client.query("COMMIT");
+    inTransaction = false;
+    clearRefreshCookie(res);
     res.json({ ok: true });
   } catch (e) {
+    if (inTransaction && client) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+    }
     next(e);
+  } finally {
+    if (client) client.release();
   }
 });
 

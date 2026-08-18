@@ -462,6 +462,7 @@ router.patch("/:id", requirePermission("users.manage"), async (req, res, next) =
              phone = COALESCE($6, phone),
              status = COALESCE($7, status),
              password_hash = COALESCE($8, password_hash),
+             auth_version = auth_version + CASE WHEN $7 IS NOT NULL OR $8 IS NOT NULL THEN 1 ELSE 0 END,
              updated_at = NOW()
        WHERE organization_id=$1 AND id=$2
        RETURNING id, email, status, first_name, last_name, full_name, phone, updated_at
@@ -613,7 +614,7 @@ router.patch("/:id/disable", requirePermission("users.manage"), async (req, res,
     if (!before.length) throw new AppError(404, "User not found");
 
     const { rows: after } = await pool.query(
-      `UPDATE users SET status='disabled', updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING id, email, status`,
+      `UPDATE users SET status='disabled', auth_version=auth_version+1, updated_at=NOW() WHERE organization_id=$1 AND id=$2 RETURNING id, email, status`,
       [orgId, userId]
     );
 
@@ -721,7 +722,7 @@ router.post("/me/switch-organization", async (req, res, next) => {
 
     // Lock the user context so concurrent organization switches cannot interleave.
     const { rows: users } = await client.query(
-      `SELECT id, email, organization_id, status, is_system
+      `SELECT id, email, organization_id, status, is_system, auth_version
          FROM users
         WHERE id=$1
         FOR UPDATE`,
@@ -742,9 +743,9 @@ router.post("/me/switch-organization", async (req, res, next) => {
 
     const { rows: updated } = await client.query(
       `UPDATE users
-          SET organization_id=$1, updated_at=NOW()
+          SET organization_id=$1, auth_version=auth_version+1, updated_at=NOW()
         WHERE id=$2
-        RETURNING id, email, organization_id`,
+        RETURNING id, email, organization_id, auth_version`,
       [organizationId, userId]
     );
     const user = updated[0];
@@ -761,11 +762,13 @@ router.post("/me/switch-organization", async (req, res, next) => {
       userId: user.id,
       organizationId: user.organization_id,
       email: user.email,
+      authVersion: user.auth_version,
     });
     const refresh = signRefreshToken({
       userId: user.id,
       organizationId: user.organization_id,
       email: user.email,
+      authVersion: user.auth_version,
     });
 
     await persistRefreshToken({

@@ -16,13 +16,9 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
     const path = req.query.path ? String(req.query.path) : null;
     const correlationId = req.query.correlationId ? String(req.query.correlationId) : null;
 
-    const params = [];
-    let where = "WHERE 1=1";
-    // org-scoped if we have it
-    if (orgId) {
-      params.push(orgId);
-      where += ` AND (organization_id IS NULL OR organization_id=$${params.length})`;
-    }
+    if (!orgId) throw new AppError(403, "Organization context required");
+    const params = [orgId];
+    let where = "WHERE organization_id=$1";
     if (status) {
       params.push(status);
       where += ` AND status=$${params.length}`;
@@ -59,6 +55,7 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
 router.get("/stats/summary/", requirePermission("settings.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
+    if (!orgId) throw new AppError(403, "Organization context required");
     const days = Math.min(Number(req.query.days || 7) || 7, 90);
     const { rows } = await pool.query(
       `
@@ -69,9 +66,9 @@ router.get("/stats/summary/", requirePermission("settings.read"), async (req, re
         COUNT(DISTINCT correlation_id)::int AS unique_correlations
       FROM error_logs
       WHERE created_at >= NOW() - ($1::int * INTERVAL '1 day')
-        AND ($2::uuid IS NULL OR organization_id=$2)
+        AND organization_id=$2
       `,
-      [days, orgId || null]
+      [days, orgId]
     );
 
     const { rows: top } = await pool.query(
@@ -79,12 +76,12 @@ router.get("/stats/summary/", requirePermission("settings.read"), async (req, re
       SELECT COALESCE(path,'') AS path, COUNT(*)::int AS count
       FROM error_logs
       WHERE created_at >= NOW() - ($1::int * INTERVAL '1 day')
-        AND ($2::uuid IS NULL OR organization_id=$2)
+        AND organization_id=$2
       GROUP BY COALESCE(path,'')
       ORDER BY count DESC
       LIMIT 10
       `,
-      [days, orgId || null]
+      [days, orgId]
     );
 
     res.json({ summary: rows[0] || { total: 0, server_errors: 0, client_errors: 0, unique_correlations: 0 }, top_paths: top });
@@ -98,16 +95,17 @@ router.get("/:correlationId", requirePermission("settings.read"), async (req, re
     if (!correlationId) throw new AppError(400, "correlationId required");
 
     const orgId = req.user.organization_id;
+    if (!orgId) throw new AppError(403, "Organization context required");
     const { rows } = await pool.query(
       `
-      SELECT *
+      SELECT id, created_at, organization_id, correlation_id, method, path, status, message, user_id
       FROM error_logs
       WHERE correlation_id=$1
-        AND ($2::uuid IS NULL OR organization_id=$2 OR organization_id IS NULL)
+        AND organization_id=$2
       ORDER BY created_at DESC
       LIMIT 50
       `,
-      [correlationId, orgId || null]
+      [correlationId, orgId]
     );
     res.json({ data: rows });
   } catch (e) { next(e); }
