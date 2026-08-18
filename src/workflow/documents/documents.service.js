@@ -124,11 +124,15 @@ async function submitDocument({ orgId, documentId, actorUserId = null, client = 
         entityType: doc.entity_type || null,
         client: txClient,
       });
+      const requestActorUserId = actorUserId || doc.created_by_user_id || null;
+      const actorIsAdmin = await workflowRulesSvc.isOrganizationAdmin({
+        orgId, userId: requestActorUserId, client: txClient
+      });
       const approvalRequests = await repo.createCurrentApprovalNotifications({
         orgId,
         documentId,
-        actorUserId: actorUserId || doc.created_by_user_id || null,
-        allowCreatorApproval: Boolean(rules.allow_self_approval || rules.creator_can_approve),
+        actorUserId: requestActorUserId,
+        allowCreatorApproval: Boolean(actorIsAdmin || rules.allow_self_approval || rules.creator_can_approve),
         client: txClient,
       });
       if (!approvalRequests.length) {
@@ -167,12 +171,15 @@ async function approveDocument({ orgId, documentId, userId, comment, client = nu
       entityType: entityType || doc.entity_type || null,
       client: txClient
     });
-    workflowRulesSvc.assertCanApprove({
-      rules,
-      creatorUserId: creatorUserId || doc.created_by_user_id || null,
-      actorUserId: userId,
-      noun: entityType || doc.entity_type || "document"
-    });
+    const actorIsAdmin = await workflowRulesSvc.isOrganizationAdmin({ orgId, userId, client: txClient });
+    if (!actorIsAdmin) {
+      workflowRulesSvc.assertCanApprove({
+        rules,
+        creatorUserId: creatorUserId || doc.created_by_user_id || null,
+        actorUserId: userId,
+        noun: entityType || doc.entity_type || "document"
+      });
+    }
 
     const cur = await repo.getCurrentPendingApproval({ documentId, client: txClient });
     if (!cur) throw new AppError(409, "No pending approval step for this document");
@@ -181,8 +188,12 @@ async function approveDocument({ orgId, documentId, userId, comment, client = nu
       levelId: cur.approval_level_id,
       client: txClient,
     });
-    const isAssigned = assignees.length === 0 || assignees.some((a) => String(a.id) === String(userId));
-    if (!isAssigned) throw new AppError(403, "You are not assigned to approve this level");
+    const isAssigned = assignees.some((a) => String(a.id) === String(userId));
+    if (!actorIsAdmin && !isAssigned) {
+      throw new AppError(403, assignees.length
+        ? "You are not assigned to approve this level"
+        : "This approval level has no assigned approver; an organization administrator must approve or configure it");
+    }
 
     const { updated, next } = await repo.approveCurrentLevel({
       documentId,
@@ -206,7 +217,7 @@ async function approveDocument({ orgId, documentId, userId, comment, client = nu
       orgId,
       documentId,
       actorUserId: userId || null,
-      allowCreatorApproval: Boolean(rules.allow_self_approval || rules.creator_can_approve),
+      allowCreatorApproval: Boolean(actorIsAdmin || rules.allow_self_approval || rules.creator_can_approve),
       client: txClient,
     });
     if (!nextApprovalRequests.length) {
@@ -251,13 +262,25 @@ async function rejectDocument({ orgId, documentId, userId, comment, client = nul
       entityType: entityType || doc.entity_type || null,
       client: txClient
     });
-    workflowRulesSvc.assertCanReject({
-      rules,
-      creatorUserId: creatorUserId || doc.created_by_user_id || null,
-      actorUserId: userId,
-      noun: entityType || doc.entity_type || "document"
-    });
+    const actorIsAdmin = await workflowRulesSvc.isOrganizationAdmin({ orgId, userId, client: txClient });
+    if (!actorIsAdmin) {
+      workflowRulesSvc.assertCanReject({
+        rules,
+        creatorUserId: creatorUserId || doc.created_by_user_id || null,
+        actorUserId: userId,
+        noun: entityType || doc.entity_type || "document"
+      });
+    }
     workflowRulesSvc.assertRejectionCommentRequired({ rules, comment });
+    const cur = await repo.getCurrentPendingApproval({ documentId, client: txClient });
+    if (!cur) throw new AppError(409, "No pending approval step for this document");
+    const assignees = await repo.listApprovalLevelUsers({ orgId, levelId: cur.approval_level_id, client: txClient });
+    const isAssigned = assignees.some((a) => String(a.id) === String(userId));
+    if (!actorIsAdmin && !isAssigned) {
+      throw new AppError(403, assignees.length
+        ? "You are not assigned to reject this level"
+        : "This approval level has no assigned approver; an organization administrator must reject or configure it");
+    }
 
     const rejected = await repo.rejectCurrentLevel({
       documentId,

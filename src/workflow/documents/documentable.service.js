@@ -112,8 +112,7 @@ async function submitEntityForApproval({ orgId, actorUserId, entityType, entity,
 }
 
 async function approveEntityDocument({ orgId, actorUserId, entityType, workflowDocumentId, creatorUserId, comment, client }) {
-  const { config, documentType, rules } = await getApprovalContext({ orgId, entityType, client });
-  rulesSvc.assertCanApprove({ rules, creatorUserId, actorUserId, noun: config.noun });
+  const { config, documentType } = await getApprovalContext({ orgId, entityType, client });
   return documentsSvc.approveDocument({
     orgId,
     documentId: workflowDocumentId,
@@ -127,9 +126,7 @@ async function approveEntityDocument({ orgId, actorUserId, entityType, workflowD
 }
 
 async function rejectEntityDocument({ orgId, actorUserId, entityType, workflowDocumentId, creatorUserId, comment, client }) {
-  const { config, documentType, rules } = await getApprovalContext({ orgId, entityType, client });
-  rulesSvc.assertCanReject({ rules, creatorUserId, actorUserId, noun: config.noun });
-  rulesSvc.assertRejectionCommentRequired({ rules, comment });
+  const { config, documentType } = await getApprovalContext({ orgId, entityType, client });
   return documentsSvc.rejectDocument({
     orgId,
     documentId: workflowDocumentId,

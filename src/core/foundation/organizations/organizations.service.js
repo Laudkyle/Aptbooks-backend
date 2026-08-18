@@ -808,6 +808,36 @@ async function initializeOrganizationDefaults({
     [userId, roleId]
   );
 
+  // Approval workflow defaults: the initial Admin is immediately the approver
+  // for the global fallback ladder. Mandatory onboarding may refine or disable
+  // this later, and document-type mappings remain explicit overrides.
+  let { rows: defaultApprovalLevels } = await client.query(
+    `SELECT id FROM approval_levels WHERE organization_id=$1 AND code='DEFAULT_APPROVE' LIMIT 1`,
+    [orgId]
+  );
+  let defaultApprovalLevelId = defaultApprovalLevels[0]?.id || null;
+  if (!defaultApprovalLevelId) {
+    const { rows: seqRows } = await client.query(
+      `SELECT COALESCE(MIN(sequence),10)-1 AS sequence FROM approval_levels WHERE organization_id=$1`,
+      [orgId]
+    );
+    const { rows: createdLevels } = await client.query(
+      `INSERT INTO approval_levels(organization_id,code,name,sequence,is_active)
+       VALUES($1,'DEFAULT_APPROVE','Default Approver',$2,TRUE) RETURNING id`,
+      [orgId, seqRows[0].sequence]
+    );
+    defaultApprovalLevelId = createdLevels[0].id;
+  }
+  await client.query(
+    `INSERT INTO document_global_approval_levels(organization_id,approval_level_id,position)
+     VALUES($1,$2,0) ON CONFLICT DO NOTHING`,
+    [orgId, defaultApprovalLevelId]
+  );
+  await client.query(
+    `INSERT INTO approval_level_users(approval_level_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+    [defaultApprovalLevelId, userId]
+  );
+
 // 4) Create system user - check existence first
 const { rows: existingSystemUser } = await client.query(
   `SELECT id FROM users WHERE organization_id=$1 AND email=$2 LIMIT 1`,

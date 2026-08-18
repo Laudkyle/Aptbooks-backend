@@ -15,6 +15,22 @@ function q(client) {
   return client || pool;
 }
 
+
+async function isOrganizationAdmin({ orgId, userId, client = null }) {
+  if (!orgId || !userId) return false;
+  const { rows } = await q(client).query(
+    `SELECT 1
+       FROM user_roles ur
+       JOIN roles r ON r.id = ur.role_id
+      WHERE ur.user_id = $2
+        AND r.organization_id = $1
+        AND LOWER(r.name) IN ('admin','administrator','super admin','owner')
+      LIMIT 1`,
+    [orgId, userId]
+  );
+  return rows.length > 0;
+}
+
 function isSameUser(a, b) {
   if (!a || !b) return false;
   return String(a) === String(b);
@@ -99,6 +115,7 @@ function assertRejectionCommentRequired({ rules, comment }) {
 module.exports = {
   DEFAULT_RULES,
   getRules,
+  isOrganizationAdmin,
   isSameUser,
   assertCanApprove,
   assertCanReject,

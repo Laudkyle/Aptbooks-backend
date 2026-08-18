@@ -123,7 +123,14 @@ async function getDocumentById(a, b, c, d) {
              WHEN doc.id IS NOT NULL
               AND LOWER(doc.workflow_state_code) = 'submitted'
               AND (
-                doc.created_by_user_id IS NULL
+                EXISTS (
+                  SELECT 1 FROM user_roles ur_admin
+                  JOIN roles r_admin ON r_admin.id = ur_admin.role_id
+                  WHERE ur_admin.user_id = $3::uuid
+                    AND r_admin.organization_id = d.organization_id
+                    AND LOWER(r_admin.name) IN ('admin','administrator','super admin','owner')
+                )
+                OR doc.created_by_user_id IS NULL
                 OR doc.created_by_user_id IS DISTINCT FROM $3::uuid
                 OR COALESCE(dws.allow_self_approval, FALSE)
                 OR COALESCE(dws.creator_can_approve, FALSE)
@@ -144,16 +151,17 @@ async function getDocumentById(a, b, c, d) {
                 WHERE da.document_id = doc.id
                   AND da.status = 'PENDING'
                   AND (
-                    NOT EXISTS (
-                      SELECT 1
-                      FROM approval_level_users alu_any
-                      WHERE alu_any.approval_level_id = da.approval_level_id
-                    )
-                    OR EXISTS (
-                      SELECT 1
-                      FROM approval_level_users alu_me
+                    EXISTS (
+                      SELECT 1 FROM approval_level_users alu_me
                       WHERE alu_me.approval_level_id = da.approval_level_id
                         AND alu_me.user_id = $3::uuid
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM user_roles ur_admin2
+                      JOIN roles r_admin2 ON r_admin2.id = ur_admin2.role_id
+                      WHERE ur_admin2.user_id = $3::uuid
+                        AND r_admin2.organization_id = d.organization_id
+                        AND LOWER(r_admin2.name) IN ('admin','administrator','super admin','owner')
                     )
                   )
               )

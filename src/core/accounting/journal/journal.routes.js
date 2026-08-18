@@ -322,7 +322,7 @@ router.post("/:id/void", idempotency({ required: true }), requirePermission("acc
 router.get("/:id", requirePermission("accounting.journal.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
-    const out = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id });
+    const out = await journalAPI.getJournalWithLines({ orgId, journalId: req.params.id, currentUserId: req.user.id });
     res.json(out);
   } catch (e) {
     next(e);

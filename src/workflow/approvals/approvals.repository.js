@@ -16,14 +16,18 @@ async function listInbox({ orgId, userId, limit = 50, offset = 0, documentTypeId
   // For document workflow rows (Tier 10), apply filters only if documentTypeId is valid
   let docWhere = `WHERE d.organization_id=$1 AND da.status='PENDING'
     AND (
-      NOT EXISTS (
-        SELECT 1 FROM approval_level_users alu_any
-        WHERE alu_any.approval_level_id = da.approval_level_id
-      )
-      OR EXISTS (
+      EXISTS (
         SELECT 1 FROM approval_level_users alu_me
         WHERE alu_me.approval_level_id = da.approval_level_id
           AND alu_me.user_id = $2
+      )
+      OR EXISTS (
+        SELECT 1
+        FROM user_roles ur_admin
+        JOIN roles r_admin ON r_admin.id = ur_admin.role_id
+        WHERE ur_admin.user_id = $2
+          AND r_admin.organization_id = $1
+          AND LOWER(r_admin.name) IN ('admin','administrator','super admin','owner')
       )
     )`;
   

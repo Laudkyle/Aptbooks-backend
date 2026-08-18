@@ -74,20 +74,21 @@ async function readOnboardingState({ orgId, userId, client = pool }) {
   );
 
   let approvalRequired = false;
-  if (journalDocumentTypeId) {
-    const { rows } = await client.query(
-      `SELECT EXISTS(
-         SELECT 1
-           FROM document_type_approval_levels dtal
-           JOIN approval_levels al ON al.id=dtal.approval_level_id
-          WHERE dtal.document_type_id=$1
-            AND al.organization_id=$2
-            AND al.is_active=TRUE
-       ) AS required`,
-      [journalDocumentTypeId, orgId]
-    );
-    approvalRequired = Boolean(rows[0]?.required);
-  }
+  const { rows: approvalRows } = await client.query(
+    `SELECT EXISTS(
+       SELECT 1
+       FROM document_global_approval_levels g
+       JOIN approval_levels al ON al.id=g.approval_level_id
+       WHERE g.organization_id=$1 AND al.organization_id=$1 AND al.is_active=TRUE
+     ) OR EXISTS(
+       SELECT 1
+       FROM document_type_approval_levels dtal
+       JOIN approval_levels al ON al.id=dtal.approval_level_id
+       WHERE dtal.document_type_id=$2 AND al.organization_id=$1 AND al.is_active=TRUE
+     ) AS required`,
+    [orgId, journalDocumentTypeId]
+  );
+  approvalRequired = Boolean(approvalRows[0]?.required);
 
   const rule = ruleRows[0] || {};
   const inv = invRows[0]?.value_json || {};
@@ -116,8 +117,8 @@ async function readOnboardingState({ orgId, userId, client = pool }) {
     },
     journalWorkflow: {
       approvalRequired: org.onboarding_required && !ruleRows.length ? true : approvalRequired,
-      creatorCanApprove: org.onboarding_required && !ruleRows.length ? true : Boolean(rule.creator_can_approve || rule.allow_self_approval),
-      creatorCanPost: org.onboarding_required && !ruleRows.length ? true : Boolean(rule.creator_can_post),
+      creatorCanApprove: org.onboarding_required && !ruleRows.length ? false : Boolean(rule.creator_can_approve || rule.allow_self_approval),
+      creatorCanPost: org.onboarding_required && !ruleRows.length ? false : Boolean(rule.creator_can_post),
       requireCommentOnRejection: rule.require_comment_on_rejection !== false,
       notifyCreatorOnApproval: rule.notify_creator_on_approval !== false,
       notifyCreatorOnRejection: rule.notify_creator_on_rejection !== false
@@ -245,37 +246,68 @@ router.put("/onboarding", requirePermission("settings.manage"), async (req, res,
       ]
     );
 
-    // Approval-required is represented by the real JOURNAL_ENTRY approval
-    // ladder. With no ladder, posting can proceed without a workflow approval
-    // (subject to creator_can_post and RBAC permissions).
+    // Approval-required is represented by the global document ladder. Every
+    // document type inherits this ladder unless an administrator explicitly
+    // configures a document-type override. The default level is assigned to
+    // organization administrators so a new tenant has a working approval flow
+    // immediately after onboarding.
     await client.query(`DELETE FROM document_type_approval_levels WHERE document_type_id=$1`, [journalDocumentTypeId]);
+
+    let defaultApprovalLevelId = null;
     if (approvalRequired) {
       let { rows: levels } = await client.query(
-        `SELECT id FROM approval_levels WHERE organization_id=$1 AND code='JOURNAL_APPROVAL' LIMIT 1`,
+        `SELECT id FROM approval_levels WHERE organization_id=$1 AND code='DEFAULT_APPROVE' LIMIT 1`,
         [orgId]
       );
-      let levelId = levels[0]?.id;
-      if (!levelId) {
+      defaultApprovalLevelId = levels[0]?.id || null;
+      if (!defaultApprovalLevelId) {
         const { rows: seqRows } = await client.query(
-          `SELECT COALESCE(MAX(sequence),0)+10 AS sequence FROM approval_levels WHERE organization_id=$1`,
+          `SELECT COALESCE(MIN(sequence),10) - 1 AS sequence FROM approval_levels WHERE organization_id=$1`,
           [orgId]
         );
         const created = await client.query(
           `INSERT INTO approval_levels(organization_id, code, name, sequence, is_active)
-           VALUES($1,'JOURNAL_APPROVAL','Journal Approval',$2,TRUE)
+           VALUES($1,'DEFAULT_APPROVE','Default Approver',$2,TRUE)
            RETURNING id`,
           [orgId, seqRows[0].sequence]
         );
-        levelId = created.rows[0].id;
+        defaultApprovalLevelId = created.rows[0].id;
       } else {
-        await client.query(`UPDATE approval_levels SET is_active=TRUE WHERE id=$1 AND organization_id=$2`, [levelId, orgId]);
+        await client.query(
+          `UPDATE approval_levels SET is_active=TRUE, name='Default Approver' WHERE id=$1 AND organization_id=$2`,
+          [defaultApprovalLevelId, orgId]
+        );
       }
+
+      await client.query(`DELETE FROM document_global_approval_levels WHERE organization_id=$1`, [orgId]);
       await client.query(
-        `INSERT INTO document_type_approval_levels(document_type_id, approval_level_id, position)
-         VALUES($1,$2,0)
-         ON CONFLICT DO NOTHING`,
-        [journalDocumentTypeId, levelId]
+        `INSERT INTO document_global_approval_levels(organization_id, approval_level_id, position)
+         VALUES($1,$2,0)`,
+        [orgId, defaultApprovalLevelId]
       );
+
+      const { rows: adminRows } = await client.query(
+        `SELECT DISTINCT u.id
+           FROM users u
+           JOIN user_roles ur ON ur.user_id = u.id
+           JOIN roles r ON r.id = ur.role_id
+          WHERE u.organization_id=$1
+            AND u.status='active'
+            AND u.is_system=FALSE
+            AND r.organization_id=$1
+            AND LOWER(r.name) IN ('admin','administrator','super admin','owner')`,
+        [orgId]
+      );
+      const adminIds = adminRows.length ? adminRows.map((row) => row.id) : [userId];
+      await client.query(`DELETE FROM approval_level_users WHERE approval_level_id=$1`, [defaultApprovalLevelId]);
+      for (const adminId of adminIds) {
+        await client.query(
+          `INSERT INTO approval_level_users(approval_level_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,
+          [defaultApprovalLevelId, adminId]
+        );
+      }
+    } else {
+      await client.query(`DELETE FROM document_global_approval_levels WHERE organization_id=$1`, [orgId]);
     }
 
     const onboardingValue = {
@@ -283,6 +315,12 @@ router.put("/onboarding", requirePermission("settings.manage"), async (req, res,
       completedAt: new Date().toISOString(),
       organizationProfile: { contactEmail, contactPhone, addressLine1, city, country },
       inventoryCostMethod,
+      approvalWorkflow: {
+        scope: "global",
+        defaultApproverRole: "Admin",
+        approvalRequired,
+        defaultApprovalLevelId,
+      },
       journalWorkflow: {
         approvalRequired,
         creatorCanApprove,

@@ -238,7 +238,7 @@ async function createApprovals({ documentId, ladder, client = null }) {
       VALUES ($1,$2,$3,$4)
       ON CONFLICT (document_id, approval_level_id) DO NOTHING
       `,
-      [documentId, level.id, level.sequence, status]
+      [documentId, level.id, i + 1, status]
     );
   }
 }
@@ -263,7 +263,7 @@ async function createCurrentApprovalNotifications({ orgId, documentId, actorUser
   const r = await q(client).query(
     `
     WITH current_step AS (
-      SELECT da.approval_level_id, al.name AS approval_level_name
+      SELECT da.approval_level_id, al.code AS approval_level_code, al.name AS approval_level_name
       FROM document_approvals da
       JOIN approval_levels al ON al.id = da.approval_level_id
       WHERE da.document_id=$2 AND da.status='PENDING'
@@ -284,14 +284,24 @@ async function createCurrentApprovalNotifications({ orgId, documentId, actorUser
           AND p.code = 'approvals.act'
       )
       AND (
-        NOT EXISTS (
-          SELECT 1 FROM approval_level_users alu_any
-          WHERE alu_any.approval_level_id = cs.approval_level_id
-        )
-        OR EXISTS (
+        EXISTS (
           SELECT 1 FROM approval_level_users alu_me
           WHERE alu_me.approval_level_id = cs.approval_level_id
             AND alu_me.user_id = u.id
+        )
+        OR (
+          (cs.approval_level_code = 'DEFAULT_APPROVE' OR NOT EXISTS (
+            SELECT 1 FROM approval_level_users alu_any
+            WHERE alu_any.approval_level_id = cs.approval_level_id
+          ))
+          AND EXISTS (
+            SELECT 1
+            FROM user_roles ur_admin
+            JOIN roles r_admin ON r_admin.id = ur_admin.role_id
+            WHERE ur_admin.user_id = u.id
+              AND r_admin.organization_id = $1
+              AND LOWER(r_admin.name) IN ('admin','administrator','super admin','owner')
+          )
         )
       )
     ), doc AS (

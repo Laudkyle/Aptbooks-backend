@@ -3,6 +3,7 @@ const { AppError } = require("../../../shared/errors/AppError");
 const { parseDecimalToBigInt, bigIntToDecimalString, divideAndRoundHalfUp } = require("../../../shared/utils/money");
 const { enqueueEvent } = require("../../../modules/webhooks/webhooks.service");
 const documentableSvc = require("../../../workflow/documents/documentable.service");
+const workflowRulesSvc = require("../../../workflow/documents/documentWorkflowRules.service");
 
 // Banking integration: record posted journals that affect bank accounts into bank_transactions
 // so the cashbook/reconciliation views can include operational transactions (receipts/payments/journals)
@@ -446,11 +447,14 @@ async function postDraftJournal({ orgId, journalId, actorUserId, client: existin
       await assertJournalApprovalStateAllowsPost({ orgId, journal, client });
     }
 
-    assertCanPost({
-      settings,
-      creatorUserId: journal.created_by,
-      actorUserId,
-    });
+    const actorIsAdmin = await workflowRulesSvc.isOrganizationAdmin({ orgId, userId: actorUserId, client });
+    if (!actorIsAdmin) {
+      assertCanPost({
+        settings,
+        creatorUserId: journal.created_by,
+        actorUserId,
+      });
+    }
 
     const period = await getPeriodForUpdate(client, orgId, journal.period_id);
     if (period.status !== "open") throw new AppError(409, "Period not open");
@@ -994,7 +998,7 @@ async function assertJournalApprovalStateAllowsPost({ orgId, journal, client }) 
     actionLabel: "post"
   });
 }
-async function getJournalWithLines({ orgId, journalId }) {
+async function getJournalWithLines({ orgId, journalId, currentUserId = null }) {
   const { rows: j } = await pool.query(
     `SELECT je.*, o.base_currency_code, jet.code AS type_code
        FROM journal_entries je
@@ -1021,14 +1025,17 @@ async function getJournalWithLines({ orgId, journalId }) {
     client: null
   });
   const rules = approvalContext.rules || {};
+  const currentUserIsAdmin = currentUserId
+    ? await workflowRulesSvc.isOrganizationAdmin({ orgId, userId: currentUserId })
+    : false;
 
   return {
     journal: j[0],
     lines,
     workflow: {
       approvalRequired: Boolean(approvalContext.approvalRequired),
-      creatorCanApprove: Boolean(rules.creator_can_approve || rules.allow_self_approval),
-      creatorCanPost: Boolean(rules.creator_can_post),
+      creatorCanApprove: Boolean(currentUserIsAdmin || rules.creator_can_approve || rules.allow_self_approval),
+      creatorCanPost: Boolean(currentUserIsAdmin || rules.creator_can_post),
       requireCommentOnRejection: rules.require_comment_on_rejection !== false
     }
   };

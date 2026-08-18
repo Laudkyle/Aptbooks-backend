@@ -19,7 +19,14 @@ async function getById({ orgId, id, currentUserId, client }) {
         WHEN d.id IS NOT NULL
          AND LOWER(d.workflow_state_code) = 'submitted'
          AND (
-           d.created_by_user_id IS NULL
+           EXISTS (
+             SELECT 1 FROM user_roles ur_admin
+             JOIN roles r_admin ON r_admin.id = ur_admin.role_id
+             WHERE ur_admin.user_id = $3::uuid
+               AND r_admin.organization_id = cn.organization_id
+               AND LOWER(r_admin.name) IN ('admin','administrator','super admin','owner')
+           )
+           OR d.created_by_user_id IS NULL
            OR d.created_by_user_id IS DISTINCT FROM $3::uuid
            OR COALESCE(dws.allow_self_approval, FALSE)
            OR COALESCE(dws.creator_can_approve, FALSE)
@@ -40,16 +47,18 @@ async function getById({ orgId, id, currentUserId, client }) {
            WHERE da.document_id = d.id
              AND da.status = 'PENDING'
              AND (
-               NOT EXISTS (
-                 SELECT 1
-                 FROM approval_level_users alu_any
-                 WHERE alu_any.approval_level_id = da.approval_level_id
-               )
-               OR EXISTS (
+               EXISTS (
                  SELECT 1
                  FROM approval_level_users alu_me
                  WHERE alu_me.approval_level_id = da.approval_level_id
                    AND alu_me.user_id = $3::uuid
+               )
+               OR EXISTS (
+                 SELECT 1 FROM user_roles ur_admin2
+                 JOIN roles r_admin2 ON r_admin2.id = ur_admin2.role_id
+                 WHERE ur_admin2.user_id = $3::uuid
+                   AND r_admin2.organization_id = cn.organization_id
+                   AND LOWER(r_admin2.name) IN ('admin','administrator','super admin','owner')
                )
              )
          )
@@ -57,6 +66,13 @@ async function getById({ orgId, id, currentUserId, client }) {
         ELSE FALSE
       END AS "canApprove",
       CASE
+        WHEN EXISTS (
+          SELECT 1 FROM user_roles ur_admin_post
+          JOIN roles r_admin_post ON r_admin_post.id = ur_admin_post.role_id
+          WHERE ur_admin_post.user_id = $3::uuid
+            AND r_admin_post.organization_id = cn.organization_id
+            AND LOWER(r_admin_post.name) IN ('admin','administrator','super admin','owner')
+        ) THEN TRUE
         WHEN d.created_by_user_id = $3
         THEN COALESCE(dws.creator_can_post, FALSE)
         ELSE FALSE
