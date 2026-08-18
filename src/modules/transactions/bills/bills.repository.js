@@ -166,9 +166,13 @@ async function listBills({ orgId, query }) {
   if (query?.vendorId) { where.push(`b.vendor_id=$${i++}`); params.push(query.vendorId); }
 
   const { rows } = await pool.query(
-    `SELECT b.*, bp.name AS vendor_name, bp.code AS vendor_code
+    `SELECT b.*, bp.name AS vendor_name, bp.code AS vendor_code,
+            ap.outstanding AS outstanding,
+            COALESCE(ap.outstanding, b.net_settlement_total, b.total) AS amount_due
        FROM bills b
        LEFT JOIN business_partners bp ON bp.id=b.vendor_id AND bp.organization_id=b.organization_id
+       LEFT JOIN reporting_ap_open_items ap
+         ON ap.organization_id=b.organization_id AND ap.bill_id=b.id
       WHERE ${where.join(" AND ")} ORDER BY b.bill_date DESC, b.created_at DESC`,
     params
   );

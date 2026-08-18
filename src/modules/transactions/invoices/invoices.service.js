@@ -419,9 +419,13 @@ async function listInvoices({ orgId, query }) {
   if (query?.customerId) { where.push(`i.customer_id=$${i++}`); params.push(query.customerId); }
 
   const { rows } = await pool.query(
-    `SELECT i.*, bp.name AS customer_name, bp.code AS customer_code
+    `SELECT i.*, bp.name AS customer_name, bp.code AS customer_code,
+            ar.outstanding AS outstanding,
+            COALESCE(ar.outstanding, i.net_settlement_total, i.total) AS amount_due
        FROM invoices i
        LEFT JOIN business_partners bp ON bp.id=i.customer_id AND bp.organization_id=i.organization_id
+       LEFT JOIN reporting_ar_open_items ar
+         ON ar.organization_id=i.organization_id AND ar.invoice_id=i.id
       WHERE ${where.join(" AND ")} ORDER BY i.invoice_date DESC, i.created_at DESC`,
     params
   );

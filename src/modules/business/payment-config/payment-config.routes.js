@@ -72,6 +72,7 @@ const paymentMethodPayloadSchema = z.object({
   name: z.string().min(1),
   code: z.string().min(1),
   description: z.string().optional(),
+  defaultAccountId: z.string().uuid().nullable().optional(),
   status: z.enum(["active", "inactive"]).optional()
 });
 
@@ -79,6 +80,7 @@ const paymentMethodPatchSchema = z.object({
   name: z.string().min(1).optional(),
   code: z.string().min(1).optional(),
   description: z.string().optional(),
+  defaultAccountId: z.string().uuid().nullable().optional(),
   status: z.enum(["active", "inactive"]).optional()
 });
 

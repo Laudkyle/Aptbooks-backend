@@ -1,4 +1,20 @@
 const { pool } = require("../db/pool");
+const { AppError } = require("../shared/errors/AppError");
+
+async function assertPaymentMethodAccount({ orgId, accountId, client = null }) {
+  if (!accountId) return null;
+  const db = client || pool;
+  const { rows } = await db.query(
+    `SELECT id, code, name, is_postable, status
+       FROM chart_of_accounts
+      WHERE organization_id=$1 AND id=$2`,
+    [orgId, accountId]
+  );
+  if (!rows.length) throw new AppError(400, "Invalid default payment account");
+  if (!rows[0].is_postable) throw new AppError(400, "Default payment account must be postable");
+  if (rows[0].status !== "active") throw new AppError(400, "Default payment account must be active");
+  return rows[0];
+}
 
 async function listPaymentTerms({ orgId }) {
   const { rows } = await pool.query(
@@ -107,24 +123,49 @@ async function deletePaymentTerm({ orgId, id }) {
 
 async function listPaymentMethods({ orgId }) {
   const { rows } = await pool.query(
-    `SELECT * FROM payment_methods WHERE organization_id=$1 ORDER BY name ASC`,
+    `SELECT pm.*,
+            coa.code AS default_account_code,
+            coa.name AS default_account_name
+       FROM payment_methods pm
+       LEFT JOIN chart_of_accounts coa
+         ON coa.id = pm.default_account_id
+        AND coa.organization_id = pm.organization_id
+      WHERE pm.organization_id=$1
+      ORDER BY pm.name ASC`,
     [orgId]
   );
   return rows;
 }
 
+async function getPaymentMethodForOrg({ orgId, paymentMethodId, client = null }) {
+  if (!paymentMethodId) return null;
+  const db = client || pool;
+  const { rows } = await db.query(
+    `SELECT pm.*, coa.code AS default_account_code, coa.name AS default_account_name
+       FROM payment_methods pm
+       LEFT JOIN chart_of_accounts coa
+         ON coa.id = pm.default_account_id
+        AND coa.organization_id = pm.organization_id
+      WHERE pm.organization_id=$1 AND pm.id=$2`,
+    [orgId, paymentMethodId]
+  );
+  return rows[0] || null;
+}
+
 async function createPaymentMethod({ orgId, payload }) {
   const { name, code, description, status = "active" } = payload;
-  
+  const defaultAccountId = payload.defaultAccountId || null;
+  await assertPaymentMethodAccount({ orgId, accountId: defaultAccountId });
+
   const { rows } = await pool.query(
     `
     INSERT INTO payment_methods(
-      organization_id, name, code, description, status
+      organization_id, name, code, description, default_account_id, status
     )
-    VALUES ($1, $2, $3, $4, $5)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING *
     `,
-    [orgId, name, code, description, status]
+    [orgId, name, code, description, defaultAccountId, status]
   );
   return rows[0];
 }
@@ -147,6 +188,12 @@ async function updatePaymentMethod({ orgId, id, payload }) {
     if (payload.description !== undefined) { 
       fields.push(`description=$${i++}`); 
       params.push(payload.description); 
+    }
+    if (payload.defaultAccountId !== undefined) {
+      const defaultAccountId = payload.defaultAccountId || null;
+      await assertPaymentMethodAccount({ orgId, accountId: defaultAccountId, client });
+      fields.push(`default_account_id=$${i++}`);
+      params.push(defaultAccountId);
     }
     if (payload.status !== undefined) { 
       fields.push(`status=$${i++}`); 
@@ -237,6 +284,7 @@ module.exports = {
   updatePaymentTerm,
   deletePaymentTerm,
   listPaymentMethods,
+  getPaymentMethodForOrg,
   createPaymentMethod,
   updatePaymentMethod,
   deletePaymentMethod,

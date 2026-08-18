@@ -80,7 +80,7 @@ const createVendorPaymentSchema = z.object({
   vendorId: z.string().uuid(),
   paymentDate: z.string().min(8), // YYYY-MM-DD
   paymentMethodId: z.string().uuid().optional().nullable(),
-  cashAccountId: z.string().uuid(),
+  cashAccountId: z.string().uuid().optional().nullable(),
   amountTotal: moneyAmount,
   // Stage 3: allocations can be empty (prepayments/unapplied)
   allocations: z.array(vendorPaymentAllocationSchema).optional().default([])
@@ -112,7 +112,7 @@ const createCustomerReceiptSchema = z.object({
   customerId: z.string().uuid(),
   receiptDate: z.string().min(8), // YYYY-MM-DD
   paymentMethodId: z.string().uuid().optional().nullable(),
-  cashAccountId: z.string().uuid(),
+  cashAccountId: z.string().uuid().optional().nullable(),
   amountTotal: moneyAmount,
   memo: z.string().optional().nullable(),
   // Stage 3: allocations can be empty (unapplied cash)

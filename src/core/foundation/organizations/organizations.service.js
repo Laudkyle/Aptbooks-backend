@@ -149,7 +149,7 @@ async function initializeOrganizationDefaults({
 
   return rows[0].id;
 };
-  const ensurePaymentConfig = async (orgId) => {
+  const ensurePaymentConfig = async ({ orgId, cashAccountId, bankAccountId }) => {
     // Payment terms
     const terms = [
       { name: "Due on Receipt", netDays: 0, isDefault: true },
@@ -180,20 +180,22 @@ async function initializeOrganizationDefaults({
 
     // Payment methods
     const methods = [
-      { code: "CASH", name: "Cash" },
-      { code: "BANK", name: "Bank Transfer" },
-      { code: "MOMO", name: "Mobile Money" },
-      { code: "CHEQUE", name: "Cheque" },
+      { code: "CASH", name: "Cash", defaultAccountId: cashAccountId || null },
+      { code: "BANK", name: "Bank Transfer", defaultAccountId: bankAccountId || null },
+      { code: "MOMO", name: "Mobile Money", defaultAccountId: null },
+      { code: "CHEQUE", name: "Cheque", defaultAccountId: bankAccountId || null },
     ];
 
     for (const m of methods) {
       await client.query(
         `
-        INSERT INTO payment_methods(organization_id, code, name, status)
-        VALUES ($1,$2,$3,'active')
-        ON CONFLICT (organization_id, code) DO NOTHING
+        INSERT INTO payment_methods(organization_id, code, name, default_account_id, status)
+        VALUES ($1,$2,$3,$4,'active')
+        ON CONFLICT (organization_id, code) DO UPDATE
+          SET default_account_id = COALESCE(payment_methods.default_account_id, EXCLUDED.default_account_id),
+              status = 'active'
         `,
-        [orgId, m.code, m.name]
+        [orgId, m.code, m.name, m.defaultAccountId]
       );
     }
   };
@@ -894,13 +896,14 @@ if (existingSystemUser.length === 0) {
   const inventoryClearingAccountId = await getCoaIdByCode(orgId, "2100");
   const cogsAccountId = await getCoaIdByCode(orgId, "5200");
   const inventoryAdjustmentAccountId = await getCoaIdByCode(orgId, "5300");
+  const cashAccountId = await getCoaIdByCode(orgId, "1000");
   const bankGlAccountId = await getCoaIdByCode(orgId, "1010");
 
   // 8) Create open period
   const periodId = await ensureOpenPeriod(orgId);
 
   // 9) Payment config
-  await ensurePaymentConfig(orgId);
+  await ensurePaymentConfig({ orgId, cashAccountId, bankAccountId: bankGlAccountId });
 
   // 10) Demo customer
   const demoCustomerId = await ensureDemoCustomer({ orgId, arAccountId });
@@ -931,7 +934,7 @@ if (existingSystemUser.length === 0) {
     demoCustomerId,
     demoVendorId,
     accounts: {
-      cashAccountId: await getCoaIdByCode(orgId, "1000"),
+      cashAccountId,
       bankGlAccountId,
       arAccountId,
       inventoryAccountId,

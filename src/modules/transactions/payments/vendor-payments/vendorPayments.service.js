@@ -24,6 +24,7 @@ const {
 const { buildDetailMeta, round2 } = require("../../_shared/detailEnrichment");
 const ghWithholdingSvc = require("../../../../core/accounting/tax/ghanaWithholding.service");
 const { writeAudit } = require("../../../../core/foundation/audit-logs/audit.service");
+const { resolvePaymentAccount } = require("../../_shared/paymentAccount.service");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -104,8 +105,6 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
   if (vendor.status !== "active") throw new AppError(400, "Vendor is inactive");
   if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
 
-  await assertPostableActiveAccount({ orgId, accountId: payload.cashAccountId, errMsg: "Invalid cashAccountId" });
-
   const allocations = Array.isArray(payload.allocations) ? payload.allocations : [];
 
   // Validate allocations (optional at draft): bills must be issued/paid, same vendor, and not exceed outstanding
@@ -135,6 +134,9 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
   try {
     await client.query("BEGIN");
 
+    const { accountId: paymentAccountId } = await resolvePaymentAccount({
+      orgId, paymentMethodId: payload.paymentMethodId, cashAccountId: payload.cashAccountId, client
+    });
     const baseCurrency = await getOrgBaseCurrency(client, orgId);
 
     const paymentNo = await repo.nextPaymentNo(client, orgId);
@@ -144,7 +146,7 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
       paymentNo,
       paymentDate: payload.paymentDate,
       paymentMethodId: payload.paymentMethodId,
-      cashAccountId: payload.cashAccountId,
+      cashAccountId: paymentAccountId,
       amountTotal,
       currencyCode: baseCurrency
     });
@@ -179,7 +181,9 @@ async function updateDraftVendorPayment({ orgId, actorUserId, id, payload }) {
     if (!rows.length) throw new AppError(404, "Vendor payment not found");
     const before = rows[0];
     if (before.status !== 'draft') throw new AppError(409, "Only draft vendor payments can be edited");
-    await assertPostableActiveAccount({ orgId, accountId: payload.cashAccountId, errMsg: "Invalid cashAccountId", client });
+    const { accountId: paymentAccountId } = await resolvePaymentAccount({
+      orgId, paymentMethodId: payload.paymentMethodId, cashAccountId: payload.cashAccountId, client
+    });
 
     const allocations = Array.isArray(payload.allocations) ? payload.allocations : [];
     let sumAllocCents = 0n;
@@ -203,7 +207,7 @@ async function updateDraftVendorPayment({ orgId, actorUserId, id, payload }) {
           SET vendor_id=$3, payment_date=$4, payment_method_id=$5, cash_account_id=$6,
               amount_total=$7, unapplied_amount=0, discount_total=0, settlement_total=0, updated_at=NOW()
         WHERE organization_id=$1 AND id=$2 RETURNING *`,
-      [orgId, id, payload.vendorId, payload.paymentDate, payload.paymentMethodId || null, payload.cashAccountId, amountTotal]
+      [orgId, id, payload.vendorId, payload.paymentDate, payload.paymentMethodId || null, paymentAccountId, amountTotal]
     );
     await repo.deleteAllocations(client, id);
     for (const a of allocations) {
