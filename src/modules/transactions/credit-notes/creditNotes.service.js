@@ -438,12 +438,13 @@ async function issueCreditNote({ orgId, actorUserId, id }) {
 
 async function applyCreditNote({ orgId, actorUserId, id, payload }) {
   return withTransaction(async (client) => {
+    const amountAppliedCents = parseDecimalToBigInt(payload?.amountApplied ?? payload?.amount_applied ?? payload?.amount ?? '0', 2);
     const normalizedPayload = {
       invoiceId: String(payload?.invoiceId ?? payload?.invoice_id ?? '').trim(),
-      amountApplied: Number(payload?.amountApplied ?? payload?.amount_applied ?? payload?.amount ?? 0)
+      amountApplied: bigIntToDecimalString(amountAppliedCents, 2)
     };
     if (!normalizedPayload.invoiceId) throw new AppError(400, "invoiceId is required");
-    if (!Number.isFinite(normalizedPayload.amountApplied) || normalizedPayload.amountApplied <= 0) {
+    if (amountAppliedCents <= 0n) {
       throw new AppError(400, "amountApplied must be > 0", null, "validation_error");
     }
 
@@ -461,16 +462,16 @@ async function applyCreditNote({ orgId, actorUserId, id, payload }) {
     if (inv.status === 'voided') throw new AppError(409, "Cannot apply to voided invoice");
 
     const cnBal = await getCreditNoteBalances({ orgId, creditNoteId: id, client });
-    if (normalizedPayload.amountApplied > cnBal.remaining + 1e-9) throw new AppError(409, "Amount exceeds credit note remaining balance");
+    if (amountAppliedCents > parseDecimalToBigInt(cnBal.remaining ?? '0', 2)) throw new AppError(409, "Amount exceeds credit note remaining balance");
 
     const invOpen = await getInvoiceOpenBalance({ orgId, invoiceId: normalizedPayload.invoiceId, client });
-    if (normalizedPayload.amountApplied > invOpen + 1e-9) throw new AppError(409, "Amount exceeds invoice open balance");
+    if (amountAppliedCents > parseDecimalToBigInt(invOpen ?? '0', 2)) throw new AppError(409, "Amount exceeds invoice open balance");
 
     const app = await repo.insertApplication({
       orgId,
       creditNoteId: id,
       invoiceId: normalizedPayload.invoiceId,
-      amountApplied: Number(normalizedPayload.amountApplied.toFixed(2)),
+      amountApplied: normalizedPayload.amountApplied,
       actorUserId,
       client
     });

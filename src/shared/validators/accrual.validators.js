@@ -1,14 +1,16 @@
 const { z, uuid, isoDate } = require("./common.validators");
+const { positiveMoneyAmount } = require("./financial.validators");
+const { parseDecimalToBigInt } = require("../utils/money");
 
 const accrualRuleLineSchema = z.object({
   accountId: uuid,
   dc: z.enum(["debit", "credit"]),
-  amountValue: z.number().positive(),
+  amountValue: positiveMoneyAmount,
   description: z.string().max(300).optional(),
 });
 const deferralScheduleSchema = z.object({
-  totalAmount: z.number().positive(),
-  periodCount: z.number().positive(),
+  totalAmount: positiveMoneyAmount,
+  periodCount: z.coerce.number().int().positive(),
   startPeriodId: z.uuid()
 });
 const createAccrualRuleSchema = z
@@ -38,11 +40,11 @@ const createAccrualRuleSchema = z
   })
   .superRefine((v, ctx) => {
     // enforce balanced template for fixed-value rules
-    let debit = 0,
-      credit = 0;
+    let debit = 0n,
+      credit = 0n;
     for (const [i, l] of v.lines.entries()) {
-      const amt = Number(l.amountValue || 0);
-      if (amt <= 0) {
+      const amt = parseDecimalToBigInt(l.amountValue || "0", 2);
+      if (amt <= 0n) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: `Line ${i + 1} amountValue must be > 0`,
@@ -52,7 +54,7 @@ const createAccrualRuleSchema = z
       if (l.dc === "debit") debit += amt;
       else credit += amt;
     }
-    if (Number(debit.toFixed(2)) !== Number(credit.toFixed(2))) {
+    if (debit !== credit) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Accrual rule lines not balanced",

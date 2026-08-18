@@ -1,19 +1,20 @@
 
 const { z } = require("zod");
+const { moneyAmount, positiveMoneyAmount, quantityAmount } = require("./financial.validators");
 
 const taxSelectionSchema = z.object({
   taxCodeId: z.string().uuid(),
-  taxableAmount: z.number().nonnegative().optional(),
-  taxAmount: z.number().nonnegative().optional()
+  taxableAmount: moneyAmount.optional(),
+  taxAmount: moneyAmount.optional()
 });
 
 const lineSchema = z.object({
   description: z.string().min(1),
-  quantity: z.number().positive().optional(),
-  unitPrice: z.number().nonnegative().optional(),
-  lineTotal: z.number().nonnegative().optional(),
-  taxableAmount: z.number().nonnegative().optional(),
-  taxAmount: z.number().nonnegative().optional(),
+  quantity: quantityAmount.optional(),
+  unitPrice: moneyAmount.optional(),
+  lineTotal: moneyAmount.optional(),
+  taxableAmount: moneyAmount.optional(),
+  taxAmount: moneyAmount.optional(),
   accountId: z.string().uuid().optional().nullable(),
   itemId: z.string().uuid().optional().nullable(),
   taxCodeId: z.string().uuid().optional().nullable(),
@@ -43,7 +44,7 @@ const baseCreateSchema = z.object({
   sourceDocumentId: z.string().uuid().optional().nullable(),
   reference: z.string().optional().nullable(),
   memo: z.string().optional().nullable(),
-  amountTotal: z.number().nonnegative().optional(),
+  amountTotal: moneyAmount.optional(),
   currencyCode: z.string().min(3).max(3).optional().nullable(),
   meta: z.record(z.string(), z.unknown()).optional().nullable(),
   lines: z.array(lineSchema).optional().default([])
@@ -94,7 +95,7 @@ const advanceSchema = baseCreateSchema.extend({
   employeeId: z.string().uuid().optional().nullable(),
   cashAccountId: z.string().uuid(),
   primaryAccountId: z.string().uuid(),
-  amountTotal: z.number().positive(),
+  amountTotal: positiveMoneyAmount,
   lines: z.array(lineSchema).optional().default([])
 }).superRefine((val, ctx) => {
   if (val.advanceType === "staff" && !val.employeeId) {
@@ -117,7 +118,7 @@ const refundSchema = baseCreateSchema.extend({
   partnerId: z.string().uuid(),
   cashAccountId: z.string().uuid(),
   primaryAccountId: z.string().uuid(),
-  amountTotal: z.number().positive(),
+  amountTotal: positiveMoneyAmount,
   lines: z.array(lineSchema).optional().default([])
 });
 

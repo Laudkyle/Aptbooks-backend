@@ -1,7 +1,8 @@
 const { z } = require("zod");
+const { positiveMoneyAmount } = require("../../../shared/validators/financial.validators");
 
 const createPaystackIntentSchema = z.object({
-  amount: z.number().positive(),
+  amount: positiveMoneyAmount,
   currency: z.string().min(3).max(3).default("GHS"),
   customerEmail: z.string().email(),
   callbackUrl: z.string().url().optional(),
@@ -10,7 +11,7 @@ const createPaystackIntentSchema = z.object({
 });
 
 const createMtnRequestToPaySchema = z.object({
-  amount: z.number().positive(),
+  amount: positiveMoneyAmount,
   currency: z.string().min(3).max(3).default("EUR"),
   phoneNumber: z.string().min(8),
   payerMessage: z.string().max(140).optional(),

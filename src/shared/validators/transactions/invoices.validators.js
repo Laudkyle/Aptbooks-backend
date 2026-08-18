@@ -1,17 +1,18 @@
 const { z } = require("zod");
+const { moneyAmount, quantityAmount } = require("../financial.validators");
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 const taxSelectionSchema = z.object({
   taxCodeId: z.string().uuid(),
-  taxableAmount: z.coerce.number().nonnegative().optional(),
-  taxAmount: z.coerce.number().nonnegative().optional()
+  taxableAmount: moneyAmount.optional(),
+  taxAmount: moneyAmount.optional()
 });
 
 const lineSchema = z.object({
   description: z.string().min(2).max(500),
-  quantity: z.coerce.number().positive().default(1),
-  unitPrice: z.coerce.number().min(0),
+  quantity: quantityAmount.default("1"),
+  unitPrice: moneyAmount,
   revenueAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxProfileId: z.string().uuid().optional().nullable(),
@@ -20,15 +21,15 @@ const lineSchema = z.object({
   itemTaxCategory: z.string().max(60).optional().nullable(),
   taxTreatment: z.enum(['standard', 'zero_rated', 'exempt', 'relieved', 'out_of_scope', 'reverse_charge', 'import', 'export', 'non_recoverable']).optional(),
   placeOfSupplyCountryCode: z.string().length(2).optional().nullable(),
-  taxAmount: z.coerce.number().nonnegative().optional(),
-  taxableAmount: z.coerce.number().nonnegative().optional(),
+  taxAmount: moneyAmount.optional(),
+  taxableAmount: moneyAmount.optional(),
   withholdingApplicable: z.coerce.boolean().optional(),
   withholdingTaxCodeId: z.string().uuid().optional().nullable(),
   withholdingRateOverride: z.coerce.number().min(0).max(100).optional(),
   recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
   exemptionReasonCode: z.string().max(60).optional().nullable(),
   reverseCharge: z.coerce.boolean().optional(),
-  lineTotal: z.coerce.number().nonnegative().optional(),
+  lineTotal: moneyAmount.optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {

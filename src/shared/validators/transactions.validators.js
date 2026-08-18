@@ -1,9 +1,10 @@
 const { z } = require("zod");
+const { moneyAmount, positiveMoneyAmount, quantityAmount } = require("./financial.validators");
 
 const taxSelectionSchema = z.object({
   taxCodeId: z.string().uuid(),
-  taxableAmount: z.number().nonnegative().optional(),
-  taxAmount: z.number().nonnegative().optional()
+  taxableAmount: moneyAmount.optional(),
+  taxAmount: moneyAmount.optional()
 });
 
 
@@ -13,8 +14,8 @@ const taxSelectionSchema = z.object({
 
 const createBillLineSchema = z.object({
   description: z.string().min(1),
-  quantity: z.number().positive().optional(),
-  unitPrice: z.number().nonnegative(),
+  quantity: quantityAmount.optional(),
+  unitPrice: moneyAmount,
   expenseAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxProfileId: z.string().uuid().optional().nullable(),
@@ -23,15 +24,15 @@ const createBillLineSchema = z.object({
   itemTaxCategory: z.string().max(60).optional().nullable(),
   taxTreatment: z.enum(['standard', 'zero_rated', 'exempt', 'relieved', 'out_of_scope', 'reverse_charge', 'import', 'export', 'non_recoverable']).optional(),
   placeOfSupplyCountryCode: z.string().length(2).optional().nullable(),
-  taxAmount: z.number().nonnegative().optional(),
-  taxableAmount: z.number().nonnegative().optional(),
+  taxAmount: moneyAmount.optional(),
+  taxableAmount: moneyAmount.optional(),
   withholdingApplicable: z.coerce.boolean().optional(),
   withholdingTaxCodeId: z.string().uuid().optional().nullable(),
   withholdingRateOverride: z.coerce.number().min(0).max(100).optional(),
   recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
   exemptionReasonCode: z.string().max(60).optional().nullable(),
   reverseCharge: z.coerce.boolean().optional(),
-  lineTotal: z.number().nonnegative().optional(),
+  lineTotal: moneyAmount.optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
@@ -72,7 +73,7 @@ const vendorPaymentAllocationSchema = z.preprocess((val) => {
   return val;
 }, z.object({
   billId: z.string().uuid(),
-  amountApplied: z.coerce.number().positive()
+  amountApplied: positiveMoneyAmount
 }));
 
 const createVendorPaymentSchema = z.object({
@@ -80,7 +81,7 @@ const createVendorPaymentSchema = z.object({
   paymentDate: z.string().min(8), // YYYY-MM-DD
   paymentMethodId: z.string().uuid().optional().nullable(),
   cashAccountId: z.string().uuid(),
-  amountTotal: z.number().nonnegative(),
+  amountTotal: moneyAmount,
   // Stage 3: allocations can be empty (prepayments/unapplied)
   allocations: z.array(vendorPaymentAllocationSchema).optional().default([])
 });
@@ -103,7 +104,7 @@ const customerReceiptAllocationSchema = z.preprocess((val) => {
   return val;
 }, z.object({
   invoiceId: z.string().uuid(),
-  amountApplied: z.coerce.number().positive()
+  amountApplied: positiveMoneyAmount
 }));
 
 const createCustomerReceiptSchema = z.object({
@@ -112,7 +113,7 @@ const createCustomerReceiptSchema = z.object({
   receiptDate: z.string().min(8), // YYYY-MM-DD
   paymentMethodId: z.string().uuid().optional().nullable(),
   cashAccountId: z.string().uuid(),
-  amountTotal: z.number().nonnegative(),
+  amountTotal: moneyAmount,
   memo: z.string().optional().nullable(),
   // Stage 3: allocations can be empty (unapplied cash)
   allocations: z.array(customerReceiptAllocationSchema).optional().default([])
@@ -128,8 +129,8 @@ const voidCustomerReceiptSchema = z.object({
 
 const creditNoteLineSchema = z.object({
   description: z.string().min(1),
-  quantity: z.number().positive().optional(),
-  unitPrice: z.number().nonnegative(),
+  quantity: quantityAmount.optional(),
+  unitPrice: moneyAmount,
   revenueAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxProfileId: z.string().uuid().optional().nullable(),
@@ -138,15 +139,15 @@ const creditNoteLineSchema = z.object({
   itemTaxCategory: z.string().max(60).optional().nullable(),
   taxTreatment: z.enum(['standard', 'zero_rated', 'exempt', 'relieved', 'out_of_scope', 'reverse_charge', 'import', 'export', 'non_recoverable']).optional(),
   placeOfSupplyCountryCode: z.string().length(2).optional().nullable(),
-  taxAmount: z.number().nonnegative().optional(),
-  taxableAmount: z.number().nonnegative().optional(),
+  taxAmount: moneyAmount.optional(),
+  taxableAmount: moneyAmount.optional(),
   withholdingApplicable: z.coerce.boolean().optional(),
   withholdingTaxCodeId: z.string().uuid().optional().nullable(),
   withholdingRateOverride: z.coerce.number().min(0).max(100).optional(),
   recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
   exemptionReasonCode: z.string().max(60).optional().nullable(),
   reverseCharge: z.coerce.boolean().optional(),
-  lineTotal: z.number().nonnegative().optional(),
+  lineTotal: moneyAmount.optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
@@ -163,7 +164,7 @@ const createCreditNoteSchema = z.object({
 
 const applyCreditNoteSchema = z.object({
   invoiceId: z.string().uuid(),
-  amountApplied: z.coerce.number().positive()
+  amountApplied: positiveMoneyAmount
 });
 
 /** =========================
@@ -172,8 +173,8 @@ const applyCreditNoteSchema = z.object({
 
 const debitNoteLineSchema = z.object({
   description: z.string().min(1),
-  quantity: z.number().positive().optional(),
-  unitPrice: z.number().nonnegative(),
+  quantity: quantityAmount.optional(),
+  unitPrice: moneyAmount,
   expenseAccountId: z.string().uuid(),
   taxCodeId: z.string().uuid().optional().nullable(),
   taxProfileId: z.string().uuid().optional().nullable(),
@@ -182,15 +183,15 @@ const debitNoteLineSchema = z.object({
   itemTaxCategory: z.string().max(60).optional().nullable(),
   taxTreatment: z.enum(['standard', 'zero_rated', 'exempt', 'relieved', 'out_of_scope', 'reverse_charge', 'import', 'export', 'non_recoverable']).optional(),
   placeOfSupplyCountryCode: z.string().length(2).optional().nullable(),
-  taxAmount: z.number().nonnegative().optional(),
-  taxableAmount: z.number().nonnegative().optional(),
+  taxAmount: moneyAmount.optional(),
+  taxableAmount: moneyAmount.optional(),
   withholdingApplicable: z.coerce.boolean().optional(),
   withholdingTaxCodeId: z.string().uuid().optional().nullable(),
   withholdingRateOverride: z.coerce.number().min(0).max(100).optional(),
   recoverablePercentOverride: z.coerce.number().min(0).max(1).optional(),
   exemptionReasonCode: z.string().max(60).optional().nullable(),
   reverseCharge: z.coerce.boolean().optional(),
-  lineTotal: z.number().nonnegative().optional(),
+  lineTotal: moneyAmount.optional(),
   taxes: z.array(taxSelectionSchema).optional()
 }).superRefine((val, ctx) => {
   if (val.taxCodeId && Array.isArray(val.taxes) && val.taxes.length) {
@@ -207,7 +208,7 @@ const createDebitNoteSchema = z.object({
 
 const applyDebitNoteSchema = z.object({
   billId: z.string().uuid(),
-  amountApplied: z.coerce.number().positive()
+  amountApplied: positiveMoneyAmount
 });
 
 /** =========================

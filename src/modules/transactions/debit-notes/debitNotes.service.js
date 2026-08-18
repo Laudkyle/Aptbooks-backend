@@ -427,12 +427,13 @@ async function issueDebitNote({ orgId, actorUserId, id }) {
 
 async function applyDebitNote({ orgId, actorUserId, id, payload }) {
   return withTransaction(async (client) => {
+    const amountAppliedCents = parseDecimalToBigInt(payload?.amountApplied ?? payload?.amount_applied ?? payload?.amount ?? '0', 2);
     const normalizedPayload = {
       billId: String(payload?.billId ?? payload?.bill_id ?? '').trim(),
-      amountApplied: Number(payload?.amountApplied ?? payload?.amount_applied ?? payload?.amount ?? 0)
+      amountApplied: bigIntToDecimalString(amountAppliedCents, 2)
     };
     if (!normalizedPayload.billId) throw new AppError(400, "billId is required");
-    if (!Number.isFinite(normalizedPayload.amountApplied) || normalizedPayload.amountApplied <= 0) {
+    if (amountAppliedCents <= 0n) {
       throw new AppError(400, "amountApplied must be > 0", null, "validation_error");
     }
 
@@ -450,16 +451,16 @@ async function applyDebitNote({ orgId, actorUserId, id, payload }) {
     if (bill.status === 'voided') throw new AppError(409, "Cannot apply to voided bill");
 
     const dnBal = await getDebitNoteBalances({ orgId, debitNoteId: id, client });
-    if (normalizedPayload.amountApplied > dnBal.remaining + 1e-9) throw new AppError(409, "Amount exceeds debit note remaining balance");
+    if (amountAppliedCents > parseDecimalToBigInt(dnBal.remaining ?? '0', 2)) throw new AppError(409, "Amount exceeds debit note remaining balance");
 
     const billOpen = await getBillOpenBalance({ orgId, billId: normalizedPayload.billId, client });
-    if (normalizedPayload.amountApplied > billOpen + 1e-9) throw new AppError(409, "Amount exceeds bill open balance");
+    if (amountAppliedCents > parseDecimalToBigInt(billOpen ?? '0', 2)) throw new AppError(409, "Amount exceeds bill open balance");
 
     const app = await repo.insertApplication({
       orgId,
       debitNoteId: id,
       billId: normalizedPayload.billId,
-      amountApplied: Number(normalizedPayload.amountApplied.toFixed(2)),
+      amountApplied: normalizedPayload.amountApplied,
       actorUserId,
       client
     });

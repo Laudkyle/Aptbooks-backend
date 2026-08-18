@@ -1,4 +1,5 @@
 const { z } = require("zod");
+const { moneyAmount, positiveMoneyAmount } = require("./financial.validators");
 const uuid = z.string().uuid();
 const isoDate = z.string().min(8); // YYYY-MM-DD
 
@@ -28,8 +29,8 @@ const createFixedAssetSchema = z.object({
   code: z.string().min(1),
   name: z.string().min(1),
   acquisitionDate: isoDate,
-  cost: z.number().nonnegative(),
-  salvageValue: z.number().nonnegative().optional().default(0),
+  cost: moneyAmount,
+  salvageValue: moneyAmount.optional().default("0"),
   locationId: uuid.optional().nullable().default(null),
   departmentId: uuid.optional().nullable().default(null),
   costCenterId: uuid.optional().nullable().default(null),
@@ -40,8 +41,8 @@ const updateFixedAssetSchema = z.object({
   code: z.string().min(1).optional(),
   name: z.string().min(1).optional(),
   acquisitionDate: isoDate.optional(),
-  cost: z.number().nonnegative().optional(),
-  salvageValue: z.number().nonnegative().optional(),
+  cost: moneyAmount.optional(),
+  salvageValue: moneyAmount.optional(),
   locationId: uuid.optional().nullable(),
   departmentId: uuid.optional().nullable(),
   costCenterId: uuid.optional().nullable(),
@@ -58,7 +59,7 @@ const acquireFixedAssetSchema = z.object({
 const disposeFixedAssetSchema = z.object({
   periodId: uuid,
   entryDate: isoDate,
-  proceeds: z.number().nonnegative().default(0),
+  proceeds: moneyAmount.default("0"),
   proceedsAccountId: uuid,
   memo: z.string().max(500).optional(),
 });
@@ -75,7 +76,7 @@ const assetTransferSchema = z.object({
 const assetRevaluationSchema = z.object({
   periodId: uuid,
   entryDate: isoDate,
-  newValue: z.number().nonnegative(),
+  newValue: moneyAmount,
   revaluationReserveAccountId: uuid,
   memo: z.string().max(500).optional(),
 });
@@ -83,7 +84,7 @@ const assetRevaluationSchema = z.object({
 const assetImpairmentSchema = z.object({
   periodId: uuid,
   entryDate: isoDate,
-  impairmentAmount: z.number().positive(),
+  impairmentAmount: positiveMoneyAmount,
   impairmentLossAccountId: uuid,
   memo: z.string().max(500).optional(),
 });
