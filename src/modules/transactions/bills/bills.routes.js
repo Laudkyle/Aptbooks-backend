@@ -45,6 +45,15 @@ router.post("/", idempotency({ required: true }), requirePermission("transaction
   } catch (e) { next(e); }
 });
 
+router.put("/:id", idempotency({ required: true }), requirePermission("transactions.bill.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const payload = validate(createBillSchema, req.body);
+    res.json(await svc.updateDraftBill({ orgId, actorUserId, billId: req.params.id, payload }));
+  } catch (e) { next(e); }
+});
+
 router.get("/", requirePermission("transactions.bill.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

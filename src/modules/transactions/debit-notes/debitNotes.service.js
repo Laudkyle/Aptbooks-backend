@@ -137,6 +137,41 @@ async function createDraftDebitNote({ orgId, actorUserId, payload }) {
   });
 }
 
+async function updateDraftDebitNote({ orgId, actorUserId, id, payload }) {
+  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: payload.vendorId });
+  if (vendor.type !== 'vendor') throw new AppError(400, "Partner is not a vendor");
+  if (vendor.status !== 'active') throw new AppError(400, "Vendor is inactive");
+  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT * FROM debit_notes WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Debit Note not found");
+    const before = rows[0];
+    if (before.status !== 'draft') throw new AppError(409, "Only draft debit notes can be edited");
+
+    const totals = await calcTotals({ client, orgId, lines: payload.lines, payload });
+    const { rows: updatedRows } = await client.query(
+      `UPDATE debit_notes
+          SET vendor_id=$3, debit_note_date=$4, memo=$5, subtotal=$6, tax_total=$7, total=$8, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, id, payload.vendorId, payload.debitNoteDate, payload.memo || null, totals.subtotal, totals.tax_total, totals.total]
+    );
+    await client.query(`DELETE FROM debit_note_lines WHERE debit_note_id=$1`, [id]);
+    for (let i = 0; i < payload.lines.length; i++) {
+      const l = payload.lines[i];
+      const { rows: lineRows } = await client.query(
+        `INSERT INTO debit_note_lines(
+           debit_note_id, line_no, description, quantity, unit_price, line_total, expense_account_id, tax_code_id, tax_amount, taxable_amount
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [id, i + 1, l.description, l.quantity ?? 1, l.unitPrice, l.lineTotal, l.expenseAccountId, l.taxCodeId || null, l.taxAmount || 0, l.taxableAmount ?? l.lineTotal ?? 0]
+      );
+      await require("../../../shared/tax/multiTax").insertLineTaxDetails({ client, tableName: 'debit_note_line_tax_details', lineId: lineRows[0].id, details: l.taxDetails || [] });
+    }
+    await writeAudit({ organizationId: orgId, actorUserId, action: 'debit_note.draft_updated', entityType: 'debit_notes', entityId: id, before, after: updatedRows[0], client });
+    return updatedRows[0];
+  });
+}
+
 async function listDebitNotes({ orgId, query }) {
   const client = await pool.connect();
   try {
@@ -477,6 +512,7 @@ async function voidDebitNote({ orgId, actorUserId, id, reason }) {
 
 module.exports = {
   createDraftDebitNote,
+  updateDraftDebitNote,
   listDebitNotes,
   getDebitNoteDetails,
   submitDebitNoteForApproval,

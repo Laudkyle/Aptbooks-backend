@@ -29,6 +29,15 @@ function createOpsDocRouter(config) {
     } catch (e) { next(e); }
   });
 
+  router.put("/:id", idempotency({ required: true }), requirePermission(`${permissionPrefix}.manage`), async (req, res, next) => {
+    try {
+      const orgId = req.user.organization_id;
+      const actorUserId = req.user.id;
+      const payload = validate(createSchema, req.body || {});
+      res.json(await service.updateDraft({ orgId, actorUserId, documentId: req.params.id, payload }));
+    } catch (e) { next(e); }
+  });
+
   router.get("/", requirePermission(`${permissionPrefix}.read`), async (req, res, next) => {
     try {
       res.json(await service.list({ orgId: req.user.organization_id, query: req.query }));

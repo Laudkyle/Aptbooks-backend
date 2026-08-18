@@ -37,6 +37,15 @@ router.post("/", idempotency({ required: true }), requirePermission("transaction
   } catch (e) { next(e); }
 });
 
+router.put("/:id", idempotency({ required: true }), requirePermission("transactions.debit_note.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const payload = validate(createDebitNoteSchema, req.body);
+    res.json(await svc.updateDraftDebitNote({ orgId, actorUserId, id: req.params.id, payload }));
+  } catch (e) { next(e); }
+});
+
 router.get("/", requirePermission("transactions.debit_note.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

@@ -150,6 +150,7 @@ function createOpsDocService(config) {
           documentType: moduleCode,
           documentDate: payload.date || null,
           jurisdictionId: payload.jurisdictionId || null,
+          pricingMode: payload.pricingMode || payload.pricing_mode || null,
           supplyType: payload.supplyType || null,
           placeOfSupplyCountryCode: payload.placeOfSupplyCountryCode || null,
           industry: payload.industry || null
@@ -188,6 +189,62 @@ function createOpsDocService(config) {
       return doc;
     } catch (e) {
       await client.query("ROLLBACK");
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function updateDraft({ orgId, actorUserId, documentId, payload }) {
+    await assertCounterparty({ orgId, partnerId: payload.partnerId || null });
+    await assertPostableActiveAccount({ orgId, accountId: payload.cashAccountId || null });
+    await assertPostableActiveAccount({ orgId, accountId: payload.primaryAccountId || null });
+    for (const line of payload.lines || []) {
+      await assertPostableActiveAccount({ orgId, accountId: line.accountId || null });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const header = await repo.getLockedDocument(client, orgId, documentId);
+      if (!header || header.module_code !== moduleCode) throw new AppError(404, 'Document not found');
+      if (header.status !== 'draft') throw new AppError(409, `Only draft ${moduleCode} documents can be edited`);
+
+      const computed = await computeLinesWithTax({
+        client, orgId, lines: payload.lines || [],
+        context: {
+          partnerId: payload.partnerId || null,
+          partnerType: partnerRole || null,
+          transactionScope: partnerRole === 'customer' ? 'sales' : 'purchases',
+          documentType: moduleCode,
+          documentDate: payload.date || null,
+          jurisdictionId: payload.jurisdictionId || null,
+          pricingMode: payload.pricingMode || payload.pricing_mode || null,
+          supplyType: payload.supplyType || null,
+          placeOfSupplyCountryCode: payload.placeOfSupplyCountryCode || null,
+          industry: payload.industry || null
+        }
+      });
+      const amountTotal = payload.amountTotal == null ? computed.total : bigIntToDecimalString(parseDecimalToBigInt(payload.amountTotal, 2), 2);
+      const meta = { ...(defaultMeta(payload) || {}), ...(payload.meta || {}) };
+      const { rows } = await client.query(
+        `UPDATE operational_documents
+            SET counterparty_partner_id=$3, employee_id=$4, document_date=$5, due_date=$6,
+                memo=$7, reference=$8, source_document_id=$9, cash_account_id=$10,
+                primary_account_id=$11, amount_total=$12, subtotal=$13, tax_total=$14,
+                meta=$15::jsonb, updated_by=$16, updated_at=NOW()
+          WHERE organization_id=$1 AND id=$2 RETURNING *`,
+        [orgId, documentId, payload.partnerId || null, payload.employeeId || null, payload.date, payload.dueDate || null,
+         payload.memo || null, payload.reference || null, payload.sourceDocumentId || null, payload.cashAccountId || null,
+         payload.primaryAccountId || null, amountTotal, computed.subtotal, computed.taxTotal, JSON.stringify(meta), actorUserId]
+      );
+      await client.query(`DELETE FROM operational_document_lines WHERE document_id=$1`, [documentId]);
+      for (let i = 0; i < computed.lines.length; i++) await repo.insertLine(client, documentId, i + 1, computed.lines[i]);
+      await writeAudit({ organizationId: orgId, actorUserId, action: `${entityType}.draft_updated`, entityType, entityId: documentId, before: header, after: rows[0], client });
+      await client.query('COMMIT');
+      return rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
       throw e;
     } finally {
       client.release();
@@ -434,6 +491,7 @@ function createOpsDocService(config) {
 
   return {
     createDraft,
+    updateDraft,
     list,
     getDetails,
     submitForApproval,

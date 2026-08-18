@@ -138,6 +138,39 @@ async function createDraftCreditNote({ orgId, actorUserId, payload }) {
   });
 }
 
+async function updateDraftCreditNote({ orgId, actorUserId, id, payload }) {
+  const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: payload.customerId });
+  if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT * FROM credit_notes WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Credit Note not found");
+    const before = rows[0];
+    if (before.status !== 'draft') throw new AppError(409, "Only draft credit notes can be edited");
+
+    const totals = await calcTotals({ client, orgId, lines: payload.lines, payload });
+    const { rows: updatedRows } = await client.query(
+      `UPDATE credit_notes
+          SET customer_id=$3, credit_note_date=$4, memo=$5, subtotal=$6, tax_total=$7, total=$8, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, id, payload.customerId, payload.creditNoteDate, payload.memo || null, totals.subtotal, totals.tax_total, totals.total]
+    );
+    await client.query(`DELETE FROM credit_note_lines WHERE credit_note_id=$1`, [id]);
+    for (let i = 0; i < payload.lines.length; i++) {
+      const l = payload.lines[i];
+      const { rows: lineRows } = await client.query(
+        `INSERT INTO credit_note_lines(
+           credit_note_id, line_no, description, quantity, unit_price, line_total, revenue_account_id, tax_code_id, tax_amount, taxable_amount
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [id, i + 1, l.description, l.quantity ?? 1, l.unitPrice, l.lineTotal, l.revenueAccountId, l.taxCodeId || null, l.taxAmount || 0, l.taxableAmount ?? l.lineTotal ?? 0]
+      );
+      await require("../../../shared/tax/multiTax").insertLineTaxDetails({ client, tableName: 'credit_note_line_tax_details', lineId: lineRows[0].id, details: l.taxDetails || [] });
+    }
+    await writeAudit({ organizationId: orgId, actorUserId, action: 'credit_note.draft_updated', entityType: 'credit_notes', entityId: id, before, after: updatedRows[0], client });
+    return updatedRows[0];
+  });
+}
+
 async function listCreditNotes({ orgId, query }) {
   const client = await pool.connect();
   try {
@@ -490,6 +523,7 @@ async function voidCreditNote({ orgId, actorUserId, id, reason }) {
 
 module.exports = {
   createDraftCreditNote,
+  updateDraftCreditNote,
   listCreditNotes,
   getCreditNoteDetails,
   submitCreditNoteForApproval,

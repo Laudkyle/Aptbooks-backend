@@ -168,6 +168,55 @@ async function createDraftVendorPayment({ orgId, actorUserId, payload }) {
   }
 }
 
+async function updateDraftVendorPayment({ orgId, actorUserId, id, payload }) {
+  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: payload.vendorId });
+  if (vendor.type !== "vendor") throw new AppError(400, "Partner is not a vendor");
+  if (vendor.status !== "active") throw new AppError(400, "Vendor is inactive");
+  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+
+  return require("../../../../db/tx").withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT * FROM vendor_payments WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Vendor payment not found");
+    const before = rows[0];
+    if (before.status !== 'draft') throw new AppError(409, "Only draft vendor payments can be edited");
+    await assertPostableActiveAccount({ orgId, accountId: payload.cashAccountId, errMsg: "Invalid cashAccountId", client });
+
+    const allocations = Array.isArray(payload.allocations) ? payload.allocations : [];
+    let sumAllocCents = 0n;
+    for (const a of allocations) {
+      const bill = await getBillForAllocation(orgId, a.billId, client);
+      if (!bill) throw new AppError(400, `Invalid billId: ${a.billId}`);
+      if (bill.vendor_id !== payload.vendorId) throw new AppError(400, "Allocation bill vendor mismatch");
+      if (!['issued','paid'].includes(bill.status)) throw new AppError(409, "Can only allocate to issued/paid bills");
+      const outstanding = await getBillOutstanding(orgId, a.billId, client);
+      if (outstanding === null) throw new AppError(400, `Invalid billId: ${a.billId}`);
+      const appliedCents = parseDecimalToBigInt(a.amountApplied, 2);
+      if (appliedCents > parseDecimalToBigInt(outstanding, 2)) throw new AppError(409, "Allocation exceeds bill outstanding");
+      sumAllocCents += appliedCents;
+    }
+    const amountTotalCents = parseDecimalToBigInt(payload.amountTotal, 2);
+    if (sumAllocCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds payment amountTotal");
+    const amountTotal = bigIntToDecimalString(amountTotalCents, 2);
+
+    const { rows: updatedRows } = await client.query(
+      `UPDATE vendor_payments
+          SET vendor_id=$3, payment_date=$4, payment_method_id=$5, cash_account_id=$6,
+              amount_total=$7, unapplied_amount=0, discount_total=0, settlement_total=0, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, id, payload.vendorId, payload.paymentDate, payload.paymentMethodId || null, payload.cashAccountId, amountTotal]
+    );
+    await repo.deleteAllocations(client, id);
+    for (const a of allocations) {
+      await repo.upsertAllocation(client, {
+        vendorPaymentId: id, billId: a.billId,
+        amountApplied: bigIntToDecimalString(parseDecimalToBigInt(a.amountApplied, 2), 2), discountTaken: '0.00'
+      });
+    }
+    await writeAudit({ organizationId: orgId, actorUserId, action: 'vendor_payment.draft_updated', entityType: 'vendor_payments', entityId: id, before, after: updatedRows[0], client });
+    return updatedRows[0];
+  });
+}
+
 async function autoAllocateVendorPayment({ orgId, actorUserId, id, rule }) {
   const { vendorPayment: vp, allocations: current } = await getVendorPaymentDetails({ orgId, id, currentUserId: actorUserId });
   if (vp.status !== "draft") throw new AppError(409, "Only draft vendor payments can be auto-allocated");
@@ -803,6 +852,7 @@ async function voidVendorPayment({ orgId, actorUserId, id, reason }) {
 
 module.exports = {
   createDraftVendorPayment,
+  updateDraftVendorPayment,
   getVendorPaymentDetails,
   listVendorPayments,
   autoAllocateVendorPayment,

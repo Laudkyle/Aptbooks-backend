@@ -68,6 +68,7 @@ async function prepareBillLines({ client, orgId, payload, lines }) {
         documentType: "bill",
         documentDate: payload.billDate,
         jurisdictionId: payload.jurisdictionId || null,
+        pricingMode: payload.pricingMode || payload.pricing_mode || null,
         supplyType: l.supplyType || payload.supplyType || null,
         placeOfSupply: payload.placeOfSupply || null,
         placeOfSupplyCountryCode: l.placeOfSupplyCountryCode || payload.placeOfSupplyCountryCode || null,
@@ -190,6 +191,56 @@ async function createDraftBill({ orgId, actorUserId, payload }) {
   } finally {
     client.release();
   }
+}
+
+async function updateDraftBill({ orgId, actorUserId, billId, payload }) {
+  const vendor = await partnerIF.getPartnerForOrg({ orgId, partnerId: payload.vendorId });
+  if (vendor.type !== "vendor") throw new AppError(400, "Partner is not a vendor");
+  if (vendor.status !== "active") throw new AppError(400, "Vendor is inactive");
+  if (!vendor.default_payable_account_id) throw new AppError(400, "Vendor missing defaultPayableAccountId");
+  for (const l of payload.lines) {
+    await assertPostableActiveAccount({ orgId, accountId: l.expenseAccountId, errMsg: "Invalid expenseAccountId" });
+  }
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT * FROM bills WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, billId]
+    );
+    if (!rows.length) throw new AppError(404, "Bill not found");
+    const before = rows[0];
+    if (before.status !== 'draft') throw new AppError(409, "Only draft bills can be edited");
+
+    const { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total } = await prepareBillLines({
+      client, orgId, payload, lines: payload.lines
+    });
+    const { rows: updatedRows } = await client.query(
+      `UPDATE bills
+          SET vendor_id=$3, bill_date=$4, due_date=$5, memo=$6,
+              subtotal=$7, tax_total=$8, total=$9, withholding_total=$10,
+              net_settlement_total=$11, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      [orgId, billId, payload.vendorId, payload.billDate, payload.dueDate, payload.memo || null, subtotal, taxTotal, total, withholdingTotal, netSettlementTotal]
+    );
+
+    await client.query(`DELETE FROM bill_lines WHERE bill_id=$1`, [billId]);
+    for (let i = 0; i < computed.length; i++) {
+      const l = computed[i];
+      await repo.insertBillLine(client, {
+        billId, lineNo: i + 1, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice,
+        lineTotal: l.lineTotal, expenseAccountId: l.expenseAccountId, taxCodeId: l.taxCodeId || null,
+        taxAmount: l.taxAmount || 0, taxableAmount: l.taxableAmount || 0, taxSnapshot: l.taxSnapshot || {},
+        taxDetails: l.taxDetails || []
+      });
+    }
+
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: 'bill.draft_updated', entityType: 'bills',
+      entityId: billId, before, after: updatedRows[0], client
+    });
+    return updatedRows[0];
+  });
 }
 
 async function getBillDetails({ orgId, billId, currentUserId }) {
@@ -555,6 +606,7 @@ async function voidBill({ orgId, actorUserId, billId, reason }) {
 module.exports = {
   previewBillTaxes,
   createDraftBill,
+  updateDraftBill,
   getBillDetails,
   listBills,
   issueBill,

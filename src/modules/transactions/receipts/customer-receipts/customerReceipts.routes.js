@@ -39,6 +39,15 @@ router.post("/", idempotency({ required: true }), requirePermission("transaction
   } catch (e) { next(e); }
 });
 
+router.put("/:id", idempotency({ required: true }), requirePermission("transactions.customer_receipt.manage"), async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const actorUserId = req.user.id;
+    const payload = validate(createCustomerReceiptSchema, req.body);
+    res.json(await svc.updateDraftCustomerReceipt({ orgId, actorUserId, id: req.params.id, payload }));
+  } catch (e) { next(e); }
+});
+
 router.get("/", requirePermission("transactions.customer_receipt.read"), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;

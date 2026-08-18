@@ -67,6 +67,7 @@ async function prepareInvoiceLines({ client, orgId, payload, lines }) {
         documentType: "invoice",
         documentDate: payload.invoiceDate,
         jurisdictionId: payload.jurisdictionId || null,
+        pricingMode: payload.pricingMode || payload.pricing_mode || null,
         supplyType: l.supplyType || payload.supplyType || null,
         placeOfSupplyCountryCode: l.placeOfSupplyCountryCode || payload.placeOfSupplyCountryCode || null,
         industry: payload.industry || null,
@@ -204,6 +205,55 @@ async function createDraftInvoice({ orgId, actorUserId, payload }) {
   } finally {
     client.release();
   }
+}
+
+async function updateDraftInvoice({ orgId, actorUserId, invoiceId, payload }) {
+  const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: payload.customerId });
+  if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
+  if (payload.dueDate < payload.invoiceDate) throw new AppError(400, "dueDate must be on or after invoiceDate");
+  for (const l of payload.lines) await assertRevenueAccount({ orgId, accountId: l.revenueAccountId });
+
+  return withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT * FROM invoices WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      [orgId, invoiceId]
+    );
+    if (!rows.length) throw new AppError(404, "Invoice not found");
+    const before = rows[0];
+    if (before.status !== 'draft') throw new AppError(409, "Only draft invoices can be edited");
+
+    const { computed, subtotal, taxTotal, withholdingTotal, netSettlementTotal, total } = await prepareInvoiceLines({
+      client, orgId, payload, lines: payload.lines
+    });
+
+    const { rows: updatedRows } = await client.query(
+      `UPDATE invoices
+          SET customer_id=$3, invoice_date=$4, due_date=$5, memo=$6,
+              subtotal=$7, tax_total=$8, total=$9, withholding_total=$10,
+              net_settlement_total=$11, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2
+        RETURNING *`,
+      [orgId, invoiceId, payload.customerId, payload.invoiceDate, payload.dueDate, payload.memo || null, subtotal, taxTotal, total, withholdingTotal, netSettlementTotal]
+    );
+
+    await client.query(`DELETE FROM invoice_lines WHERE invoice_id=$1`, [invoiceId]);
+    for (let i = 0; i < computed.length; i++) {
+      const l = computed[i];
+      const { rows: lineRows } = await client.query(
+        `INSERT INTO invoice_lines(
+          invoice_id, line_no, description, quantity, unit_price, line_total, revenue_account_id, tax_code_id, tax_amount, taxable_amount, tax_snapshot_json
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb) RETURNING *`,
+        [invoiceId, i + 1, l.description, l.quantity, l.unitPrice, l.lineTotal, l.revenueAccountId, l.taxCodeId || null, l.taxAmount || 0, l.taxableAmount || 0, JSON.stringify(l.taxSnapshot || {})]
+      );
+      await insertLineTaxDetails({ client, tableName: 'invoice_line_tax_details', lineId: lineRows[0].id, details: l.taxDetails || [] });
+    }
+
+    await writeAudit({
+      organizationId: orgId, actorUserId, action: 'invoice.draft_updated',
+      entityType: 'invoices', entityId: invoiceId, before, after: updatedRows[0], client
+    });
+    return updatedRows[0];
+  });
 }
 
 async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
@@ -792,6 +842,7 @@ async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
 module.exports = {
   previewInvoiceTaxes,
   createDraftInvoice,
+  updateDraftInvoice,
   getInvoiceDetails,
   listInvoices,
   submitInvoiceForApproval,

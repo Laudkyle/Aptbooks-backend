@@ -57,7 +57,7 @@ test('multi-level operational workflows stay submitted until the final approval'
 
 test('detail enrichment computes gross from taxable base plus non-withholding tax', () => {
   const src = read('modules/transactions/_shared/detailEnrichment.js');
-  assert.match(src, /const taxableAmount = line\.taxable_amount \?\? inferredTaxableAmount/);
+  assert.match(src, /const taxableAmount = Math\.max\(0, enteredLineTotal - inclusiveTaxAmount\)/);
   assert.match(src, /const nonWithholdingTax = line\.tax_amount \?\? 0/);
   assert.match(src, /line_gross_total: grossAmount/);
   assert.match(src, /entered_line_total/);
@@ -94,8 +94,8 @@ test('credit and debit notes persist canonical taxable_amount for inclusive-tax 
 test('detail enrichment can infer historical inclusive and mixed taxable bases without double adding tax', () => {
   const src = read('modules/transactions/_shared/detailEnrichment.js');
   assert.match(src, /inclusiveTaxAmount/);
-  assert.match(src, /meta\?\.calculation_method === 'inclusive'/);
+  assert.match(src, /resolveComponentMethod/);
   assert.match(src, /enteredLineTotal - inclusiveTaxAmount/);
-  assert.match(src, /const taxableAmount = line\.taxable_amount \?\? inferredTaxableAmount/);
+  assert.match(src, /const taxableAmount = Math\.max\(0, enteredLineTotal - inclusiveTaxAmount\)/);
   assert.match(src, /line_gross_total: grossAmount/);
 });

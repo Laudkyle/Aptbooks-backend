@@ -4,7 +4,9 @@ const {
   normalizeMoney,
   normalizeRate,
   addMoney,
+  subtractMoney,
   computeTaxMoney,
+  computeComponentTaxBreakdown,
 } = require('./taxMath');
 const { syncLineTaxDetailToLedger } = require('./taxLedger');
 const { stripClientCalculatedTaxAmounts } = require('./authoritativeInput');
@@ -86,11 +88,28 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
     metadata: { ...(taxCode.metadata || {}), ...(selection.metadata || {}) }
   });
 
+  const documentPricingMode = String(context.pricingMode || context.pricing_mode || '').trim().toLowerCase();
+  const effectiveCalculationMethod = (taxCode) => {
+    // Pricing mode is a document/line price semantic. When supplied, it overrides
+    // the tax-code default for non-withholding taxes so the server agrees with the
+    // create/edit form. Withholding remains calculated from the taxable base.
+    if (String(taxCode.tax_type || '').toUpperCase() !== 'WITHHOLDING') {
+      if (documentPricingMode === 'inclusive') return 'inclusive';
+      if (documentPricingMode === 'exclusive') return 'standard';
+    }
+    return taxCode.calculation_method || 'standard';
+  };
+
   if (!bundle.code.is_compound || !bundle.components.length) {
     const rate = selection.rateOverride == null ? bundle.code.rate || '0' : selection.rateOverride || '0';
     const component = shape(bundle.code, rate);
-    component.taxAmount = computeTaxAmount({ taxableAmount, rate: component.rate, calculationMethod: bundle.code.calculation_method, explicitTaxAmount: selection.taxAmount });
-    component.calculationMethod = bundle.code.calculation_method;
+    const calculationMethod = effectiveCalculationMethod(bundle.code);
+    component.taxAmount = computeTaxAmount({ taxableAmount, rate: component.rate, calculationMethod, explicitTaxAmount: selection.taxAmount });
+    component.calculationMethod = calculationMethod;
+    component.metadata = { ...(component.metadata || {}), calculationMethod };
+    if (calculationMethod === 'inclusive' && component.taxType !== 'WITHHOLDING') {
+      component.taxableAmount = subtractMoney(taxableAmount, component.taxAmount);
+    }
     return [component];
   }
 
@@ -98,12 +117,50 @@ async function expandTaxSelection({ client, orgId, selection, defaultTaxableAmou
     throw new AppError(400, `Compound tax code ${bundle.code.code} cannot be submitted with a single taxAmount override; submit component taxes or let the system calculate them`);
   }
 
-  return bundle.components.map((componentTax) => {
+  const shaped = bundle.components.map((componentTax) => {
     const componentBaseRate = componentTax.rate_override == null ? componentTax.rate : componentTax.rate_override;
     const rate = selection.rateOverride == null ? componentBaseRate || '0' : selection.rateOverride || '0';
     const component = shape(componentTax, rate);
-    component.taxAmount = computeTaxAmount({ taxableAmount, rate: component.rate, calculationMethod: componentTax.calculation_method });
-    component.calculationMethod = componentTax.calculation_method;
+    component.calculationMethod = effectiveCalculationMethod(componentTax);
+    component.metadata = { ...(component.metadata || {}), calculationMethod: component.calculationMethod };
+    return component;
+  });
+
+  const priceComponents = shaped.filter((component) => component.taxType !== 'WITHHOLDING');
+  const allPriceComponentsInclusive = priceComponents.length > 0 && priceComponents.every((component) => component.calculationMethod === 'inclusive');
+
+  if (allPriceComponentsInclusive) {
+    // Inclusive compound taxes must share one extracted taxable base. Computing
+    // each component independently from the gross amount overstates the combined
+    // tax. Example: gross 120 at 15% + 2.5% + 2.5% => base 100, tax 20.
+    const breakdown = computeComponentTaxBreakdown({
+      amount: taxableAmount,
+      inclusive: true,
+      components: priceComponents.map((component) => ({ rate: component.rate }))
+    });
+    let priceIndex = 0;
+    return shaped.map((component) => {
+      if (component.taxType === 'WITHHOLDING') {
+        component.taxableAmount = breakdown.taxableAmount;
+        component.taxAmount = computeTaxAmount({
+          taxableAmount: breakdown.taxableAmount,
+          rate: component.rate,
+          calculationMethod: component.calculationMethod,
+        });
+        return component;
+      }
+      const calculated = breakdown.components[priceIndex++];
+      component.taxableAmount = breakdown.taxableAmount;
+      component.taxAmount = calculated?.taxAmount || '0.00';
+      return component;
+    });
+  }
+
+  return shaped.map((component) => {
+    component.taxAmount = computeTaxAmount({ taxableAmount, rate: component.rate, calculationMethod: component.calculationMethod });
+    if (component.calculationMethod === 'inclusive' && component.taxType !== 'WITHHOLDING') {
+      component.taxableAmount = subtractMoney(taxableAmount, component.taxAmount);
+    }
     return component;
   });
 }

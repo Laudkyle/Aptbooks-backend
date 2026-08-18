@@ -170,6 +170,53 @@ async function createDraftCustomerReceipt({ orgId, actorUserId, payload }) {
   }
 }
 
+async function updateDraftCustomerReceipt({ orgId, actorUserId, id, payload }) {
+  const customer = await partnerIF.getActiveCustomerForOrg({ orgId, customerId: payload.customerId });
+  if (!customer.default_receivable_account_id) throw new AppError(400, "Customer missing defaultReceivableAccountId");
+
+  return require("../../../../db/tx").withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT * FROM customer_receipts WHERE organization_id=$1 AND id=$2 FOR UPDATE`, [orgId, id]);
+    if (!rows.length) throw new AppError(404, "Customer receipt not found");
+    const before = rows[0];
+    if (before.status !== 'draft') throw new AppError(409, "Only draft customer receipts can be edited");
+    await assertPostableActiveAccount({ orgId, accountId: payload.cashAccountId, errMsg: "Invalid cashAccountId", client });
+
+    const allocations = Array.isArray(payload.allocations) ? payload.allocations : [];
+    let sumAllocCents = 0n;
+    for (const a of allocations) {
+      const inv = await getInvoice(orgId, a.invoiceId, client);
+      if (!inv) throw new AppError(400, `Invalid invoiceId: ${a.invoiceId}`);
+      if (inv.customer_id !== payload.customerId) throw new AppError(400, "Allocation invoice customer mismatch");
+      if (!['issued','paid'].includes(inv.status)) throw new AppError(409, "Can only allocate to issued/paid invoices");
+      const outstanding = await getInvoiceOutstanding(orgId, a.invoiceId, client);
+      if (outstanding === null) throw new AppError(400, `Invalid invoiceId: ${a.invoiceId}`);
+      const appliedCents = parseDecimalToBigInt(a.amountApplied, 2);
+      if (appliedCents > parseDecimalToBigInt(outstanding, 2)) throw new AppError(409, "Allocation exceeds invoice outstanding");
+      sumAllocCents += appliedCents;
+    }
+    const amountTotalCents = parseDecimalToBigInt(payload.amountTotal, 2);
+    if (sumAllocCents > amountTotalCents) throw new AppError(409, "Allocations sum exceeds receipt amountTotal");
+    const amountTotal = bigIntToDecimalString(amountTotalCents, 2);
+
+    const { rows: updatedRows } = await client.query(
+      `UPDATE customer_receipts
+          SET customer_id=$3, receipt_date=$4, payment_method_id=$5, cash_account_id=$6,
+              amount_total=$7, memo=$8, unapplied_amount=0, discount_total=0, settlement_total=0, updated_at=NOW()
+        WHERE organization_id=$1 AND id=$2 RETURNING *`,
+      [orgId, id, payload.customerId, payload.receiptDate, payload.paymentMethodId || null, payload.cashAccountId, amountTotal, payload.memo || null]
+    );
+    await repo.deleteAllocations(client, id);
+    for (const a of allocations) {
+      await repo.upsertAllocation(client, {
+        customerReceiptId: id, invoiceId: a.invoiceId,
+        amountApplied: bigIntToDecimalString(parseDecimalToBigInt(a.amountApplied, 2), 2), discountTaken: '0.00'
+      });
+    }
+    await writeAudit({ organizationId: orgId, actorUserId, action: 'customer_receipt.draft_updated', entityType: 'customer_receipts', entityId: id, before, after: updatedRows[0], client });
+    return updatedRows[0];
+  });
+}
+
 async function getCustomerReceiptDetails({ orgId, id, currentUserId }) {
   const cr = await repo.getCustomerReceiptById(orgId, id, currentUserId);
   if (!cr) throw new AppError(404, "Customer receipt not found");
@@ -680,6 +727,7 @@ async function voidCustomerReceipt({ orgId, actorUserId, id, reason }) {
 
 module.exports = {
   createDraftCustomerReceipt,
+  updateDraftCustomerReceipt,
   getCustomerReceiptDetails,
   listCustomerReceipts,
   autoAllocateCustomerReceipt,

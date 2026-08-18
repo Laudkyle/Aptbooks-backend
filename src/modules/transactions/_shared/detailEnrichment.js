@@ -90,28 +90,48 @@ async function enrichLines({ client, lines = [] }) {
     const lineBuckets = taxSummary.byLineId.get(line.id) || { total: 0, recoverable: 0, nonRecoverable: 0, withholding: 0, reverseCharge: 0 };
     const taxes = Array.isArray(line.taxes) ? line.taxes : [];
     const nonWithholdingTax = line.tax_amount ?? 0;
+    const snapshotComponents = Array.isArray(line.tax_snapshot_json?.components)
+      ? line.tax_snapshot_json.components
+      : [];
+    const resolveComponentMethod = (row, meta) => {
+      const persisted = row?.metadata?.calculationMethod || row?.metadata?.calculation_method;
+      if (persisted) return String(persisted).toLowerCase();
+      const snapshot = snapshotComponents.find((component) => {
+        const snapshotTaxCodeId = component?.taxCodeId || component?.tax_code_id;
+        return snapshotTaxCodeId && snapshotTaxCodeId === row?.tax_code_id;
+      });
+      const snapshotMethod = snapshot?.calculationMethod || snapshot?.calculation_method;
+      if (snapshotMethod) return String(snapshotMethod).toLowerCase();
+      return String(meta?.calculation_method || '').toLowerCase() || 'standard';
+    };
     const taxComponents = taxes
       .filter((t) => String(t.tax_type || '').toUpperCase() !== 'WITHHOLDING')
-      .map((t) => ({
-        row: t,
-        meta: taxCodeMap.get(t.tax_code_id) || taxCodeMap.get(t.source_tax_code_id) || null,
-      }));
-    const calculationMethods = [
-      ...taxComponents.map(({ meta }) => meta?.calculation_method),
-      taxCode?.calculation_method,
-    ].filter(Boolean);
+      .map((t) => {
+        const meta = taxCodeMap.get(t.tax_code_id) || taxCodeMap.get(t.source_tax_code_id) || null;
+        return { row: t, meta, calculationMethod: resolveComponentMethod(t, meta) };
+      });
+    const calculationMethods = taxComponents.length
+      ? taxComponents.map(({ calculationMethod }) => calculationMethod)
+      : [String(taxCode?.calculation_method || 'standard').toLowerCase()];
     const pricingMode = calculationMethods.includes('inclusive')
       ? (calculationMethods.some((method) => method !== 'inclusive') ? 'mixed' : 'inclusive')
       : 'exclusive';
     const inclusiveTaxAmount = taxComponents.length
       ? taxComponents
-        .filter(({ meta }) => meta?.calculation_method === 'inclusive')
+        .filter(({ calculationMethod }) => calculationMethod === 'inclusive')
         .reduce((sum, { row }) => sum + Number(row.tax_amount || 0), 0)
       : (taxCode?.calculation_method === 'inclusive' ? Number(nonWithholdingTax || 0) : 0);
+    const exclusiveTaxAmount = taxComponents.length
+      ? taxComponents
+        .filter(({ calculationMethod }) => calculationMethod !== 'inclusive')
+        .reduce((sum, { row }) => sum + Number(row.tax_amount || 0), 0)
+      : (taxCode?.calculation_method === 'inclusive' ? 0 : Number(nonWithholdingTax || 0));
     const enteredLineTotal = Number(line.line_total || 0);
-    const inferredTaxableAmount = Math.max(0, enteredLineTotal - inclusiveTaxAmount);
-    const taxableAmount = line.taxable_amount ?? inferredTaxableAmount;
-    const grossAmount = round2(Number(taxableAmount || 0) + Number(nonWithholdingTax || 0));
+    // line_total is the amount the user entered. Inclusive tax is already inside it;
+    // exclusive tax is added on top. Derive display values from that invariant rather
+    // than trusting historical taxable_amount rows that may predate pricing-mode fixes.
+    const taxableAmount = Math.max(0, enteredLineTotal - inclusiveTaxAmount);
+    const grossAmount = round2(enteredLineTotal + exclusiveTaxAmount);
 
     return {
       ...line,
@@ -148,9 +168,18 @@ async function enrichLines({ client, lines = [] }) {
 
 function buildDetailMeta({ header = {}, lines = [], extra = {} }) {
   const taxSummary = summarizeLineTaxDetails(lines.map((line) => ({ ...line, taxDetails: line.taxes || [] })));
-  const subtotal = round2(firstDefined(header, ['subtotal', 'amount_subtotal'], 0));
-  const taxTotal = round2(firstDefined(header, ['tax_total', 'taxTotal'], taxSummary.totalTax || 0));
-  const total = round2(firstDefined(header, ['total', 'amount_total', 'grand_total'], subtotal + taxTotal));
+  const lineSubtotal = lines.length
+    ? round2(lines.reduce((sum, line) => sum + Number(line.display_amounts?.taxable_amount ?? line.taxable_amount ?? 0), 0))
+    : null;
+  const lineTaxTotal = lines.length
+    ? round2(lines.reduce((sum, line) => sum + Number(line.display_amounts?.line_tax_total ?? line.tax_amount ?? 0), 0))
+    : null;
+  const lineGrossTotal = lines.length
+    ? round2(lines.reduce((sum, line) => sum + Number(line.display_amounts?.line_gross_total ?? line.line_total ?? 0), 0))
+    : null;
+  const subtotal = lineSubtotal ?? round2(firstDefined(header, ['subtotal', 'amount_subtotal'], 0));
+  const taxTotal = lineTaxTotal ?? round2(firstDefined(header, ['tax_total', 'taxTotal'], taxSummary.totalTax || 0));
+  const total = lineGrossTotal ?? round2(firstDefined(header, ['total', 'amount_total', 'grand_total'], subtotal + taxTotal));
   const paid = round2(firstDefined(extra, ['paid', 'applied', 'applied_amount'], 0));
   const outstanding = extra.outstanding != null ? round2(extra.outstanding) : round2(Math.max(0, total - paid));
   const unappliedAmount = round2(firstDefined(extra, ['unapplied_amount', 'unappliedAmount'], firstDefined(header, ['unapplied_amount'], 0)));
