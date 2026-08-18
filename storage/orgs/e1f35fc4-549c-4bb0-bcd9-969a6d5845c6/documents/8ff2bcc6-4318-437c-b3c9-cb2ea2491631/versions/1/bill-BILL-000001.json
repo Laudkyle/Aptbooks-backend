@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "45cc0095-e284-4084-96fd-0dc250af90b5",
+  "snapshot_at": "2026-08-18T11:17:02.815Z",
+  "header": {
+    "id": "45cc0095-e284-4084-96fd-0dc250af90b5",
+    "organization_id": "e1f35fc4-549c-4bb0-bcd9-969a6d5845c6",
+    "vendor_id": "db73b90c-f5cf-46ec-98cf-da3f9e25bf9b",
+    "bill_no": "BILL-000001",
+    "bill_date": "2026-08-18T00:00:00.000Z",
+    "due_date": "2026-08-18T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "FDAS",
+    "subtotal": "8898.00",
+    "total": "8920.25",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ae8ca158-c048-462e-82e6-8279fc40a037",
+    "created_at": "2026-08-18T11:16:54.800Z",
+    "updated_at": "2026-08-18T11:16:54.800Z",
+    "tax_total": "22.25",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "8920.25"
+  },
+  "lines": [
+    {
+      "id": "779f33fd-3614-411f-a347-3ce4c6df2892",
+      "bill_id": "45cc0095-e284-4084-96fd-0dc250af90b5",
+      "line_no": 1,
+      "description": "FDSA",
+      "quantity": "1.0000",
+      "unit_price": "8898.00",
+      "line_total": "8898.00",
+      "expense_account_id": "2a84186d-5d12-4631-83a0-8959328c4cf4",
+      "created_at": "2026-08-18T11:16:54.800Z",
+      "tax_code_id": "370b50c2-4d7f-494f-a8fe-b629faccd506",
+      "tax_amount": "22.25",
+      "taxable_amount": "8898.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "db73b90c-f5cf-46ec-98cf-da3f9e25bf9b",
+          "supplyType": "services",
+          "partnerType": "vendor",
+          "documentDate": "2026-08-18",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "e73282e0-163f-41b3-b089-a5d01247e8fd",
+          "transactionScope": "purchases",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "22.25",
+        "components": [
+          {
+            "rate": "0.250000",
+            "boxCode": "STAMP_DUTY_PAYABLE",
+            "taxCode": "GH_STAMP_DUTY_0_25",
+            "taxType": "OTHER",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "direct_taxable",
+              "itemTaxCategory": null,
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "taxable",
+            "direction": "input",
+            "taxAmount": "22.25",
+            "taxCodeId": "370b50c2-4d7f-494f-a8fe-b629faccd506",
+            "taxCodeName": "Stamp Duty Ad Valorem Lower Band 0.25%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "8898.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "370b50c2-4d7f-494f-a8fe-b629faccd506",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "370b50c2-4d7f-494f-a8fe-b629faccd506",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "8898.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "370b50c2-4d7f-494f-a8fe-b629faccd506",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "22.25"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "8898.00",
+    "tax_total": "22.25",
+    "total": "8920.25"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

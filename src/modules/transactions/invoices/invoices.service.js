@@ -185,8 +185,34 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
       i.*,
       LOWER(d.workflow_state_code) AS workflow_status,
       CASE
-        WHEN d.created_by_user_id = $3
-        THEN COALESCE(dws.creator_can_approve, FALSE)
+        WHEN d.id IS NOT NULL
+         AND LOWER(d.workflow_state_code) = 'submitted'
+         AND (
+           d.created_by_user_id IS NULL
+           OR d.created_by_user_id IS DISTINCT FROM $3::uuid
+           OR COALESCE(dws.allow_self_approval, FALSE)
+           OR COALESCE(dws.creator_can_approve, FALSE)
+         )
+         AND EXISTS (
+           SELECT 1
+           FROM document_approvals da
+           WHERE da.document_id = d.id
+             AND da.status = 'PENDING'
+             AND (
+               NOT EXISTS (
+                 SELECT 1
+                 FROM approval_level_users alu_any
+                 WHERE alu_any.approval_level_id = da.approval_level_id
+               )
+               OR EXISTS (
+                 SELECT 1
+                 FROM approval_level_users alu_me
+                 WHERE alu_me.approval_level_id = da.approval_level_id
+                   AND alu_me.user_id = $3::uuid
+               )
+             )
+         )
+        THEN TRUE
         ELSE FALSE
       END AS can_approve,
       CASE
@@ -201,7 +227,8 @@ async function getInvoiceDetails({ orgId, invoiceId, currentUserId }) {
      LEFT JOIN LATERAL (
        SELECT
          s.creator_can_approve,
-         s.creator_can_post
+         s.creator_can_post,
+         s.allow_self_approval
        FROM document_workflow_statics s
        WHERE s.organization_id = i.organization_id
          AND (
