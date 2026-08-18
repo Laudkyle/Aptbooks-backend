@@ -11,6 +11,8 @@ const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJourn
 const { resolveLineTaxes, round2, loadLineTaxDetails, summarizeResolvedTaxes } = require("../../../shared/tax/multiTax");
 const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalString } = require("../../../shared/utils/money");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const { assertSourceNotInFinalizedTaxReturn } = require("../../../shared/tax/taxVoidCompliance");
+const fiscalizationSvc = require("../../integrations/fiscalization/fiscalization.service");
 
 async function calcTotals({ client, orgId, lines, payload = {} }) {
   let subtotalCents = 0n;
@@ -495,6 +497,9 @@ async function voidCreditNote({ orgId, actorUserId, id, reason }) {
       [orgId, id]
     );
     if (apps.length) throw new AppError(409, "Cannot void a credit note that has been applied");
+
+    await assertSourceNotInFinalizedTaxReturn({ client, orgId, sourceType: "credit_note", sourceId: id });
+    await fiscalizationSvc.prepareSourceForVoid({ db: client, orgId, actorUserId, sourceType: "credit_note", sourceId: id });
 
     if (!cn.journal_entry_id) throw new AppError(409, "Credit note has no journal entry to reverse");
     const rev = await journalIF.voidPostedJournal({

@@ -358,7 +358,7 @@ async function taxReconciliation({ orgId, fromDate, toDate, taxType, includeGhan
          JOIN journal_entries je ON je.id = jel.journal_entry_id
          JOIN chart_of_accounts coa ON coa.id = jel.account_id
         WHERE je.organization_id=$1
-          AND je.status='posted'
+          AND je.status IN ('posted','voided')
           AND je.entry_date BETWEEN $2::date AND $3::date
           AND jel.account_id = ANY($4::uuid[])
         GROUP BY jel.account_id, coa.code, coa.name

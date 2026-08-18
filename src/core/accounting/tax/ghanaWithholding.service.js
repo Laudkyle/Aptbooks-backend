@@ -731,10 +731,62 @@ async function captureVendorPaymentWithholding({ orgId, actorUserId, vendorPayme
 
 async function voidVendorPaymentWithholding({ orgId, vendorPaymentId, client = null }) {
   const run = async (db) => {
+    const { rows: eventRows } = await db.query(
+      `SELECT id FROM ghana_withholding_events
+        WHERE organization_id=$1 AND source_type='vendor_payment' AND source_id=$2 AND status<>'voided'
+        FOR UPDATE`,
+      [orgId, vendorPaymentId],
+    );
+    if (!eventRows.length) return { voidedEvents: 0 };
+    const eventIds = eventRows.map((r) => r.id);
+
+    const { rows: frozenReturns } = await db.query(
+      `SELECT DISTINCT r.id,r.form_code,r.period_start,r.period_end,r.status
+         FROM ghana_withholding_return_lines l
+         JOIN ghana_withholding_returns r ON r.id=l.return_id AND r.organization_id=l.organization_id
+        WHERE l.organization_id=$1 AND l.event_id=ANY($2::uuid[])
+          AND r.status IN ('finalized','filed','amended')
+        LIMIT 1`,
+      [orgId, eventIds],
+    );
+    if (frozenReturns.length) {
+      const ret = frozenReturns[0];
+      throw new AppError(
+        409,
+        `This payment withholding is included in ${ret.status} return ${ret.form_code} (${ret.period_start} to ${ret.period_end}). Void/correct it through the withholding-return amendment workflow instead of rewriting the filed/finalized history.`,
+      );
+    }
+
+    const { rows: draftReturns } = await db.query(
+      `SELECT DISTINCT r.id
+         FROM ghana_withholding_return_lines l
+         JOIN ghana_withholding_returns r ON r.id=l.return_id AND r.organization_id=l.organization_id
+        WHERE l.organization_id=$1 AND l.event_id=ANY($2::uuid[]) AND r.status='draft'`,
+      [orgId, eventIds],
+    );
+    const draftIds = draftReturns.map((r) => r.id);
+    if (draftIds.length) {
+      await db.query(
+        `DELETE FROM ghana_withholding_return_lines
+          WHERE organization_id=$1 AND return_id=ANY($2::uuid[]) AND event_id=ANY($3::uuid[])`,
+        [orgId, draftIds, eventIds],
+      );
+      await db.query(
+        `UPDATE ghana_withholding_returns r
+            SET total_taxable_basis=COALESCE((SELECT SUM(l.taxable_basis) FROM ghana_withholding_return_lines l WHERE l.return_id=r.id),0),
+                total_withheld=COALESCE((SELECT SUM(l.withheld_amount) FROM ghana_withholding_return_lines l WHERE l.return_id=r.id),0),
+                updated_at=NOW()
+          WHERE r.organization_id=$1 AND r.id=ANY($2::uuid[])`,
+        [orgId, draftIds],
+      );
+    }
+
     const { rows } = await db.query(
-      `UPDATE ghana_withholding_events SET status='voided',updated_at=NOW()
-        WHERE organization_id=$1 AND source_type='vendor_payment' AND source_id=$2 AND status<>'voided' RETURNING id`,
-      [orgId,vendorPaymentId],
+      `UPDATE ghana_withholding_events
+          SET status='voided',return_id=NULL,updated_at=NOW()
+        WHERE organization_id=$1 AND id=ANY($2::uuid[]) AND status<>'voided'
+        RETURNING id`,
+      [orgId, eventIds],
     );
     if (rows.length) {
       await db.query(

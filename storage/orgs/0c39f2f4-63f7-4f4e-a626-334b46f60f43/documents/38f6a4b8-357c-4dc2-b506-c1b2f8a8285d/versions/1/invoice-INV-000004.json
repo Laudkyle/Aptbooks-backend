@@ -1,0 +1,412 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+  "snapshot_at": "2026-08-18T21:06:01.570Z",
+  "header": {
+    "id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "customer_id": "0ac326f2-9a69-4cea-8f54-54a1c62afb78",
+    "invoice_no": "INV-000004",
+    "invoice_date": "2026-06-30T00:00:00.000Z",
+    "due_date": "2026-06-30T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "HMS-JUN-2026-NHIS",
+    "subtotal": "710000.00",
+    "total": "710000.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-18T21:05:56.938Z",
+    "updated_at": "2026-08-18T21:05:56.938Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "710000.00"
+  },
+  "lines": [
+    {
+      "id": "337bd6e5-5094-44ae-8fc0-cf4ccbec052f",
+      "invoice_id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+      "line_no": 1,
+      "description": "OPD",
+      "quantity": "1.0000",
+      "unit_price": "170000.00",
+      "line_total": "170000.00",
+      "revenue_account_id": "b70281f3-486a-40ab-8f1c-0ffbeb9acc4d",
+      "created_at": "2026-08-18T21:05:56.938Z",
+      "tax_code_id": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+      "tax_amount": "0.00",
+      "taxable_amount": "170000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "0ac326f2-9a69-4cea-8f54-54a1c62afb78",
+          "supplyType": "services",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MSE",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "taxable",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "taxCodeName": "Medical Services — Exempt",
+            "categoryCode": "standard",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "170000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "170000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    },
+    {
+      "id": "22cfd2ff-d9f7-46bf-ab58-60274379c560",
+      "invoice_id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+      "line_no": 2,
+      "description": "Labs",
+      "quantity": "1.0000",
+      "unit_price": "110000.00",
+      "line_total": "110000.00",
+      "revenue_account_id": "e7ee195c-c5f2-41cc-a6d6-f72f705160b8",
+      "created_at": "2026-08-18T21:05:56.938Z",
+      "tax_code_id": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+      "tax_amount": "0.00",
+      "taxable_amount": "110000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "0ac326f2-9a69-4cea-8f54-54a1c62afb78",
+          "supplyType": "services",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MSE",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "taxable",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "taxCodeName": "Medical Services — Exempt",
+            "categoryCode": "standard",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "110000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "110000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    },
+    {
+      "id": "37489af4-eb46-4cdf-a758-b020f7da7f1c",
+      "invoice_id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+      "line_no": 3,
+      "description": "Radio",
+      "quantity": "1.0000",
+      "unit_price": "80000.00",
+      "line_total": "80000.00",
+      "revenue_account_id": "84cc51c8-d213-4f5e-b0fb-caffd54122f5",
+      "created_at": "2026-08-18T21:05:56.938Z",
+      "tax_code_id": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+      "tax_amount": "0.00",
+      "taxable_amount": "80000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "0ac326f2-9a69-4cea-8f54-54a1c62afb78",
+          "supplyType": "services",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MSE",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "taxable",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "taxCodeName": "Medical Services — Exempt",
+            "categoryCode": "standard",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "80000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "80000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    },
+    {
+      "id": "86e18cda-bb79-4628-b84d-181b04351641",
+      "invoice_id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+      "line_no": 4,
+      "description": "Theatre",
+      "quantity": "1.0000",
+      "unit_price": "300000.00",
+      "line_total": "300000.00",
+      "revenue_account_id": "de87ddf9-4120-45da-93d0-b4d2d6c3eb51",
+      "created_at": "2026-08-18T21:05:56.938Z",
+      "tax_code_id": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+      "tax_amount": "0.00",
+      "taxable_amount": "300000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "0ac326f2-9a69-4cea-8f54-54a1c62afb78",
+          "supplyType": "services",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MSE",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "taxable",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "taxCodeName": "Medical Services — Exempt",
+            "categoryCode": "standard",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "300000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "300000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "9aaaa28f-908b-4b7f-a327-03b79a576976",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    },
+    {
+      "id": "102be683-7498-4a02-b77f-5673c3e1de09",
+      "invoice_id": "44b51e91-b560-4944-be9d-54087c3da1a5",
+      "line_no": 5,
+      "description": "Essential drugs",
+      "quantity": "1.0000",
+      "unit_price": "50000.00",
+      "line_total": "50000.00",
+      "revenue_account_id": "91b4c575-7b84-4d3d-aa0c-5c8f6eadd4e5",
+      "created_at": "2026-08-18T21:05:56.938Z",
+      "tax_code_id": "7e4c541c-fa17-4eb0-beb8-7426d1b2566a",
+      "tax_amount": "0.00",
+      "taxable_amount": "50000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "0ac326f2-9a69-4cea-8f54-54a1c62afb78",
+          "supplyType": "services",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "EDE",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "taxable",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "7e4c541c-fa17-4eb0-beb8-7426d1b2566a",
+            "taxCodeName": "Essential Drugs — Exempt",
+            "categoryCode": "standard",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "50000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "7e4c541c-fa17-4eb0-beb8-7426d1b2566a",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "7e4c541c-fa17-4eb0-beb8-7426d1b2566a",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "50000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "7e4c541c-fa17-4eb0-beb8-7426d1b2566a",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "710000.00",
+    "total": "710000.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

@@ -18,6 +18,7 @@ const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const fiscalizationSvc = require("../../integrations/fiscalization/fiscalization.service");
+const { assertSourceNotInFinalizedTaxReturn } = require("../../../shared/tax/taxVoidCompliance");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
 const {
   moneyUnits,
@@ -800,6 +801,36 @@ async function voidInvoice({ orgId, actorUserId, invoiceId, reason }) {
     if (settlementRows.length) {
       throw new AppError(409, "Cannot void an invoice with posted receipts; void the receipts first");
     }
+
+    const { rows: appliedCreditRows } = await client.query(
+      `SELECT 1
+         FROM credit_note_applications a
+         JOIN credit_notes cn ON cn.id=a.credit_note_id
+        WHERE a.organization_id=$1 AND a.invoice_id=$2 AND cn.status='issued'
+        LIMIT 1`,
+      [orgId, invoiceId]
+    );
+    if (appliedCreditRows.length) {
+      throw new AppError(409, "Cannot void an invoice with applied credit notes; reverse or unapply the credit notes first");
+    }
+
+    const { rows: postedWriteoffRows } = await client.query(
+      `SELECT 1 FROM writeoffs
+        WHERE organization_id=$1 AND entity_type='invoice' AND entity_id=$2 AND status='posted'
+        LIMIT 1`,
+      [orgId, invoiceId]
+    );
+    if (postedWriteoffRows.length) {
+      throw new AppError(409, "Cannot void an invoice with a posted write-off; reverse the write-off first");
+    }
+
+    await assertSourceNotInFinalizedTaxReturn({
+      client, orgId, sourceType: "invoice", sourceId: invoiceId
+    });
+
+    await fiscalizationSvc.prepareSourceForVoid({
+      db: client, orgId, actorUserId, sourceType: "invoice", sourceId: invoiceId
+    });
 
     const out = await journalIF.voidPostedJournal({
       orgId,

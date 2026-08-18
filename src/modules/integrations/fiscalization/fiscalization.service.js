@@ -325,6 +325,57 @@ async function autoPrepareForSource({ db, orgId, actorUserId, sourceType, source
   return prepareFiscalDocument({ orgId, actorUserId, sourceType, sourceId, db });
 }
 
+async function prepareSourceForVoid({ db = null, orgId, actorUserId = null, sourceType, sourceId }) {
+  const q = dbOrPool(db);
+  const { rows } = await q.query(
+    `SELECT * FROM fiscal_documents
+      WHERE organization_id=$1 AND source_type=$2 AND source_id=$3
+      FOR UPDATE`,
+    [orgId, sourceType, sourceId]
+  );
+  const doc = rows[0];
+  if (!doc) return null;
+
+  const { rows: queueRows } = await q.query(
+    `SELECT id,status FROM fiscal_transmission_queue
+      WHERE organization_id=$1 AND fiscal_document_id=$2
+      ORDER BY created_at DESC
+      FOR UPDATE`,
+    [orgId, doc.id]
+  );
+
+  const liveInFlight = queueRows.some((row) => ['claimed','submitted','certified'].includes(row.status));
+  const hasReachedGra = ['submitting','submitted','certified'].includes(doc.status);
+  const offlineLive = doc.status === 'offline_pending' && !doc.is_simulation;
+
+  if (!doc.is_simulation && (liveInFlight || hasReachedGra || offlineLive)) {
+    throw new AppError(409,
+      'This document has entered the live GRA E-VAT fiscalization process. Do not void it locally; use the certified cancellation/adjustment workflow so AptBooks and the GRA fiscal record remain aligned.'
+    );
+  }
+
+  await q.query(
+    `UPDATE fiscal_transmission_queue
+        SET status='cancelled',last_error='Source transaction voided before certification',claimed_at=NULL,claimed_by=NULL,updated_at=NOW()
+      WHERE organization_id=$1 AND fiscal_document_id=$2
+        AND status IN ('queued','retry','failed','dead_letter','simulated','rejected')`,
+    [orgId, doc.id]
+  );
+  const { rows: updatedRows } = await q.query(
+    `UPDATE fiscal_documents
+        SET status='cancelled',fiscal_status_reason='Source transaction voided before certification',updated_by=$3,updated_at=NOW()
+      WHERE organization_id=$1 AND id=$2 AND status<>'certified'
+      RETURNING *`,
+    [orgId, doc.id, actorUserId]
+  );
+  const updated = updatedRows[0] || doc;
+  await logFiscal({
+    db: q, orgId, documentId: doc.id, eventCode: 'fiscal.document.cancelled_from_source_void',
+    actorUserId, details: { sourceType, sourceId, priorStatus: doc.status }
+  });
+  return updated;
+}
+
 async function getDocument({ orgId, id }) {
   const { rows } = await pool.query(`SELECT * FROM fiscal_documents WHERE organization_id=$1 AND id=$2`, [orgId, id]);
   return rows[0] || null;
@@ -502,7 +553,7 @@ async function readiness({ orgId }) {
 
 module.exports = {
   getSettings, saveSettings, listLocations, saveLocation, listDevices, saveDevice,
-  prepareFiscalDocument, autoPrepareForSource, getDocument, listDocuments,
+  prepareFiscalDocument, autoPrepareForSource, prepareSourceForVoid, getDocument, listDocuments,
   queueFiscalDocument, markOffline, processQueue, listQueue, listLogs, exportLogsCsv, readiness,
   loadInvoicePayload, loadPosPayload
 };

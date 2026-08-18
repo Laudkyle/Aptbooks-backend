@@ -20,6 +20,7 @@ const { summarizeLineTaxDetails } = require("../../../shared/tax/posting");
 const { enrichLines, buildDetailMeta } = require("../_shared/detailEnrichment");
 const { propagateDocumentWorkflowToJournal } = require("../_shared/workflowJournalAudit.service");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const { assertSourceNotInFinalizedTaxReturn } = require("../../../shared/tax/taxVoidCompliance");
 const {
   moneyUnits,
   moneyStringFromUnits,
@@ -564,6 +565,32 @@ async function voidBill({ orgId, actorUserId, billId, reason }) {
     if (settlementRows.length) {
       throw new AppError(409, "Cannot void a bill with posted vendor payments; void the payments first");
     }
+
+    const { rows: appliedDebitRows } = await client.query(
+      `SELECT 1
+         FROM debit_note_applications a
+         JOIN debit_notes dn ON dn.id=a.debit_note_id
+        WHERE a.organization_id=$1 AND a.bill_id=$2 AND dn.status='issued'
+        LIMIT 1`,
+      [orgId, billId]
+    );
+    if (appliedDebitRows.length) {
+      throw new AppError(409, "Cannot void a bill with applied debit notes; reverse or unapply the debit notes first");
+    }
+
+    const { rows: postedWriteoffRows } = await client.query(
+      `SELECT 1 FROM writeoffs
+        WHERE organization_id=$1 AND entity_type='bill' AND entity_id=$2 AND status='posted'
+        LIMIT 1`,
+      [orgId, billId]
+    );
+    if (postedWriteoffRows.length) {
+      throw new AppError(409, "Cannot void a bill with a posted write-off; reverse the write-off first");
+    }
+
+    await assertSourceNotInFinalizedTaxReturn({
+      client, orgId, sourceType: "bill", sourceId: billId
+    });
 
     const out = await journalIF.voidPostedJournal({
       orgId,

@@ -10,6 +10,7 @@ const { multiplyQtyByUnitPriceToMoney, parseDecimalToBigInt, bigIntToDecimalStri
 const { enrichLines, buildDetailMeta } = require("./detailEnrichment");
 const journalIF = require("../../../interfaces/journalPosting.interface");
 const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const { assertSourceNotInFinalizedTaxReturn } = require("../../../shared/tax/taxVoidCompliance");
 
 async function getOrgBaseCurrency(client, orgId) {
   const { rows } = await client.query(
@@ -448,6 +449,10 @@ function createOpsDocService(config) {
       if (!["issued", "posted"].includes(header.status)) {
         throw new AppError(409, "Only issued or posted documents can be voided");
       }
+
+      await assertSourceNotInFinalizedTaxReturn({
+        client, orgId, sourceType: moduleCode, sourceId: documentId
+      });
 
       let reversalJournalId = header.reversal_journal_entry_id || null;
       if (header.journal_entry_id && !reversalJournalId) {
