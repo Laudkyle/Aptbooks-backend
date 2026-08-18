@@ -107,7 +107,7 @@ async function submitEntityForApproval({ orgId, actorUserId, entityType, entity,
     client
   });
 
-  const submitted = await documentsSvc.submitDocument({ orgId, documentId: doc.id, client });
+  const submitted = await documentsSvc.submitDocument({ orgId, documentId: doc.id, actorUserId, client });
   return submitted.document;
 }
 

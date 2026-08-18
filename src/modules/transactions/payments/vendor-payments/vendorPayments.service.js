@@ -462,7 +462,11 @@ async function approveVendorPaymentWorkflow({ orgId, actorUserId, id, comment })
       client
     });
 
-    await client.query(`UPDATE vendor_payments SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId]);
+    if (approved?.next) {
+      await client.query(`UPDATE vendor_payments SET status='submitted', updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id]);
+    } else {
+      await client.query(`UPDATE vendor_payments SET status='approved', approved_at=NOW(), approved_by=$3, updated_at=NOW() WHERE organization_id=$1 AND id=$2`, [orgId, id, actorUserId]);
+    }
     await client.query("COMMIT");
     return approved;
   } catch (e) {

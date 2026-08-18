@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "3604603d-305b-4ead-a512-614c8d9b958a",
+  "snapshot_at": "2026-08-18T13:31:44.532Z",
+  "header": {
+    "id": "3604603d-305b-4ead-a512-614c8d9b958a",
+    "organization_id": "e1f35fc4-549c-4bb0-bcd9-969a6d5845c6",
+    "vendor_id": "db73b90c-f5cf-46ec-98cf-da3f9e25bf9b",
+    "bill_no": "BILL-000002",
+    "bill_date": "2026-08-18T00:00:00.000Z",
+    "due_date": "2026-08-18T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "fdsafdsa",
+    "subtotal": "342432.00",
+    "total": "350992.80",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ddaa3b3d-4fb7-4b1f-b473-0e241bb6341b",
+    "created_at": "2026-08-18T13:31:36.712Z",
+    "updated_at": "2026-08-18T13:31:36.712Z",
+    "tax_total": "8560.80",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "350992.80"
+  },
+  "lines": [
+    {
+      "id": "fd199084-f887-4650-8820-1611c78d9712",
+      "bill_id": "3604603d-305b-4ead-a512-614c8d9b958a",
+      "line_no": 1,
+      "description": "fdsafdsa",
+      "quantity": "1.0000",
+      "unit_price": "342432.00",
+      "line_total": "342432.00",
+      "expense_account_id": "8344ff63-9135-4923-8790-fd82c03940ad",
+      "created_at": "2026-08-18T13:31:36.712Z",
+      "tax_code_id": "407bc903-3a0b-4088-b756-4d1365fe39f0",
+      "tax_amount": "8560.80",
+      "taxable_amount": "342432.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "db73b90c-f5cf-46ec-98cf-da3f9e25bf9b",
+          "supplyType": "services",
+          "partnerType": "vendor",
+          "documentDate": "2026-08-18",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "e73282e0-163f-41b3-b089-a5d01247e8fd",
+          "transactionScope": "purchases",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "8560.80",
+        "components": [
+          {
+            "rate": "2.500000",
+            "boxCode": "OUTPUT_GETFUND",
+            "taxCode": "GH_GETFUND_2_5",
+            "taxType": "VAT",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "direct_taxable",
+              "itemTaxCategory": null,
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "taxable",
+            "direction": "input",
+            "taxAmount": "8560.80",
+            "taxCodeId": "407bc903-3a0b-4088-b756-4d1365fe39f0",
+            "taxCodeName": "GETFund Levy 2.5%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "342432.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "407bc903-3a0b-4088-b756-4d1365fe39f0",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "407bc903-3a0b-4088-b756-4d1365fe39f0",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "342432.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "407bc903-3a0b-4088-b756-4d1365fe39f0",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "8560.80"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "342432.00",
+    "tax_total": "8560.80",
+    "total": "350992.80"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

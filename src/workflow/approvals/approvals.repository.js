@@ -7,14 +7,25 @@ const { pool } = require("../../db/pool");
  *
  * Backwards compatible: keeps the existing document_* columns.
  */
-async function listInbox({ orgId, limit = 50, offset = 0, documentTypeId = null, state = null }) {
-  const params = [orgId];
+async function listInbox({ orgId, userId, limit = 50, offset = 0, documentTypeId = null, state = null }) {
+  const params = [orgId, userId];
 
   // Check if documentTypeId is valid (not null, undefined, or "undefined" string)
   const hasValidDocumentTypeId = documentTypeId && documentTypeId !== 'undefined' && documentTypeId !== 'null';
   
   // For document workflow rows (Tier 10), apply filters only if documentTypeId is valid
-  let docWhere = "WHERE d.organization_id=$1 AND da.status='PENDING'";
+  let docWhere = `WHERE d.organization_id=$1 AND da.status='PENDING'
+    AND (
+      NOT EXISTS (
+        SELECT 1 FROM approval_level_users alu_any
+        WHERE alu_any.approval_level_id = da.approval_level_id
+      )
+      OR EXISTS (
+        SELECT 1 FROM approval_level_users alu_me
+        WHERE alu_me.approval_level_id = da.approval_level_id
+          AND alu_me.user_id = $2
+      )
+    )`;
   
   // Only add document_type_id filter if documentTypeId is valid
   if (hasValidDocumentTypeId) {

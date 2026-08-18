@@ -82,7 +82,7 @@ async function addVersionFromBuffer({
   return { document: doc, version };
 }
 
-async function submitDocument({ orgId, documentId, client = null }) {
+async function submitDocument({ orgId, documentId, actorUserId = null, client = null }) {
   return withTransaction(async (txClient) => {
     const doc = await repo.getDocumentById({
       orgId,
@@ -116,6 +116,25 @@ async function submitDocument({ orgId, documentId, client = null }) {
       stateCode: "SUBMITTED",
       client: txClient,
     });
+
+    if (ladder.length) {
+      const rules = await workflowRulesSvc.getRules({
+        orgId,
+        documentTypeId: doc.document_type_id || null,
+        entityType: doc.entity_type || null,
+        client: txClient,
+      });
+      const approvalRequests = await repo.createCurrentApprovalNotifications({
+        orgId,
+        documentId,
+        actorUserId: actorUserId || doc.created_by_user_id || null,
+        allowCreatorApproval: Boolean(rules.allow_self_approval || rules.creator_can_approve),
+        client: txClient,
+      });
+      if (!approvalRequests.length) {
+        throw new AppError(409, "Current approval level has no eligible approvers with approvals.act permission");
+      }
+    }
 
     return { document: updated };
   }, client);
@@ -182,6 +201,18 @@ async function approveDocument({ orgId, documentId, userId, comment, client = nu
       });
       return { document: fin, approval: updated, next: null };
     }
+
+    const nextApprovalRequests = await repo.createCurrentApprovalNotifications({
+      orgId,
+      documentId,
+      actorUserId: userId || null,
+      allowCreatorApproval: Boolean(rules.allow_self_approval || rules.creator_can_approve),
+      client: txClient,
+    });
+    if (!nextApprovalRequests.length) {
+      throw new AppError(409, "Next approval level has no eligible approvers with approvals.act permission");
+    }
+
     const fresh = await repo.getDocumentById({ orgId, documentId, client: txClient });
     return {
       document: fresh,

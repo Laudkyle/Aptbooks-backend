@@ -63,6 +63,16 @@ async function getBillById(orgId, billId, currentUserId) {
          )
          AND EXISTS (
            SELECT 1
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+           JOIN role_permissions rp ON rp.role_id = r.id
+           JOIN permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = $3::uuid
+             AND r.organization_id = b.organization_id
+             AND p.code = 'approvals.act'
+         )
+         AND EXISTS (
+           SELECT 1
            FROM document_approvals da
            WHERE da.document_id = d.id
              AND da.status = 'PENDING'

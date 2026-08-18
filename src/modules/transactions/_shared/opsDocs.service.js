@@ -234,7 +234,7 @@ function createOpsDocService(config) {
         }
       });
 
-      const updated = await repo.setStatus(client, orgId, documentId, "draft", actorUserId);
+      const updated = await repo.setStatus(client, orgId, documentId, "submitted", actorUserId);
       await client.query("COMMIT");
       return { document: updated, workflowDocument };
     } catch (e) {
@@ -249,6 +249,7 @@ function createOpsDocService(config) {
     const client = await pool.connect();
     let updated;
     let workflowDocument;
+    let isFinalApproval = false;
     try {
       await client.query("BEGIN");
       const header = await repo.getLockedDocument(client, orgId, documentId);
@@ -266,7 +267,8 @@ function createOpsDocService(config) {
         client
       });
 
-      updated = await repo.setStatus(client, orgId, documentId, "approved", actorUserId);
+      isFinalApproval = !workflowDocument?.next;
+      updated = await repo.setStatus(client, orgId, documentId, isFinalApproval ? "approved" : "submitted", actorUserId);
       await client.query("COMMIT");
     } catch (e) {
       await client.query("ROLLBACK");
@@ -276,7 +278,7 @@ function createOpsDocService(config) {
     }
 
     let posting = null;
-    if (runPostingHookOnApproval) {
+    if (runPostingHookOnApproval && isFinalApproval) {
       posting = await runApprovalPostingHook({ entityType, orgId, actorUserId, entityId: documentId });
       if (posting?.status === "success" && posting.entity) {
         updated = posting.entity;

@@ -26,6 +26,16 @@ async function getById({ orgId, id, currentUserId, client }) {
          )
          AND EXISTS (
            SELECT 1
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+           JOIN role_permissions rp ON rp.role_id = r.id
+           JOIN permissions p ON p.id = rp.permission_id
+           WHERE ur.user_id = $3::uuid
+             AND r.organization_id = cn.organization_id
+             AND p.code = 'approvals.act'
+         )
+         AND EXISTS (
+           SELECT 1
            FROM document_approvals da
            WHERE da.document_id = d.id
              AND da.status = 'PENDING'
@@ -179,8 +189,8 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
     const { rows } = await client.query(
       `INSERT INTO credit_note_lines(
           credit_note_id, line_no, description, quantity, unit_price, line_total,
-          revenue_account_id, tax_code_id, tax_amount
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+          revenue_account_id, tax_code_id, tax_amount, taxable_amount
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        RETURNING *`,
       [
         cn.id,
@@ -191,7 +201,8 @@ async function createDraft({ orgId, actorUserId, payload, totals, client }) {
         l.lineTotal,
         l.revenueAccountId,
         l.taxCodeId || null,
-        l.taxAmount || 0
+        l.taxAmount || 0,
+        l.taxableAmount ?? l.lineTotal ?? 0
       ]
     );
     await insertLineTaxDetails({ client, tableName: "credit_note_line_tax_details", lineId: rows[0].id, details: l.taxDetails || [] });

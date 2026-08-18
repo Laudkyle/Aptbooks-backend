@@ -69,7 +69,7 @@ async function loadReferenceMaps({ client, lines = [] }) {
 
   if (taxCodeIds.length) {
     const { rows } = await client.query(
-      `SELECT id, code, name, tax_type, rate, direction, application_scope FROM tax_codes WHERE id = ANY($1::uuid[])`,
+      `SELECT id, code, name, tax_type, rate, direction, application_scope, calculation_method FROM tax_codes WHERE id = ANY($1::uuid[])`,
       [taxCodeIds]
     );
     rows.forEach((row) => taxCodeMap.set(row.id, row));
@@ -89,6 +89,29 @@ async function enrichLines({ client, lines = [] }) {
     const taxCode = headerTaxCodeId ? taxCodeMap.get(headerTaxCodeId) || null : null;
     const lineBuckets = taxSummary.byLineId.get(line.id) || { total: 0, recoverable: 0, nonRecoverable: 0, withholding: 0, reverseCharge: 0 };
     const taxes = Array.isArray(line.taxes) ? line.taxes : [];
+    const nonWithholdingTax = line.tax_amount ?? 0;
+    const taxComponents = taxes
+      .filter((t) => String(t.tax_type || '').toUpperCase() !== 'WITHHOLDING')
+      .map((t) => ({
+        row: t,
+        meta: taxCodeMap.get(t.tax_code_id) || taxCodeMap.get(t.source_tax_code_id) || null,
+      }));
+    const calculationMethods = [
+      ...taxComponents.map(({ meta }) => meta?.calculation_method),
+      taxCode?.calculation_method,
+    ].filter(Boolean);
+    const pricingMode = calculationMethods.includes('inclusive')
+      ? (calculationMethods.some((method) => method !== 'inclusive') ? 'mixed' : 'inclusive')
+      : 'exclusive';
+    const inclusiveTaxAmount = taxComponents.length
+      ? taxComponents
+        .filter(({ meta }) => meta?.calculation_method === 'inclusive')
+        .reduce((sum, { row }) => sum + Number(row.tax_amount || 0), 0)
+      : (taxCode?.calculation_method === 'inclusive' ? Number(nonWithholdingTax || 0) : 0);
+    const enteredLineTotal = Number(line.line_total || 0);
+    const inferredTaxableAmount = Math.max(0, enteredLineTotal - inclusiveTaxAmount);
+    const taxableAmount = line.taxable_amount ?? inferredTaxableAmount;
+    const grossAmount = round2(Number(taxableAmount || 0) + Number(nonWithholdingTax || 0));
 
     return {
       ...line,
@@ -112,10 +135,12 @@ async function enrichLines({ client, lines = [] }) {
       display_amounts: {
         quantity: Number(line.quantity || 0),
         unit_price: round2(line.unit_price || 0),
-        taxable_amount: round2(line.taxable_amount ?? line.line_total ?? 0),
-        line_subtotal: round2(line.line_total || 0),
-        line_tax_total: round2(lineBuckets.total || line.tax_amount || 0),
-        line_gross_total: round2(Number(line.line_total || 0) + Number(lineBuckets.total || line.tax_amount || 0)),
+        taxable_amount: round2(taxableAmount),
+        line_subtotal: round2(taxableAmount),
+        entered_line_total: round2(line.line_total || 0),
+        line_tax_total: round2(nonWithholdingTax),
+        line_gross_total: grossAmount,
+        pricing_mode: pricingMode,
       }
     };
   });
@@ -160,6 +185,12 @@ function buildDetailMeta({ header = {}, lines = [], extra = {} }) {
       withholding_total: round2(firstDefined(header, ['withholding_total'], taxSummary.withholdingReceivable || taxSummary.withholdingPayable || 0)),
     },
     tax: {
+      pricing_mode: (() => {
+        const modes = [...new Set(lines.map((line) => line.display_amounts?.pricing_mode).filter(Boolean))];
+        if (!modes.length) return null;
+        if (modes.length === 1) return modes[0];
+        return 'mixed';
+      })(),
       total_tax: round2(taxSummary.totalTax),
       output_tax: round2(taxSummary.outputTax),
       recoverable_input_tax: round2(taxSummary.recoverableInputTax),

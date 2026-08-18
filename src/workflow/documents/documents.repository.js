@@ -258,6 +258,67 @@ async function getCurrentPendingApproval({ documentId, client = null }) {
   return r.rows[0] || null;
 }
 
+
+async function createCurrentApprovalNotifications({ orgId, documentId, actorUserId = null, allowCreatorApproval = false, client = null }) {
+  const r = await q(client).query(
+    `
+    WITH current_step AS (
+      SELECT da.approval_level_id, al.name AS approval_level_name
+      FROM document_approvals da
+      JOIN approval_levels al ON al.id = da.approval_level_id
+      WHERE da.document_id=$2 AND da.status='PENDING'
+      ORDER BY da.sequence ASC
+      LIMIT 1
+    ), eligible AS (
+      SELECT DISTINCT u.id AS user_id, cs.approval_level_name
+      FROM current_step cs
+      JOIN users u ON u.organization_id=$1 AND u.status='active' AND u.is_system=FALSE
+      WHERE EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id
+        JOIN role_permissions rp ON rp.role_id = r.id
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = u.id
+          AND r.organization_id = $1
+          AND p.code = 'approvals.act'
+      )
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM approval_level_users alu_any
+          WHERE alu_any.approval_level_id = cs.approval_level_id
+        )
+        OR EXISTS (
+          SELECT 1 FROM approval_level_users alu_me
+          WHERE alu_me.approval_level_id = cs.approval_level_id
+            AND alu_me.user_id = u.id
+        )
+      )
+    ), doc AS (
+      SELECT d.id, d.title, d.entity_type, d.entity_id, d.created_by_user_id
+      FROM documents d
+      WHERE d.organization_id=$1 AND d.id=$2
+    )
+    INSERT INTO notifications(
+      organization_id, user_id, created_by_user_id,
+      type, title, body, severity, entity_type, entity_id
+    )
+    SELECT
+      $1, e.user_id, $3,
+      'approval',
+      COALESCE(doc.title, 'Document') || ' awaiting approval',
+      COALESCE(doc.title, 'Document') || ' is awaiting your approval at ' || COALESCE(e.approval_level_name, 'the current approval level') || '.',
+      'info', doc.entity_type, doc.entity_id
+    FROM eligible e
+    CROSS JOIN doc
+    WHERE ($4::boolean OR doc.created_by_user_id IS NULL OR doc.created_by_user_id IS DISTINCT FROM e.user_id)
+    RETURNING user_id, id
+    `,
+    [orgId, documentId, actorUserId || null, allowCreatorApproval === true]
+  );
+  return r.rows;
+}
+
 async function approveCurrentLevel({ documentId, approverUserId, comment, client = null }) {
   const db = q(client);
   const cur = await db.query(
@@ -453,5 +514,6 @@ module.exports = {
   approveCurrentLevel,
   rejectCurrentLevel,
   replaceApprovalLevelUsers,
-  listApprovalLevelUsers
+  listApprovalLevelUsers,
+  createCurrentApprovalNotifications
 };
