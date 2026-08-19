@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "entity_type": "payroll_run",
+  "entity_id": "03a7b9c2-da31-4aa7-a047-f39d883b5388",
+  "snapshot_at": "2026-08-19T15:23:41.882Z",
+  "header": {
+    "id": "03a7b9c2-da31-4aa7-a047-f39d883b5388",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "period_id": "f0ad68e3-ad3c-49e0-8d35-d13a8dababb3",
+    "pay_date": "2026-07-24T00:00:00.000Z",
+    "currency": "GHS",
+    "status": "calculated",
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "updated_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-19T15:23:26.741Z",
+    "updated_at": "2026-08-19T15:23:36.216Z",
+    "workflow_document_id": null,
+    "statutory_country_code": null,
+    "paye_rule_version_id": null,
+    "pension_rule_version_id": null
+  },
+  "lines": [
+    {
+      "id": "2f1ed49c-ffb6-4dca-af3a-9e7453595ee9",
+      "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+      "payroll_run_id": "03a7b9c2-da31-4aa7-a047-f39d883b5388",
+      "line_no": 1,
+      "employee_id": "42af1a5b-d0b6-44c2-9c73-2bfbc3375f44",
+      "base_salary": "12000.00",
+      "total_earnings": "200.00",
+      "total_deductions": "0.00",
+      "gross_pay": "12200.00",
+      "net_pay": "12200.00",
+      "currency": "GHS",
+      "breakdown_json": {
+        "benefits": [],
+        "earnings": [
+          {
+            "code": "PayCode",
+            "amount": 200,
+            "component_id": "33b6bd54-2603-40cb-8bc2-a139bcdd32a2"
+          }
+        ],
+        "statutory": [],
+        "deductions": [],
+        "base_salary": 12000,
+        "employer_contributions_total": 0
+      },
+      "created_at": "2026-08-19T15:23:36.102Z",
+      "updated_at": "2026-08-19T15:23:36.102Z",
+      "taxable_earnings": "0.00",
+      "chargeable_income": "0.00",
+      "paye_tax": "0.00",
+      "bonus_tax": "0.00",
+      "overtime_tax": "0.00",
+      "insurable_earnings": "0.00",
+      "ssnit_employee": "0.00",
+      "ssnit_employer": "0.00",
+      "ssnit_tier1_payable": "0.00",
+      "tier2_payable": "0.00",
+      "total_employer_cost": "0.00",
+      "employee_no": "0001",
+      "first_name": "Abraham",
+      "last_name": "Boakye"
+    },
+    {
+      "id": "f4716d49-2755-4e22-9d5d-bedf540279e5",
+      "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+      "payroll_run_id": "03a7b9c2-da31-4aa7-a047-f39d883b5388",
+      "line_no": 2,
+      "employee_id": "b7785520-54a2-4b9f-94c3-25ed2c211461",
+      "base_salary": "5000.00",
+      "total_earnings": "230.00",
+      "total_deductions": "0.00",
+      "gross_pay": "5230.00",
+      "net_pay": "5230.00",
+      "currency": "GHS",
+      "breakdown_json": {
+        "benefits": [],
+        "earnings": [
+          {
+            "code": "PayCode",
+            "amount": 230,
+            "component_id": "33b6bd54-2603-40cb-8bc2-a139bcdd32a2"
+          }
+        ],
+        "statutory": [],
+        "deductions": [],
+        "base_salary": 5000,
+        "employer_contributions_total": 0
+      },
+      "created_at": "2026-08-19T15:23:36.102Z",
+      "updated_at": "2026-08-19T15:23:36.102Z",
+      "taxable_earnings": "0.00",
+      "chargeable_income": "0.00",
+      "paye_tax": "0.00",
+      "bonus_tax": "0.00",
+      "overtime_tax": "0.00",
+      "insurable_earnings": "0.00",
+      "ssnit_employee": "0.00",
+      "ssnit_employer": "0.00",
+      "ssnit_tier1_payable": "0.00",
+      "tier2_payable": "0.00",
+      "total_employer_cost": "0.00",
+      "employee_no": "0002",
+      "first_name": "laud",
+      "last_name": "kyle"
+    }
+  ],
+  "related": {
+    "journal": null
+  },
+  "meta": {
+    "status": "calculated"
+  }
+}
