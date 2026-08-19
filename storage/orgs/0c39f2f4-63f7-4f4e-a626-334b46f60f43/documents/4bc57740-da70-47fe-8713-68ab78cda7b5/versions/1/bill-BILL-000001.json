@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "7b85ffd8-e321-4c21-975f-6d79a2f418df",
+  "snapshot_at": "2026-08-18T22:39:27.462Z",
+  "header": {
+    "id": "7b85ffd8-e321-4c21-975f-6d79a2f418df",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "vendor_id": "4d8ec325-ea8f-4923-83eb-c6643504bfe0",
+    "bill_no": "BILL-000001",
+    "bill_date": "2026-07-16T00:00:00.000Z",
+    "due_date": "2026-08-02T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "TEST BILL FOR CLEANING SERVICES",
+    "subtotal": "10000.00",
+    "total": "12000.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-18T22:39:06.557Z",
+    "updated_at": "2026-08-18T22:39:06.557Z",
+    "tax_total": "2000.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "12000.00"
+  },
+  "lines": [
+    {
+      "id": "b3a003af-3c2f-4b6e-a53b-6a340d7e606d",
+      "bill_id": "7b85ffd8-e321-4c21-975f-6d79a2f418df",
+      "line_no": 1,
+      "description": "CLEANING FOR MONTH OF JUNE",
+      "quantity": "1.0000",
+      "unit_price": "10000.00",
+      "line_total": "10000.00",
+      "expense_account_id": "43a4f276-8cec-4cb3-b6c7-116f4108b264",
+      "created_at": "2026-08-18T22:39:06.557Z",
+      "tax_code_id": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+      "tax_amount": "2000.00",
+      "taxable_amount": "10000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "4d8ec325-ea8f-4923-83eb-c6643504bfe0",
+          "supplyType": "services",
+          "partnerType": "vendor",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-07-16",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "purchases",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "2000.00",
+        "components": [
+          {
+            "rate": "20.000000",
+            "boxCode": "INPUT_VAT",
+            "taxCode": "GH_VAT_IMPORT_20",
+            "taxType": "IMPORT",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "direct_taxable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard",
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "import",
+            "direction": "input",
+            "taxAmount": "2000.00",
+            "taxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+            "taxCodeName": "VAT/NHIL/GETFund on Imports 20%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "10000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "10000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "2000.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "10000.00",
+    "tax_total": "2000.00",
+    "total": "12000.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

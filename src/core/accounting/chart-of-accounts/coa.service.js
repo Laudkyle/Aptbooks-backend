@@ -23,25 +23,49 @@ async function upsertCategory(orgId, categoryName) {
   return rows[0].id;
 }
 
-async function createAccount({ orgId, payload }) {
-  const typeId = await getAccountTypeIdByCode(payload.accountTypeCode);
-  const categoryId = await upsertCategory(orgId, payload.categoryName);
+async function getParentAccount(orgId, parentAccountId) {
+  const { rows } = await pool.query(
+    `
+    SELECT
+      coa.id,
+      coa.account_type_id,
+      coa.category_id,
+      at.code AS account_type_code,
+      ac.name AS category_name
+    FROM chart_of_accounts coa
+    JOIN account_types at ON at.id = coa.account_type_id
+    LEFT JOIN account_categories ac ON ac.id = coa.category_id
+    WHERE coa.organization_id=$1
+      AND coa.id=$2
+      AND coa.archived_at IS NULL
+    LIMIT 1
+    `,
+    [orgId, parentAccountId]
+  );
+  if (!rows.length) throw new AppError(400, "Invalid parentAccountId");
+  return rows[0];
+}
 
-  // Validate parent belongs to org if provided
+async function createAccount({ orgId, payload }) {
+  let parent = null;
   if (payload.parentAccountId) {
-    const { rows: p } = await pool.query(
-      `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2 AND archived_at IS NULL`,
-      [orgId, payload.parentAccountId]
-    );
-    if (!p.length) throw new AppError(400, "Invalid parentAccountId");
+    parent = await getParentAccount(orgId, payload.parentAccountId);
+    if (String(parent.account_type_code).toUpperCase() !== String(payload.accountTypeCode).toUpperCase()) {
+      throw new AppError(400, "Child account type must match the parent account type");
+    }
   }
+
+  const typeId = parent?.account_type_id || await getAccountTypeIdByCode(payload.accountTypeCode);
+  const categoryId = payload.categoryName
+    ? await upsertCategory(orgId, payload.categoryName)
+    : (parent?.category_id || null);
 
   const { rows } = await pool.query(
     `
     INSERT INTO chart_of_accounts
       (organization_id, code, name, account_type_id, category_id, parent_account_id, is_postable, status)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-    RETURNING id, code, name, is_postable, status
+    RETURNING id, code, name, parent_account_id, is_postable, status
     `,
     [
       orgId,
@@ -54,7 +78,11 @@ async function createAccount({ orgId, payload }) {
       payload.status || "active"
     ]
   );
-  return rows[0];
+  return {
+    ...rows[0],
+    account_type_code: parent?.account_type_code || payload.accountTypeCode,
+    category_name: payload.categoryName || parent?.category_name || null
+  };
 }
 
 async function listAccounts({ orgId, includeArchived = false }) {
@@ -95,16 +123,26 @@ async function getAccount({ orgId, accountId }) {
 }
 
 async function updateAccount({ orgId, accountId, payload }) {
-  // Validate parent if present
+  const { rows: existing } = await pool.query(
+    `
+    SELECT coa.*, at.code AS account_type_code
+    FROM chart_of_accounts coa
+    JOIN account_types at ON at.id = coa.account_type_id
+    WHERE coa.organization_id=$1 AND coa.id=$2
+    `,
+    [orgId, accountId]
+  );
+  if (!existing.length) throw new AppError(404, "Account not found");
+
+  let parent = null;
   if (payload.parentAccountId !== undefined && payload.parentAccountId !== null) {
     if (String(payload.parentAccountId) === String(accountId)) {
       throw new AppError(400, "Account cannot be its own parent");
     }
-    const { rows: p } = await pool.query(
-      `SELECT id FROM chart_of_accounts WHERE organization_id=$1 AND id=$2 AND archived_at IS NULL`,
-      [orgId, payload.parentAccountId]
-    );
-    if (!p.length) throw new AppError(400, "Invalid parentAccountId");
+    parent = await getParentAccount(orgId, payload.parentAccountId);
+    if (String(parent.account_type_id) !== String(existing[0].account_type_id)) {
+      throw new AppError(400, "Child account type must match the parent account type");
+    }
 
     // Prevent circular references: parent cannot be a descendant of this account
     const { rows: cycle } = await pool.query(
@@ -128,13 +166,13 @@ async function updateAccount({ orgId, accountId, payload }) {
     );
     if (cycle.length) throw new AppError(400, "Circular parent reference not allowed");
   }
-  const categoryId = payload.categoryName ? await upsertCategory(orgId, payload.categoryName) : undefined;
 
-  const { rows: existing } = await pool.query(
-    `SELECT * FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,
-    [orgId, accountId]
-  );
-  if (!existing.length) throw new AppError(404, "Account not found");
+  let categoryId;
+  if (payload.categoryName) {
+    categoryId = await upsertCategory(orgId, payload.categoryName);
+  } else if (payload.parentAccountId !== undefined && payload.parentAccountId !== null && parent?.category_id) {
+    categoryId = parent.category_id;
+  }
 
   const next = {
     name: payload.name ?? existing[0].name,
@@ -149,7 +187,7 @@ async function updateAccount({ orgId, accountId, payload }) {
     UPDATE chart_of_accounts
     SET name=$3, category_id=$4, parent_account_id=$5, is_postable=$6, status=$7, updated_at=NOW()
     WHERE organization_id=$1 AND id=$2
-    RETURNING id, code, name, is_postable, status
+    RETURNING id, code, name, parent_account_id, is_postable, status
     `,
     [orgId, accountId, next.name, next.category_id, next.parent_account_id, next.is_postable, next.status]
   );

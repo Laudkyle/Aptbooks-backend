@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "3b5c4ce3-c428-4b4b-a6b5-55b261d95299",
+  "snapshot_at": "2026-08-18T23:06:19.327Z",
+  "header": {
+    "id": "3b5c4ce3-c428-4b4b-a6b5-55b261d95299",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "customer_id": "528a91cc-264f-4e62-948e-5d53f286eae4",
+    "invoice_no": "INV-000006",
+    "invoice_date": "2026-08-18T00:00:00.000Z",
+    "due_date": "2026-08-18T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "test the exempt",
+    "subtotal": "900000.00",
+    "total": "900000.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-18T23:06:10.838Z",
+    "updated_at": "2026-08-18T23:06:10.838Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "900000.00"
+  },
+  "lines": [
+    {
+      "id": "cefff0b9-f7c5-4fd0-8b0b-ef76c4e929de",
+      "invoice_id": "3b5c4ce3-c428-4b4b-a6b5-55b261d95299",
+      "line_no": 1,
+      "description": "test the exempt",
+      "quantity": "1.0000",
+      "unit_price": "900000.00",
+      "line_total": "900000.00",
+      "revenue_account_id": "4cfb7617-d988-4722-8bbd-62d2b70df97d",
+      "created_at": "2026-08-18T23:06:10.838Z",
+      "tax_code_id": "4b77bed3-1ca2-4f1d-8730-09d454169b69",
+      "tax_amount": "0.00",
+      "taxable_amount": "900000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "528a91cc-264f-4e62-948e-5d53f286eae4",
+          "supplyType": "goods",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-08-18",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MedExempt",
+            "taxType": "VAT",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "goods",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "exempt",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "4b77bed3-1ca2-4f1d-8730-09d454169b69",
+            "taxCodeName": "Med Exemption tax",
+            "categoryCode": "exempt",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "900000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "4b77bed3-1ca2-4f1d-8730-09d454169b69",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "4b77bed3-1ca2-4f1d-8730-09d454169b69",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "900000.00",
+        "classification": {
+          "supplyType": "goods",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "4b77bed3-1ca2-4f1d-8730-09d454169b69",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "900000.00",
+    "total": "900000.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

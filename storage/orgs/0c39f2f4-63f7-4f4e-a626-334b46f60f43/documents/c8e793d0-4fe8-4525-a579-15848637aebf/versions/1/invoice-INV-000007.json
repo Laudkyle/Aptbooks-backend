@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "entity_type": "invoice",
+  "entity_id": "385e26e6-1534-4099-ace1-c2239fe283e7",
+  "snapshot_at": "2026-08-18T23:19:56.845Z",
+  "header": {
+    "id": "385e26e6-1534-4099-ace1-c2239fe283e7",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "customer_id": "aeb2feb7-adec-427d-a6e6-866645002852",
+    "invoice_no": "INV-000007",
+    "invoice_date": "2026-08-18T00:00:00.000Z",
+    "due_date": "2026-08-18T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "testing the exemptions",
+    "subtotal": "88938.00",
+    "total": "88938.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-18T23:19:51.015Z",
+    "updated_at": "2026-08-18T23:19:51.015Z",
+    "tax_total": "0.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "88938.00"
+  },
+  "lines": [
+    {
+      "id": "9d577020-6121-475e-97a4-aaa8dcbc6ff3",
+      "invoice_id": "385e26e6-1534-4099-ace1-c2239fe283e7",
+      "line_no": 1,
+      "description": "test",
+      "quantity": "1.0000",
+      "unit_price": "88938.00",
+      "line_total": "88938.00",
+      "revenue_account_id": "4cfb7617-d988-4722-8bbd-62d2b70df97d",
+      "created_at": "2026-08-18T23:19:51.015Z",
+      "tax_code_id": "9bfdb560-e183-475b-8b25-3128ba650386",
+      "tax_amount": "0.00",
+      "taxable_amount": "88938.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "aeb2feb7-adec-427d-a6e6-866645002852",
+          "supplyType": "goods",
+          "partnerType": "customer",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-08-18",
+          "documentType": "invoice",
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "sales",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MED2",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "goods",
+              "taxProfileId": null,
+              "recoveryBasis": "not_applicable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "exempt",
+            "direction": "output",
+            "taxAmount": "0.00",
+            "taxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+            "taxCodeName": "MEDEX_2",
+            "categoryCode": "exempt",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "88938.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "88938.00",
+        "classification": {
+          "supplyType": "goods",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "88938.00",
+    "total": "88938.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}

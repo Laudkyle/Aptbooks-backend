@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "entity_type": "bill",
+  "entity_id": "718758c6-91a7-4f69-a65a-62c84831ce86",
+  "snapshot_at": "2026-08-18T23:33:23.220Z",
+  "header": {
+    "id": "718758c6-91a7-4f69-a65a-62c84831ce86",
+    "organization_id": "0c39f2f4-63f7-4f4e-a626-334b46f60f43",
+    "vendor_id": "4d8ec325-ea8f-4923-83eb-c6643504bfe0",
+    "bill_no": "BILL-000003",
+    "bill_date": "2026-06-30T00:00:00.000Z",
+    "due_date": "2026-06-30T00:00:00.000Z",
+    "currency_code": "GHS",
+    "fx_rate": "1.000000",
+    "status": "draft",
+    "memo": "tesre",
+    "subtotal": "166000.00",
+    "total": "181200.00",
+    "period_id": null,
+    "journal_entry_id": null,
+    "reversal_journal_entry_id": null,
+    "issued_at": null,
+    "issued_by": null,
+    "voided_at": null,
+    "voided_by": null,
+    "void_reason": null,
+    "created_by": "ed5208eb-61d0-4d85-96c0-996c4aadd597",
+    "created_at": "2026-08-18T23:33:17.320Z",
+    "updated_at": "2026-08-18T23:33:17.320Z",
+    "tax_total": "15200.00",
+    "workflow_document_id": null,
+    "submitted_at": null,
+    "submitted_by": null,
+    "approved_at": null,
+    "approved_by": null,
+    "rejected_at": null,
+    "rejected_by": null,
+    "rejection_reason": null,
+    "withholding_total": "0.00",
+    "net_settlement_total": "181200.00"
+  },
+  "lines": [
+    {
+      "id": "7c370b69-9c6f-4084-9b85-92731b5382c3",
+      "bill_id": "718758c6-91a7-4f69-a65a-62c84831ce86",
+      "line_no": 1,
+      "description": "fdsafdsa",
+      "quantity": "1.0000",
+      "unit_price": "90000.00",
+      "line_total": "90000.00",
+      "expense_account_id": "94cb90ca-7778-4bdc-bb69-9f05172aac7e",
+      "created_at": "2026-08-18T23:33:17.320Z",
+      "tax_code_id": "9bfdb560-e183-475b-8b25-3128ba650386",
+      "tax_amount": "0.00",
+      "taxable_amount": "90000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "4d8ec325-ea8f-4923-83eb-c6643504bfe0",
+          "supplyType": "services",
+          "partnerType": "vendor",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "purchases",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "0.00",
+        "components": [
+          {
+            "rate": "0.000000",
+            "boxCode": null,
+            "taxCode": "MED2",
+            "taxType": "SALES",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "direct_taxable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard"
+            },
+            "taxScope": "exempt",
+            "direction": "input",
+            "taxAmount": "0.00",
+            "taxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+            "taxCodeName": "MEDEX_2",
+            "categoryCode": "exempt",
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "90000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "90000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "9bfdb560-e183-475b-8b25-3128ba650386",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "0.00"
+      }
+    },
+    {
+      "id": "9022c1d4-904e-47ea-822c-cda23d7c899c",
+      "bill_id": "718758c6-91a7-4f69-a65a-62c84831ce86",
+      "line_no": 2,
+      "description": "cvxbvcx",
+      "quantity": "1.0000",
+      "unit_price": "76000.00",
+      "line_total": "76000.00",
+      "expense_account_id": "43a4f276-8cec-4cb3-b6c7-116f4108b264",
+      "created_at": "2026-08-18T23:33:17.320Z",
+      "tax_code_id": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+      "tax_amount": "15200.00",
+      "taxable_amount": "76000.00",
+      "tax_snapshot_json": {
+        "context": {
+          "industry": null,
+          "partnerId": "4d8ec325-ea8f-4923-83eb-c6643504bfe0",
+          "supplyType": "services",
+          "partnerType": "vendor",
+          "pricingMode": "exclusive",
+          "documentDate": "2026-06-30",
+          "documentType": "bill",
+          "placeOfSupply": null,
+          "jurisdictionId": "2abf176d-9f87-4564-afa2-1758d6417287",
+          "transactionScope": "purchases",
+          "partnerCountryCode": "GH",
+          "placeOfSupplyCountryCode": "GH"
+        },
+        "taxAmount": "15200.00",
+        "components": [
+          {
+            "rate": "20.000000",
+            "boxCode": "INPUT_VAT",
+            "taxCode": "GH_VAT_IMPORT_20",
+            "taxType": "IMPORT",
+            "metadata": {
+              "explicit": true,
+              "supplyType": "services",
+              "taxProfileId": null,
+              "recoveryBasis": "direct_taxable",
+              "itemTaxCategory": null,
+              "calculationMethod": "standard",
+              "installedFromPack": "GH-TAX-2026-COMPLETE"
+            },
+            "taxScope": "import",
+            "direction": "input",
+            "taxAmount": "15200.00",
+            "taxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+            "taxCodeName": "VAT/NHIL/GETFund on Imports 20%",
+            "categoryCode": null,
+            "sourceRuleId": null,
+            "reverseCharge": false,
+            "taxableAmount": "76000.00",
+            "exemptionReason": null,
+            "sourceTaxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+            "postingAccountId": null,
+            "calculationMethod": "standard",
+            "selectedTaxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+            "recoverablePercent": "1",
+            "exemptionReasonCode": null
+          }
+        ],
+        "rateSemantics": "percentage_points",
+        "taxableAmount": "76000.00",
+        "classification": {
+          "supplyType": "services",
+          "taxCategory": null,
+          "taxProfileId": null
+        },
+        "selectedTaxCodeId": "2bcd6f99-d0c7-41f7-acaf-3d1a9bcdb82f",
+        "withholdingTaxAmount": "0.00",
+        "grossComputedTaxAmount": "15200.00"
+      }
+    }
+  ],
+  "totals": {
+    "subtotal": "166000.00",
+    "tax_total": "15200.00",
+    "total": "181200.00"
+  },
+  "meta": {
+    "status": "draft",
+    "currency_code": "GHS"
+  }
+}
