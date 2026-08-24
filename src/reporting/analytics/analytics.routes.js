@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { AppError } = require("../../shared/errors/AppError");
 const svc = require("./analytics.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['baseValue', 'iterations', 'mean', 'stddev']));
 const { resolveOrgId } = require("../_util");
 
 router.get("/time-series", requirePermission("reporting.analytics.read"), async (req, res, next) => {

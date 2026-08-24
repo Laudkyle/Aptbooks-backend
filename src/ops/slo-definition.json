@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "service": "aptbooks-api",
+  "windowDays": 30,
+  "objectives": {
+    "availabilityPercent": 99.9,
+    "interactiveP95LatencyMs": 1000,
+    "financialIntegrityCriticalFailures": 0,
+    "scheduledAccountingJobSuccessPercent": 99.9
+  },
+  "errorBudgetPolicy": {
+    "fastBurn": { "window": "1h", "budgetConsumedPercent": 10, "action": "page" },
+    "slowBurn": { "window": "24h", "budgetConsumedPercent": 25, "action": "ticket_and_release_review" },
+    "exhausted": { "action": "freeze_nonessential_releases_until_recovered" }
+  }
+}

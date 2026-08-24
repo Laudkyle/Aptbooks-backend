@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['code', 'isDefault', 'name', 'status', 'warehouseId']));
 const { authRequired } = require('../../../middleware/auth.middleware');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');

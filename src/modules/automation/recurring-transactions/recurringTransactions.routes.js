@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['autoPost', 'code', 'dayOfMonth', 'description', 'endDate', 'intervalDays', 'isEnabled', 'journalEntryId', 'journalPayload', 'message', 'metadata', 'name', 'nextRunDate', 'payloadSnapshot', 'resultSnapshot', 'runDate', 'scheduleType', 'sourceJournalId', 'sourceType', 'startDate', 'status', 'weekday']));
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');
 const svc = require('./recurringTransactions.service');

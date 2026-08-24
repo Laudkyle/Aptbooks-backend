@@ -1,4 +1,5 @@
 const { pool } = require("../../db/pool");
+const { bindTenant } = require("../../shared/security/tenantContext");
 const periodIF = require("../../interfaces/periodManagement.interface");
 const ifrs16 = require("../../compliance/ifrs16/ifrs16.service");
 const { getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
@@ -49,6 +50,7 @@ async function ifrs16AutoPostDaily() {
   const reasons = {};
 
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await getSystemActorUserId({ orgId: o.id });
 
     const enabled = await getBooleanSetting({

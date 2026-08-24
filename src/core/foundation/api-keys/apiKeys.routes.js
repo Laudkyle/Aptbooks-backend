@@ -1,4 +1,6 @@
+const { createModuleBodyContract, z, validateBody } = require("../../../shared/http/requestValidation");
 const router = require("express").Router();
+router.use(createModuleBodyContract(['name']));
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { pool } = require("../../../db/pool");
@@ -7,6 +9,9 @@ const { writeAudit } = require("../audit-logs/audit.service");
 const { generatePrefix, generateSecret, hashSecret, makeApiKey } = require("../../../shared/security/apiKeys");
 
 router.use(authRequired);
+
+const apiKeyCreateSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
+const emptyBodySchema = z.object({}).strict();
 
 // List API keys (secrets never returned)
 router.get("/", requirePermission("settings.read"), async (req, res, next) => {
@@ -24,7 +29,7 @@ router.get("/", requirePermission("settings.read"), async (req, res, next) => {
 });
 
 // Create API key
-router.post("/", requirePermission("settings.manage"), async (req, res, next) => {
+router.post("/", requirePermission("settings.manage"), validateBody(apiKeyCreateSchema), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const name = String(req.body?.name || "").trim();
@@ -59,7 +64,7 @@ router.post("/", requirePermission("settings.manage"), async (req, res, next) =>
 });
 
 // Revoke API key
-router.post("/:id/revoke", requirePermission("settings.manage"), async (req, res, next) => {
+router.post("/:id/revoke", requirePermission("settings.manage"), validateBody(emptyBodySchema), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const id = req.params.id;

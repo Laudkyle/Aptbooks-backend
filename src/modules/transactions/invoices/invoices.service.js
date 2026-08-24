@@ -574,6 +574,7 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       orgId,
       actorUserId,
       client,
+      source: { type: 'invoice', id: invoiceId, action: 'issue', reference: invoice.invoice_no, module: 'receivables' },
       payload: {
         periodId: period.id,
         entryDate: invoice.invoice_date,
@@ -599,7 +600,7 @@ async function issueInvoice({ orgId, actorUserId, invoiceId }) {
       }
     });
 
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client, source: { type: 'invoice', id: invoiceId, action: 'issue', reference: invoice.invoice_no, module: 'receivables' } });
 
     await upsertDocumentTaxSnapshot({
       client,

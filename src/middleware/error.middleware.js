@@ -12,7 +12,8 @@ function errorMiddleware(err, req, res, _next) {
       code: normalized.code,
       message: normalized.originalMessage || normalized.message,
       path: req.path,
-      requestId: normalized.requestId
+      requestId: normalized.requestId,
+    traceId: req.trace?.traceId || null
     }, "Handled request error");
   }
 
@@ -44,12 +45,24 @@ function errorMiddleware(err, req, res, _next) {
     }
   })();
 
+  const errorPayload = {
+    code: normalized.code,
+    message: normalized.message,
+    details: normalized.details,
+    requestId: normalized.requestId,
+    traceId: req.trace?.traceId || null
+  };
+
+  // Canonical error envelope. Legacy top-level fields are retained during the
+  // migration window so existing clients do not break abruptly.
   res.status(normalized.status).json({
     ok: false,
-    error: normalized.message,
-    code: normalized.code,
-    details: normalized.details,
-    requestId: normalized.requestId
+    error: errorPayload,
+    code: errorPayload.code,
+    message: errorPayload.message,
+    details: errorPayload.details,
+    requestId: errorPayload.requestId,
+    traceId: errorPayload.traceId
   });
 }
 

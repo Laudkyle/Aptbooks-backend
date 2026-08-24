@@ -1,0 +1,3 @@
+# Runbook: financial integrity failure
+
+Treat this as critical. Do not delete or rewrite posted journals to make the check pass. Identify the tenant and persisted integrity run through authenticated internal operations, inspect check codes/findings, and determine whether the mismatch is a projection issue, subledger/control-account issue, missing posting provenance, or a genuine journal invariant problem. Pause affected mutation paths if correctness is uncertain. Rebuild only documented projections from immutable journals; correct financial history through reversal/adjustment workflows. Re-run integrity and retain evidence before resolution.

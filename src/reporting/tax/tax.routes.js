@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
@@ -7,6 +8,7 @@ const { AppError } = require('../../shared/errors/AppError');
 const Decimal = require("decimal.js");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['adapterCode', 'boxes', 'comment', 'from', 'includeGhanaComponents', 'jurisdictionId', 'jurisdiction_template', 'minus', 'taxReturnId', 'tax_type', 'template', 'templateCode', 'to', 'totals', 'transactions']));
 const { resolveOrgId } = require("../_util");
 router.use(requirePermission("reporting.tax.read"));
 

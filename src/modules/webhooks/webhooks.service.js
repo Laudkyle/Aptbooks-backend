@@ -5,6 +5,7 @@ const { encryptSecret, decryptSecret, isEncryptedSecret } = require("../../share
 const crypto = require("crypto");
 const dns = require("dns").promises;
 const net = require("net");
+const { runWithTenant } = require("../../shared/security/tenantContext");
 const http = require("http");
 const https = require("https");
 
@@ -266,6 +267,24 @@ async function claimPending({ limit, orgId = null }) {
 
 async function dispatchPending({ limit = 50, orgId = null }) {
   const safeLimit = Math.max(1, Math.min(200, Number.parseInt(limit, 10) || 50));
+
+  // Global dispatch is implemented as explicit per-tenant work so RLS remains
+  // effective even in background workers. No BYPASSRLS worker credential is used.
+  if (!orgId) {
+    const { rows: organizations } = await pool.query(`SELECT id FROM organizations ORDER BY created_at ASC`);
+    const combined = [];
+    let remaining = safeLimit;
+    for (const organization of organizations) {
+      if (remaining <= 0) break;
+      const tenantResults = await runWithTenant(organization.id, () =>
+        dispatchPending({ limit: remaining, orgId: organization.id })
+      );
+      combined.push(...tenantResults);
+      remaining = Math.max(0, remaining - tenantResults.length);
+    }
+    return combined;
+  }
+
   const events = await claimPending({ limit: safeLimit, orgId });
   const results = [];
 

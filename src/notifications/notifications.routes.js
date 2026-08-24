@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../shared/http/requestValidation");
 const router = require("express").Router();
+router.use(createModuleBodyContract(['entityId', 'entityType', 'ids', 'severity', 'title', 'to', 'type', 'userId']));
 const { authRequired } = require("../middleware/auth.middleware");
 const { requirePermission } = require("../middleware/permission.middleware");
 const { writeAudit } = require("../core/foundation/audit-logs/audit.service");

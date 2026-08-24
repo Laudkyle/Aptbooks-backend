@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require("express").Router();
+router.use(createModuleBodyContract(['baseCurrencyCode', 'challengeId', 'displayName', 'display_name', 'email', 'fid', 'first_name', 'image', 'isActive', 'is_active', 'jti', 'last_name', 'newPassword', 'notes', 'organizationId', 'organizationName', 'organization_id', 'otp', 'password', 'phone', 'refreshToken', 'roleIds', 'signatureDisplayName', 'signatureImage', 'signatureIsActive', 'signatureNotes', 'signatureTitle', 'signature_display_name', 'signature_image', 'signature_is_active', 'signature_notes', 'signature_title', 'status', 'sub', 'title', 'token', 'typ', 'ver']));
 const bcrypt = require("bcrypt"); 
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");

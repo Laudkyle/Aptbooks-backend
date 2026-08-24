@@ -1,10 +1,11 @@
 const express = require("express");
 const os = require("os");
 
-const { pool } = require("../db/pool");
+const { pool, assertRuntimeRoleSafe } = require("../db/pool");
 const { env } = require("../config/env");
 const { authRequired } = require("../middleware/auth.middleware");
 const { requirePermission } = require("../middleware/permission.middleware");
+const { isDraining } = require('../ops/gracefulShutdown');
 
 /**
  * Health endpoints
@@ -71,7 +72,12 @@ const MODULE_REGISTRY = [
       "exchange_rate_types",
       "tax_codes",
       "tax_jurisdictions",
-      "tax_settings"
+      "tax_settings",
+      "accounting_policy_versions",
+      "accounting_posting_requests",
+      "journal_posting_provenance",
+      "financial_integrity_runs",
+      "financial_integrity_findings"
     ]
   },
   {
@@ -513,7 +519,8 @@ function summarizeModules(modules) {
 router.get("/healthz", (_req, res) => {
   res.json({
     ok: true,
-    service: "aptbooks-backend",
+    service: env.SERVICE_NAME,
+    version: env.APP_VERSION,
     env: env.NODE_ENV,
     timestamp: nowIso(),
     uptime_seconds: Math.round(process.uptime())
@@ -523,13 +530,40 @@ router.get("/healthz", (_req, res) => {
 // --- Public readiness (DB) ---
 router.get("/readyz", async (_req, res) => {
   try {
+    if (isDraining()) throw new Error('service_draining');
     const db = await dbPing();
-    res.json({ ok: true, service: "aptbooks-backend", db, timestamp: nowIso() });
-  } catch (e) {
+    if (env.DB_ENFORCE_LEAST_PRIVILEGE) await assertRuntimeRoleSafe();
+    if (env.RLS_ENABLED) {
+      const { rows } = await pool.query(`
+        SELECT EXISTS (
+          SELECT 1 FROM schema_migrations WHERE id = '161_phase1_row_level_tenant_isolation.sql'
+        ) AS phase1_applied,
+        EXISTS (
+          SELECT 1 FROM schema_migrations WHERE id = '162_phase2_financial_assurance.sql'
+        ) AS phase2_applied,
+        EXISTS (
+          SELECT 1 FROM schema_migrations WHERE id = '163_phase4_operational_reliability.sql'
+        ) AS phase4_applied,
+        EXISTS (
+          SELECT 1
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname='public' AND c.relrowsecurity AND c.relforcerowsecurity
+        ) AS enforced
+      `);
+      if (!rows?.[0]?.phase1_applied || !rows?.[0]?.phase2_applied || !rows?.[0]?.phase4_applied || !rows?.[0]?.enforced) {
+        throw new Error("database_security_baseline_not_applied");
+      }
+    }
+    res.json({ ok: true, service: env.SERVICE_NAME, version: env.APP_VERSION, db, timestamp: nowIso() });
+  } catch (_e) {
+    // Public readiness deliberately does not reveal database role, schema, or
+    // connection details. Detailed diagnostics live behind /health/system.
     res.status(503).json({
       ok: false,
-      service: "aptbooks-backend",
-      db: { ok: false, error: e?.message || "db_error" },
+      service: env.SERVICE_NAME,
+      version: env.APP_VERSION,
+      db: { ok: false, error: "not_ready" },
       timestamp: nowIso()
     });
   }
@@ -585,7 +619,8 @@ router.get(
     const t0 = Date.now();
     const checks = {
       ok: true,
-      service: "aptbooks-backend",
+      service: env.SERVICE_NAME,
+      version: env.APP_VERSION,
       env: env.NODE_ENV,
       timestamp: nowIso(),
       uptime_seconds: Math.round(process.uptime()),

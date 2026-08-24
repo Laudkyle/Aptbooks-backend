@@ -307,28 +307,31 @@ async function updateSchedule({ organizationId, scheduleId, patch }) {
   return rows[0] || null;
 }
 
-async function dueSchedules({ limit = 25 }) {
+async function dueSchedules({ organizationId, limit = 25 }) {
+  if (!organizationId) throw new Error('organizationId required');
   const { rows } = await pool.query(
     `
     SELECT *
     FROM saved_report_schedules
-    WHERE is_enabled=TRUE AND next_run_at IS NOT NULL AND next_run_at <= NOW()
+    WHERE organization_id=$1
+      AND is_enabled=TRUE AND next_run_at IS NOT NULL AND next_run_at <= NOW()
     ORDER BY next_run_at ASC
-    LIMIT $1
+    LIMIT $2
     `,
-    [Math.min(Math.max(Number(limit) || 25, 1), 100)]
+    [organizationId, Math.min(Math.max(Number(limit) || 25, 1), 100)]
   );
   return rows;
 }
 
-async function markScheduleRun({ scheduleId, nextRunAt }) {
+async function markScheduleRun({ organizationId, scheduleId, nextRunAt }) {
+  if (!organizationId) throw new Error('organizationId required');
   await pool.query(
     `
     UPDATE saved_report_schedules
-    SET last_run_at=NOW(), next_run_at=$2, updated_at=NOW()
-    WHERE id=$1
+    SET last_run_at=NOW(), next_run_at=$3, updated_at=NOW()
+    WHERE organization_id=$1 AND id=$2
     `,
-    [scheduleId, nextRunAt]
+    [organizationId, scheduleId, nextRunAt]
   );
 }
 

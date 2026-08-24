@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
@@ -5,6 +6,7 @@ const svc = require("./budgets.service");
 const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['accountId', 'approvedAt', 'approvedByUserId', 'dimensionJson', 'isEnabled', 'items', 'lines', 'name', 'newVersionNo', 'pct', 'periodId', 'reason', 'rejectedAt', 'rejectedByUserId', 'rejectionReason', 'scenarioKey', 'status', 'submittedAt', 'submittedByUserId', 'templateSourceVersionId', 'thresholdPct', 'versionNo', 'workflowStatus']));
 const { resolveOrgId } = require("../_util");
 
 router.get("/", requirePermission("reporting.budgets.read"), async (req, res, next) => {

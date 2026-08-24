@@ -272,7 +272,7 @@ router.post("/batch/post", idempotency({ required: true }), requirePermission("a
     const actorUserId = req.user.id;
 
     const payload = validate(journalBatchPostSchema, req.body);
-    const out = await journalAPI.batchPostJournals({ orgId, actorUserId, journalIds: payload.journalIds });
+    const out = await journalAPI.batchPostJournals({ orgId, actorUserId, journalIds: payload.journalIds, idempotencyKey: req.idempotency.key });
 
     await writeAudit({
       organizationId: orgId,
@@ -297,7 +297,8 @@ router.post("/:id/post", idempotency({ required: true }), requirePermission("acc
     const out = await journalAPI.postDraftJournal({
       orgId: req.user.organization_id,
       journalId: req.params.id,
-      actorUserId: req.user.id
+      actorUserId: req.user.id,
+      idempotencyKey: req.idempotency.key
     });
     res.json(out);
   } catch (e) { next(e); }

@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const router = require("express").Router();
+router.use(createModuleBodyContract(['cron', 'filters', 'is_enabled', 'name']));
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");

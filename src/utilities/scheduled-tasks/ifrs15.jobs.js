@@ -1,4 +1,5 @@
 const { pool } = require("../../db/pool");
+const { bindTenant } = require("../../shared/security/tenantContext");
 const ifrs15 = require("../../compliance/ifrs15/ifrs15.service");
 const { getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
 
@@ -27,6 +28,7 @@ async function ifrs15AutoPostRevenueDaily() {
   const reasons = {};
 
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await getSystemActorUserId({ orgId: o.id });
 
     // only run when an open period ends today (matches common accounting close rhythm)

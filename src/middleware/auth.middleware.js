@@ -3,6 +3,7 @@ const { env } = require("../config/env");
 const { AppError } = require("../shared/errors/AppError");
 const { pool } = require("../db/pool");
 const { parseApiKey, hashSecret } = require("../shared/security/apiKeys");
+const { runWithTenant } = require("../shared/security/tenantContext");
 
 function verifyOptions() {
   const opts = {};
@@ -43,7 +44,7 @@ async function authRequired(req, _res, next) {
       if (!uRows.length) throw new AppError(401, "API key user not found");
       if (uRows[0].status !== "active") throw new AppError(403, "API key user is not active");
       req.user = { id: uRows[0].id, email: uRows[0].email, organization_id: rec.organization_id, typ: "api_key" };
-      return next();
+      return runWithTenant(rec.organization_id, () => next());
     }
 
     const h = req.headers.authorization || "";
@@ -86,7 +87,7 @@ async function authRequired(req, _res, next) {
       organization_id: user.organization_id,
       auth_version: Number(user.auth_version),
     };
-    return next();
+    return runWithTenant(user.organization_id, () => next());
   } catch (e) {
     return next(e instanceof AppError ? e : new AppError(401, "Invalid token"));
   }

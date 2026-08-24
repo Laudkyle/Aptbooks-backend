@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require("express").Router();
+router.use(createModuleBodyContract(['address_json', 'address_line_1', 'address_line_2', 'branding_json', 'city', 'contact_email', 'contact_phone', 'country', 'logo_url', 'name', 'postal_code', 'primary_color', 'registration_number', 'secondary_color', 'state', 'tax_id', 'website']));
 const { pool } = require("../../../db/pool");
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");

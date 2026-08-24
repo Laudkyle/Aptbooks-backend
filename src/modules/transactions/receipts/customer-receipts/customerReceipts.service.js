@@ -650,6 +650,7 @@ async function postCustomerReceipt({ orgId, actorUserId, id }) {
       orgId,
       actorUserId,
       client,
+      source: { type: 'customer_receipt', id, action: 'post', reference: cr.receipt_no, module: 'receivables' },
       payload: {
         periodId: period.id,
         entryDate: cr.receipt_date,
@@ -673,7 +674,7 @@ async function postCustomerReceipt({ orgId, actorUserId, id }) {
         updatedBy: actorUserId
       }
     });
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client, source: { type: 'customer_receipt', id, action: 'post', reference: cr.receipt_no, module: 'receivables' } });
 
     const { rows: updated } = await client.query(
       `UPDATE customer_receipts

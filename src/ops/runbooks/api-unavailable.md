@@ -1,0 +1,3 @@
+# Runbook: API unavailable
+
+Confirm whether `/healthz` responds and whether `/readyz` is failing. If liveness fails, inspect process/container restarts and recent release events. If liveness passes but readiness fails, check drain state, PostgreSQL reachability, migration 163/security baseline and runtime DB-role safety. Inspect `aptbooks_db_pool_waiting_requests` and recent DB errors. If a deploy is draining normally, allow the configured grace period; if drain persists, investigate shutdown hooks. After recovery, verify financial-integrity status before closing any incident that interrupted posting operations.

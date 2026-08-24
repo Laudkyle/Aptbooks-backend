@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../../../shared/http/requestValidation");
 
 const express = require('express');
 const { authRequired } = require('../../../../middleware/auth.middleware');
@@ -6,6 +7,7 @@ const { idempotency } = require('../../../../middleware/idempotency.middleware')
 const svc = require('./approvalBatches.service');
 
 const router = express.Router();
+router.use(createModuleBodyContract(['approvedByUserId', 'batchNo', 'batch_no', 'cancelledReason', 'items', 'name', 'notes', 'reason', 'scheduledDate', 'scheduled_date']));
 router.use(authRequired);
 
 router.get('/', requirePermission('banking.treasury.read'), async (req, res, next) => { try { res.json(await svc.list(req.user.organization_id)); } catch (e) { next(e); } });

@@ -160,8 +160,17 @@ async function buildOperationalDocumentJournal({ orgId, actorUserId, header, lin
     lines: journalLines
   };
 
-  const draft = await journalIF.createDraftJournal({ orgId, actorUserId, payload, client });
-  const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+  const posted = await journalIF.postSourceJournal({
+    orgId,
+    actorUserId,
+    client,
+    sourceType: header.module_code,
+    sourceId: header.id,
+    sourceAction: 'post',
+    sourceReference: header.document_no,
+    sourceModule: 'operational_documents',
+    payload,
+  });
 
   const tableName = getTableNameForModule(header.module_code);
   if (tableName) {

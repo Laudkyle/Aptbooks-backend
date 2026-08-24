@@ -1,0 +1,73 @@
+groups:
+  - name: aptbooks-service
+    rules:
+      - alert: AptBooksApiDown
+        expr: up{job="aptbooks-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: AptBooks API is not scrapeable
+          runbook: ops/runbooks/api-unavailable.md
+
+      - alert: AptBooksHighServerErrorRate
+        expr: |
+          sum(rate(aptbooks_http_5xx_total[5m]))
+          /
+          clamp_min(sum(rate(aptbooks_http_requests_total[5m])), 0.001)
+          > 0.01
+        for: 10m
+        labels: { severity: high }
+        annotations:
+          summary: AptBooks HTTP 5xx rate exceeds 1%
+          runbook: ops/runbooks/high-error-rate.md
+
+      - alert: AptBooksHighP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(aptbooks_http_request_duration_seconds_bucket[10m])))
+          > aptbooks_slo_p95_latency_target_seconds
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: AptBooks API p95 latency exceeds one second
+          runbook: ops/runbooks/high-latency.md
+
+      - alert: AptBooksDatabaseErrors
+        expr: sum(rate(aptbooks_db_query_errors_total[5m])) > 0
+        for: 5m
+        labels: { severity: high }
+        annotations:
+          summary: AptBooks is seeing database query errors
+          runbook: ops/runbooks/database-degradation.md
+
+      - alert: AptBooksDatabasePoolSaturation
+        expr: aptbooks_db_pool_waiting_requests > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Requests are waiting for PostgreSQL pool connections
+          runbook: ops/runbooks/database-degradation.md
+
+      - alert: AptBooksSchedulerFailures
+        expr: increase(aptbooks_scheduler_failures_total[15m]) > 0
+        for: 1m
+        labels: { severity: high }
+        annotations:
+          summary: A scheduled accounting/operations task failed
+          runbook: ops/runbooks/scheduler-failure.md
+
+      - alert: AptBooksFinancialIntegrityFailure
+        expr: increase(aptbooks_accounting_integrity_failures_total[24h]) > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Financial integrity verification reported a failure
+          runbook: ops/runbooks/financial-integrity-failure.md
+
+      - alert: AptBooksUnexpectedDrain
+        expr: aptbooks_process_draining == 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: AptBooks process has remained in drain state
+          runbook: ops/runbooks/api-unavailable.md

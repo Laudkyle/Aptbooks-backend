@@ -1,8 +1,10 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require('express');
 const { requirePermission } = require('../../middleware/permission.middleware');
 const svc = require('./agingBuckets.service');
 
 const router = express.Router();
+router.use(createModuleBodyContract(['buckets', 'end_days', 'is_default', 'label', 'name', 'sort_order', 'start_days']));
 const { resolveOrgId } = require("../_util");
 router.use(requirePermission('reporting.config.manage'));
 

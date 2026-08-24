@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./projects.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['comment']));
 const { resolveOrgId } = require("../_util");
 
 router.get("/", requirePermission("reporting.projects.read"), async (req, res, next) => {

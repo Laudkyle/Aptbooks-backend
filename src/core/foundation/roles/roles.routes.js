@@ -1,4 +1,6 @@
+const { createModuleBodyContract, z, validateBody } = require("../../../shared/http/requestValidation");
 const router = require("express").Router();
+router.use(createModuleBodyContract(['name', 'permissionCodes', 'template']));
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { pool } = require("../../../db/pool");
@@ -7,7 +9,11 @@ const { writeAudit } = require("../audit-logs/audit.service");
 
 router.use(authRequired);
 
-router.post("/", requirePermission("rbac.roles.manage"), async (req, res, next) => {
+const roleNameSchema = z.object({ name: z.string().trim().min(1).max(120) }).strict();
+const permissionCodesSchema = z.object({ permissionCodes: z.array(z.string().trim().min(1).max(200)).min(1).max(500) }).strict();
+const roleTemplateSchema = z.object({ template: z.enum(["admin", "accountant", "clerk", "viewer"]) }).strict();
+
+router.post("/", requirePermission("rbac.roles.manage"), validateBody(roleNameSchema), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const { name } = req.body || {};
@@ -91,7 +97,7 @@ router.get("/:id/permissions", requirePermission("rbac.roles.read"), async (req,
 });
 
 // Update role (rename)
-router.patch("/:id", requirePermission("rbac.roles.manage"), async (req, res, next) => {
+router.patch("/:id", requirePermission("rbac.roles.manage"), validateBody(roleNameSchema), async (req, res, next) => {
   try {
     const orgId = req.user.organization_id;
     const roleId = req.params.id;
@@ -123,7 +129,7 @@ router.patch("/:id", requirePermission("rbac.roles.manage"), async (req, res, ne
 });
 
 // Detach permissions from role: { permissionCodes: ["..."] }
-router.delete("/:id/permissions", requirePermission("rbac.roles.manage"), async (req, res, next) => {
+router.delete("/:id/permissions", requirePermission("rbac.roles.manage"), validateBody(permissionCodesSchema), async (req, res, next) => {
   const client = await pool.connect();
   try {
     const orgId = req.user.organization_id;
@@ -194,7 +200,7 @@ router.delete("/:id", requirePermission("rbac.roles.manage"), async (req, res, n
 });
 
 // Apply preset templates
-router.post("/templates", requirePermission("rbac.roles.manage"), async (req, res, next) => {
+router.post("/templates", requirePermission("rbac.roles.manage"), validateBody(roleTemplateSchema), async (req, res, next) => {
   const client = await pool.connect();
   try {
     const orgId = req.user.organization_id;
@@ -261,7 +267,7 @@ router.post("/templates", requirePermission("rbac.roles.manage"), async (req, re
 });
 
 // Attach permissions to role: { permissionCodes: ["..."] }
-router.post("/:id/permissions", requirePermission("rbac.roles.manage"), async (req, res, next) => {
+router.post("/:id/permissions", requirePermission("rbac.roles.manage"), validateBody(permissionCodesSchema), async (req, res, next) => {
   const client = await pool.connect();
   try {
     const orgId = req.user.organization_id;

@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require('express');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const svc = require('./collections.service');
 
 const router = express.Router();
 
+router.use(createModuleBodyContract(['action_type', 'asOfDate', 'assigned_to_user_id', 'cadence_days', 'channel', 'is_active', 'max_reminders', 'name', 'notes', 'partner_id', 'payload', 'ruleId', 'severity', 'start_days_past_due', 'status', 'subject', 'template_id']));
 router.use(requirePermission('collections.read'));
 
 router.get('/queue', async (req, res, next) => {

@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require("express");
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const service = require("./dimensionSecurity.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['effect', 'note', 'principalId', 'principalType', 'ruleJson']));
 router.use(authRequired);
 
 

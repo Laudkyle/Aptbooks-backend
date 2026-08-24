@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./kpis.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['accountId', 'amberThreshold', 'asOfDate', 'category', 'code', 'direction', 'documentation', 'expressionJson', 'isArchived', 'kpiDefinitionIds', 'kpiType', 'name', 'ownerUserId', 'periodId', 'redThreshold', 'status', 'targetValue']));
 const { resolveOrgId } = require("../_util");
 
 router.get("/definitions", requirePermission("reporting.kpis.read"), async (req, res, next) => {

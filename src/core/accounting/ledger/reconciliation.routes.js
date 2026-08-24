@@ -1,10 +1,20 @@
+const { createModuleBodyContract, z, validateBody } = require("../../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const reconcile = require("../../../interfaces/reconciliation.interface");
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { idempotency } = require("../../../middleware/idempotency.middleware");
 const router = express.Router();
+router.use(createModuleBodyContract(['defaultThreshold', 'diffs', 'dryRun', 'exactMatchTolerance', 'periodId', 'policy', 'summary', 'threshold', 'thresholdsByAccountType']));
 router.use(authRequired);
+const nonnegativeNumber = z.union([z.number().finite().nonnegative(), z.string().trim().regex(/^\d+(?:\.\d+)?$/)]);
+const autoCorrectSchema = z.object({ periodId: z.string().uuid(), threshold: nonnegativeNumber.optional(), dryRun: z.boolean().optional() }).strict();
+const rebuildSchema = z.object({ periodId: z.string().uuid(), dryRun: z.boolean().optional() }).strict();
+const policySchema = z.object({
+  defaultThreshold: nonnegativeNumber.optional(),
+  exactMatchTolerance: nonnegativeNumber.optional(),
+  thresholdsByAccountType: z.record(z.string(), nonnegativeNumber).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "No policy fields provided");
 const requireMutationIdempotency = idempotency({ required: true });
 router.use((req, res, next) => {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) return next();
@@ -39,7 +49,7 @@ router.get("/discrepancy-details", requirePermission("accounting.reconcile.run")
   }
 });
 
-router.post("/auto-correct", requirePermission("accounting.reconcile.run"), async (req, res, next) => {
+router.post("/auto-correct", requirePermission("accounting.reconcile.run"), validateBody(autoCorrectSchema), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { periodId, threshold, dryRun } = req.body || {};
@@ -57,7 +67,7 @@ router.post("/auto-correct", requirePermission("accounting.reconcile.run"), asyn
   }
 });
 
-router.post("/rebuild-balances", requirePermission("accounting.reconcile.run"), async (req, res, next) => {
+router.post("/rebuild-balances", requirePermission("accounting.reconcile.run"), validateBody(rebuildSchema), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { periodId, dryRun } = req.body || {};
@@ -95,7 +105,7 @@ router.get("/policy", requirePermission("accounting.reconcile.run"), async (req,
   }
 });
 
-router.put("/policy", requirePermission("settings.manage"), async (req, res, next) => {
+router.put("/policy", requirePermission("settings.manage"), validateBody(policySchema), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const data = await reconcile.upsertPolicy({

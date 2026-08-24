@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../../../shared/http/requestValidation");
 
 const express = require('express');
 const { authRequired } = require('../../../../middleware/auth.middleware');
@@ -6,6 +7,7 @@ const { idempotency } = require('../../../../middleware/idempotency.middleware')
 const svc = require('./cheques.service');
 
 const router = express.Router();
+router.use(createModuleBodyContract(['amount', 'bankAccountId', 'bank_account_id', 'chequeNo', 'cheque_no', 'clearedDate', 'cleared_date', 'currencyCode', 'currency_code', 'dimensionsJson', 'dimensions_json', 'issueDate', 'issue_date', 'journalEntryId', 'journal_entry_id', 'memo', 'offsetAccountId', 'offset_account_id', 'payeeName', 'payee_name', 'paymentRunId', 'payment_run_id', 'postOnIssue', 'post_on_issue', 'status']));
 router.use(authRequired);
 router.get('/', requirePermission('banking.treasury.read'), async (req, res, next) => { try { res.json(await svc.list(req.user.organization_id, req.query)); } catch (e) { next(e); } });
 router.get('/:chequeId', requirePermission('banking.treasury.read'), async (req, res, next) => { try { res.json(await svc.get(req.user.organization_id, req.params.chequeId)); } catch (e) { next(e); } });

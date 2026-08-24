@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require('express');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const svc = require('./writeoffs.service');
@@ -5,6 +6,7 @@ const notificationsSvc = require('../../../notifications/notifications.service')
 
 const router = express.Router();
 
+router.use(createModuleBodyContract(['amount', 'ap_writeoff_income_account_id', 'ar_bad_debt_expense_account_id', 'code', 'description', 'entity_id', 'entity_type', 'is_active', 'notes', 'partner_id', 'postingDate', 'reason', 'reason_code']));
 // Reason codes
 router.get('/reason-codes', requirePermission('writeoffs.read'), async (req, res, next) => {
   try {

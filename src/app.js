@@ -7,8 +7,14 @@ const { errorMiddleware } = require("./middleware/error.middleware");
 const { notFoundMiddleware } = require("./middleware/notFound.middleware");
 const { auditMiddleware } = require("./middleware/audit.middleware");
 const { requestIdMiddleware } = require("./middleware/requestId.middleware");
+const { requestSafetyMiddleware } = require("./shared/http/requestValidation");
+const { rejectTenantSpoofing } = require("./middleware/tenantHeader.middleware");
 const { globalRateLimit, authRateLimit } = require("./middleware/rateLimit.middleware");
 const { env, validateRuntimeEnv } = require("./config/env");
+const { tracingMiddleware } = require('./observability/trace');
+const { httpMetricsMiddleware } = require('./observability/httpMetrics.middleware');
+const { metricsRouter } = require('./observability/metrics.routes');
+const { requestDrainMiddleware } = require('./ops/gracefulShutdown');
 validateRuntimeEnv();
 
 const authRoutes = require("./core/foundation/users/auth.routes");
@@ -21,6 +27,8 @@ const balanceRoutes = require("./core/accounting/ledger/balances.routes");
 const fxRoutes = require("./core/accounting/fx/fx.routes");
 const accountingStatementRoutes = require("./core/accounting/ledger/statements.routes");
 const reconciliationRoutes = require("./core/accounting/ledger/reconciliation.routes");
+const financialIntegrityRoutes = require("./core/accounting/integrity/financialIntegrity.routes");
+const accountingPolicyRoutes = require("./core/accounting/policy/accountingPolicy.routes");
 const accountingImportRoutes = require("./core/accounting/imports/imports.routes");
 const accountingExportRoutes = require("./core/accounting/ledger/exports.routes");
 const taxAdminRoutes = require("./core/accounting/tax/tax.routes");
@@ -82,9 +90,10 @@ const corsOptions = {
     "x-request-id",
     "x-filename",
     "x-refresh-token",
-    "x-api-key"
+    "x-api-key",
+    "traceparent"
   ],
-  exposedHeaders: ["x-request-id", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset"]
+  exposedHeaders: ["x-request-id", "x-trace-id", "traceparent", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset"]
 };
 
 app.use(cors(corsOptions));
@@ -104,6 +113,14 @@ app.use(express.json({
 }));
 
 app.use(requestIdMiddleware);
+app.use(tracingMiddleware({ sampleRatio: env.TRACE_SAMPLE_RATIO }));
+app.use(httpMetricsMiddleware);
+// Metrics scraping must remain available even when PostgreSQL-backed API rate
+// limiting or downstream application routes are degraded. Production metrics
+// still require a strong bearer token and should be network-restricted.
+app.use("/", metricsRouter);
+app.use(requestSafetyMiddleware);
+app.use(rejectTenantSpoofing);
 app.use(globalRateLimit);
 
 
@@ -112,17 +129,25 @@ app.use(auditMiddleware);
 // Public docs and utility APIs are mounted after core security, parsing,
 // request-id, rate-limit, and audit middleware so they share the same
 // observability and baseline protection as application routes.
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
+if (env.EXPOSE_SWAGGER) {
+  app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+}
+if (env.EXPOSE_INTERNAL_UTILITIES) {
+  app.use("/utilities/scheduled-tasks", require("./utilities/scheduled-tasks/scheduledTasks.routes"));
+  app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
+}
 app.use("/utilities/errors", require("./utilities/errors/errors.routes"));
 app.use("/utilities/client-logs", require("./utilities/client-logs/clientLogs.routes"));
 app.use("/utilities/i18n", require("./utilities/i18n/i18n.routes"));
 app.use("/utilities/a11y", require("./utilities/a11y/a11y.routes"));
 app.use("/utilities/release", require("./utilities/release/release.routes"));
-app.use("/utilities/tests", require("./utilities/tests/tests.routes"));
 
-// Liveness / readiness / comprehensive health report
+// Liveness / readiness / comprehensive health report.
 app.use("/", healthRouter);
+
+// Once shutdown draining starts, health/metrics remain available while normal
+// application traffic receives a retryable 503 and connections are closed.
+app.use(requestDrainMiddleware);
 
 app.use("/auth", authRateLimit, authRoutes);
 app.use("/core/users", usersRoutes);
@@ -144,6 +169,8 @@ app.use("/core/accounting/fx", fxRoutes);
 app.use("/core/accounting/tax", taxAdminRoutes);
 app.use("/core/accounting/statements", accountingStatementRoutes);
 app.use("/core/accounting/reconciliation", reconciliationRoutes);
+app.use("/core/accounting/integrity", financialIntegrityRoutes);
+app.use("/core/accounting/policy", accountingPolicyRoutes);
 app.use("/core/accounting/imports", accountingImportRoutes);
 app.use("/core/accounting/exports", accountingExportRoutes);
 

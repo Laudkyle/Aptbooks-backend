@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['code', 'config', 'isEnabled', 'name', 'severity', 'targetUserId', 'triggerType', 'trigger_type']));
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');
 const svc = require('./smartNotifications.service');

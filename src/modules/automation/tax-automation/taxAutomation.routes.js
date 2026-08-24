@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['code', 'config', 'isEnabled', 'name', 'triggerType']));
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const svc = require('./taxAutomation.service');
 

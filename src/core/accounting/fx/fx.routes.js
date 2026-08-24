@@ -1,10 +1,25 @@
+const { createModuleBodyContract, z, validateBody } = require("../../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const fx = require("../../../interfaces/fxManagement.interface");
 const { authRequired } = require("../../../middleware/auth.middleware");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['code', 'effectiveDate', 'fromCurrency', 'name', 'rate', 'rateTypeCode', 'toCurrency']));
 router.use(authRequired);
+const currencyCode = z.string().trim().regex(/^[A-Za-z]{3}$/).transform((v) => v.toUpperCase());
+const rateValue = z.union([
+  z.number().finite().positive(),
+  z.string().trim().regex(/^\d+(?:\.\d{1,12})?$/, "rate must be a positive decimal with at most 12 places")
+]);
+const rateTypeSchema = z.object({ code: z.string().trim().min(1).max(50), name: z.string().trim().min(1).max(120) }).strict();
+const fxRateSchema = z.object({
+  rateTypeCode: z.string().trim().min(1).max(50),
+  fromCurrency: currencyCode,
+  toCurrency: currencyCode,
+  rate: rateValue,
+  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+}).strict().refine((v) => v.fromCurrency !== v.toCurrency, { message: "Currencies must differ", path: ["toCurrency"] });
 
 router.get("/rate-types", requirePermission("accounting.fx.read"), async (req, res, next) => {
   try {
@@ -15,7 +30,7 @@ router.get("/rate-types", requirePermission("accounting.fx.read"), async (req, r
   }
 });
 
-router.post("/rate-types", requirePermission("accounting.fx.manage"), async (req, res, next) => {
+router.post("/rate-types", requirePermission("accounting.fx.manage"), validateBody(rateTypeSchema), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { code, name } = req.body;
@@ -37,7 +52,7 @@ router.get("/rates", requirePermission("accounting.fx.read"), async (req, res, n
   }
 });
 
-router.put("/rates", requirePermission("accounting.fx.manage"), async (req, res, next) => {
+router.put("/rates", requirePermission("accounting.fx.manage"), validateBody(fxRateSchema), async (req, res, next) => {
   try {
     const { organization_id: orgId, id: actorUserId } = req.user;
     const { rateTypeCode, fromCurrency, toCurrency, rate, effectiveDate } = req.body;

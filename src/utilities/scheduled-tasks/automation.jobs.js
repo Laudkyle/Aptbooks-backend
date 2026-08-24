@@ -1,4 +1,5 @@
 const { pool } = require('../../db/pool');
+const { bindTenant } = require('../../shared/security/tenantContext');
 const recurringSvc = require('../../modules/automation/recurring-transactions/recurringTransactions.service');
 const autoRecSvc = require('../../modules/automation/auto-reconciliation/autoReconciliation.service');
 const smartNotifSvc = require('../../modules/automation/smart-notifications/smartNotifications.service');
@@ -12,6 +13,7 @@ async function recurringTransactionsHourly() {
   const orgIds = await listOrgIds();
   let processed = 0;
   for (const orgId of orgIds) {
+    bindTenant(orgId);
     const out = await recurringSvc.runDueRecurringTransactions({ orgId }).catch(() => ({ processed: 0 }));
     processed += Number(out.processed || 0);
   }
@@ -22,6 +24,7 @@ async function autoReconciliationHourly() {
   const orgIds = await listOrgIds();
   let processed = 0;
   for (const orgId of orgIds) {
+    bindTenant(orgId);
     const profiles = await autoRecSvc.listProfiles(orgId).catch(() => ({ data: [] }));
     for (const p of (profiles.data || []).filter((x) => x.is_enabled)) {
       await autoRecSvc.runProfile(orgId, p.id).catch(() => null);
@@ -35,6 +38,7 @@ async function smartNotificationsHourly() {
   const orgIds = await listOrgIds();
   let created = 0;
   for (const orgId of orgIds) {
+    bindTenant(orgId);
     const out = await smartNotifSvc.executeEnabledRules({ orgId }).catch(() => ({ createdCount: 0 }));
     created += Number(out.createdCount || 0);
   }

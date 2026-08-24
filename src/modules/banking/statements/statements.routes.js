@@ -1,5 +1,7 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require("express");
 const router = express.Router();
+router.use(createModuleBodyContract(['bankAccountId', 'closingBalance', 'journalEntryId', 'lines', 'matchMethod', 'matchReason', 'matchRuleVersion', 'method', 'openingBalance', 'reason', 'ruleVersion', 'statementDate']));
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { idempotency } = require("../../../middleware/idempotency.middleware");

@@ -697,6 +697,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
       orgId,
       actorUserId,
       client,
+      source: { type: 'vendor_payment', id, action: 'post', reference: vp.payment_no, module: 'payables' },
       payload: {
         periodId: period.id,
         entryDate: vp.payment_date,
@@ -721,7 +722,7 @@ async function postVendorPayment({ orgId, actorUserId, id }) {
       }
     });
 
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client, source: { type: 'vendor_payment', id, action: 'post', reference: vp.payment_no, module: 'payables' } });
 
     // Update vendor payment as posted
     const { rows: updatedVP } = await client.query(

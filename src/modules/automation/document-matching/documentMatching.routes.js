@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['amountTolerance', 'confidenceScore', 'dateWindowDays', 'isEnabled', 'metadata', 'minConfidenceScore', 'name', 'reason', 'sourceEntityId', 'sourceEntityType', 'sourceType', 'targetEntityId', 'targetEntityType', 'targetType']));
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');
 const svc = require('./documentMatching.service');

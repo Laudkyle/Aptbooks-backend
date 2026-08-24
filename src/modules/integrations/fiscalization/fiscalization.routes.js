@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['adapterCode', 'adapterMode', 'adapter_code', 'adapter_mode', 'address', 'apiContractVersion', 'apiEndpoint', 'apiKey', 'apiSecret', 'api_contract_version', 'api_endpoint', 'autoPrepareInvoices', 'autoPreparePos', 'autoQueue', 'buyer', 'buyerTaxIdRequiredForInputCredit', 'code', 'currencyCode', 'device', 'deviceCode', 'deviceName', 'deviceSerialNumber', 'documentNumber', 'enabled', 'fiscalLocationId', 'graBranchReference', 'graGoLiveDate', 'gra_go_live_date', 'invoiceAt', 'limit', 'lines', 'machineRegistrationCode', 'metadata', 'name', 'offlineWindowHours', 'onboardingStatus', 'onboarding_status', 'posDeviceId', 'reason', 'registerId', 'requireCustomerTaxIdForInputCredit', 'security', 'seller', 'sourceId', 'sourceType', 'status', 'storeId', 'supplyAt', 'taxSummary', 'totals', 'transactionType', 'verificationEngineId']));
 const { authRequired } = require('../../../middleware/auth.middleware');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');

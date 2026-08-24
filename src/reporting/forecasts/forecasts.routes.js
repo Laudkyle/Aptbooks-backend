@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
@@ -6,6 +7,7 @@ const { AppError } = require('../../shared/errors/AppError');
 const notificationsSvc = require("../../notifications/notifications.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['approvedAt', 'approvedByUserId', 'code', 'currency_code', 'description', 'dimension_json', 'fiscal_year', 'isActive', 'is_active', 'is_default', 'lines', 'metadata', 'name', 'newVersionNo', 'probabilityWeight', 'probability_weight', 'reason', 'rejectedAt', 'rejectedByUserId', 'rejectionReason', 'scenarioId', 'status', 'submittedAt', 'submittedByUserId', 'templateSourceVersionId', 'version_no', 'workflowStatus']));
 const { resolveOrgId } = require("../_util");
 
 // ============================

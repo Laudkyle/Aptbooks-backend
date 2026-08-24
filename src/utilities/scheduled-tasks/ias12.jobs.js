@@ -1,4 +1,5 @@
 const { pool } = require("../../db/pool");
+const { bindTenant } = require("../../shared/security/tenantContext");
 const ias12 = require("../../compliance/ias12/ias12.service");
 const { getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
 
@@ -22,6 +23,7 @@ async function computeDeferredTaxDraftDaily() {
   let reasons = {};
 
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await getSystemActorUserId({ orgId: o.id });
     // find open periods ending today
     const { rows: periods } = await pool.query(
@@ -74,6 +76,7 @@ async function checkIas12ConfigDaily() {
   let issues = 0;
 
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await getSystemActorUserId({ orgId: o.id });
     // take the latest open period (by end_date)
     const { rows: periods } = await pool.query(

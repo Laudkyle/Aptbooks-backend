@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require("express");
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
@@ -5,6 +6,7 @@ const { idempotency } = require("../../../middleware/idempotency.middleware");
 const svc = require("./matching.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['amount_tolerance', 'date_window_days', 'description_similarity_min', 'is_active', 'name', 'priority']));
 router.use(authRequired);
 
 // Matching rules CRUD

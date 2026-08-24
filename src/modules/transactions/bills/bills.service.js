@@ -387,6 +387,7 @@ async function issueBill({ orgId, actorUserId, billId }) {
       orgId,
       actorUserId,
       client,
+      source: { type: 'bill', id: billId, action: 'issue', reference: bill.bill_no, module: 'payables' },
       payload: {
         periodId: period.id,
         entryDate: bill.bill_date,
@@ -412,7 +413,7 @@ async function issueBill({ orgId, actorUserId, billId }) {
       }
     });
 
-    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
+    const posted = await journalIF.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client, source: { type: 'bill', id: billId, action: 'issue', reference: bill.bill_no, module: 'payables' } });
 
     await upsertDocumentTaxSnapshot({
       client,

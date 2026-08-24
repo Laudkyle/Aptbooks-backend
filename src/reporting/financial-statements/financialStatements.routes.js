@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
@@ -5,6 +6,7 @@ const svc = require("./financialStatements.service");
 const { authRequired } = require("../../middleware/auth.middleware");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['comparePeriodId', 'mode', 'periodId', 'statementType', 'template_id']));
 const { resolveOrgId } = require("../_util");
 router.use(authRequired)
 router.use(requirePermission("reporting.statements.read"));

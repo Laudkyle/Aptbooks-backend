@@ -1,80 +1,40 @@
 /**
- * Journal Posting API (Tier 1)
- * Used by Tier >= 2 modules. Does not expose repositories.
+ * Canonical accounting posting contract.
+ *
+ * Tier >= 2 modules must depend on this interface rather than importing the
+ * journal service or writing ledger projection rows directly. Phase 2 routes
+ * every posting command through postingEngine.service so policy resolution,
+ * financial idempotency, provenance, and posting invariants are applied once.
  */
-const journalSvc = require("../core/accounting/journal/journal.service");
+const postingEngine = require('../core/accounting/posting/postingEngine.service');
+const journalSvc = require('../core/accounting/journal/journal.service');
 
-async function createDraftJournal({ orgId, actorUserId, payload, client = null }) {
-  return journalSvc.createDraftJournal({ orgId, actorUserId, payload, client });
-}
+async function createDraftJournal(args) { return postingEngine.createDraftJournal(args); }
+async function postDraftJournal(args) { return postingEngine.postDraftJournal(args); }
+async function postJournal(args) { return postingEngine.postJournal(args); }
+async function postSourceJournal(args) { return postingEngine.postSourceJournal(args); }
+async function voidPostedJournal(args) { return postingEngine.voidPostedJournal(args); }
+async function reversePostedJournal(args) { return postingEngine.reversePostedJournal(args); }
 
-async function postDraftJournal({ orgId, journalId, actorUserId, client = null, sourceApproval = null }) {
-  return journalSvc.postDraftJournal({ orgId, journalId, actorUserId, client, sourceApproval });
-}
-
-/**
- * Convenience wrapper for callers that do not need to persist a draft journal id.
- * Creates a draft journal and immediately posts it.
- */
-async function postJournal({ orgId, actorUserId, payload, client = null }) {
-  const normalizedPayload = {
-    ...(payload || {}),
-    entryDate: payload?.entryDate || payload?.journalDate || null,
-  };
-  const draft = await journalSvc.createDraftJournal({ orgId, actorUserId, payload: normalizedPayload, client });
-  return journalSvc.postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client });
-}
-
-async function voidPostedJournal({ orgId, journalId, actorUserId, reason, client = null }) {
-  return journalSvc.voidByReversal({ orgId, journalId, actorUserId, reason, client });
-}
-
-// Stage 2 lifecycle + editing (still Tier 1 contract)
-async function getJournalWithLines({ orgId, journalId }) {
-  return journalSvc.getJournalWithLines({ orgId, journalId });
-}
-
-async function updateDraftHeader({ orgId, journalId, actorUserId, payload }) {
-  return journalSvc.updateDraftHeader({ orgId, journalId, actorUserId, payload });
-}
-
-async function replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced = true }) {
-  return journalSvc.replaceDraftLines({ orgId, journalId, actorUserId, lines, requireBalanced });
-}
-
-async function submitDraftJournal({ orgId, journalId, actorUserId }) {
-  return journalSvc.submitDraftJournal({ orgId, journalId, actorUserId });
-}
-
-async function approveSubmittedJournal({ orgId, journalId, actorUserId }) {
-  return journalSvc.approveSubmittedJournal({ orgId, journalId, actorUserId });
-}
-
-async function rejectSubmittedJournal({ orgId, journalId, actorUserId, reason }) {
-  return journalSvc.rejectSubmittedJournal({ orgId, journalId, actorUserId, reason });
-}
-
-async function cancelDraftJournal({ orgId, journalId, actorUserId }) {
-  return journalSvc.cancelDraftJournal({ orgId, journalId, actorUserId });
-}
-
-async function batchPostJournals({ orgId, actorUserId, journalIds, client = null }) {
-  return journalSvc.batchPostJournals({ orgId, actorUserId, journalIds, client });
-}
-
-async function listJournals({ orgId, filters = {}, limit = 100, offset = 0 }) {
-  return journalSvc.listJournals({ orgId, filters, limit, offset });
-}
-async function reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey, client = null }) {
-  return journalSvc.reversePostedJournal({ orgId, journalId, actorUserId, targetPeriodId, entryDate, reason, idempotencyKey, client });
-}
+// Draft workflow/editing remains owned by the Tier 1 journal aggregate. These
+// methods cannot mutate posted journal history.
+async function getJournalWithLines(args) { return journalSvc.getJournalWithLines(args); }
+async function updateDraftHeader(args) { return journalSvc.updateDraftHeader(args); }
+async function replaceDraftLines(args) { return journalSvc.replaceDraftLines(args); }
+async function submitDraftJournal(args) { return journalSvc.submitDraftJournal(args); }
+async function approveSubmittedJournal(args) { return journalSvc.approveSubmittedJournal(args); }
+async function rejectSubmittedJournal(args) { return journalSvc.rejectSubmittedJournal(args); }
+async function cancelDraftJournal(args) { return journalSvc.cancelDraftJournal(args); }
+async function batchPostJournals(args) { return postingEngine.batchPostJournals(args); }
+async function listJournals(args) { return journalSvc.listJournals(args); }
 
 module.exports = {
   createDraftJournal,
   postDraftJournal,
   postJournal,
-  voidPostedJournal,reversePostedJournal
-  ,
+  postSourceJournal,
+  voidPostedJournal,
+  reversePostedJournal,
   listJournals,
   getJournalWithLines,
   updateDraftHeader,
@@ -83,5 +43,5 @@ module.exports = {
   approveSubmittedJournal,
   rejectSubmittedJournal,
   cancelDraftJournal,
-  batchPostJournals
+  batchPostJournals,
 };

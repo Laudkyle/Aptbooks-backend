@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require('express');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const svc = require('./paymentPlans.service');
 
 const router = express.Router();
 
+router.use(createModuleBodyContract(['entity_id', 'entity_type', 'frequency', 'installment_count', 'partner_id', 'settlement_ref', 'start_date', 'total_amount']));
 router.get('/', requirePermission('payment_plans.read'), async (req,res,next)=>{
   try{
     const { organization_id: orgId } = req.user;

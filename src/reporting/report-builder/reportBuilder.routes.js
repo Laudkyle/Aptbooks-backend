@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./reportBuilder.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['canEdit', 'dailyHourUtc', 'dailyMinuteUtc', 'description', 'folder', 'intervalSeconds', 'isEnabled', 'kind', 'name', 'nextRunAt', 'parameters', 'querySql', 'roleId', 'schedule', 'scheduleType', 'shareType', 'templateKey', 'userId', 'versionId']));
 const { resolveOrgId } = require("../_util");
 
 function ctx(req) {

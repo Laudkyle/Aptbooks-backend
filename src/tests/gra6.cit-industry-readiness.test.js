@@ -1,3 +1,4 @@
+const { readTaxRouteSources } = require('./helpers/tax-route-sources');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -116,7 +117,7 @@ test('special CIT rates require explicit eligibility review before DT101 finaliz
 });
 
 test('Release 6 API exposes CIT, self assessment, capital allowances, industry profiles and readiness', () => {
-  const routes = read('core/accounting/tax/tax.routes.js');
+  const routes = readTaxRouteSources();
   for (const route of ['/ghana/cit/settings','/ghana/cit/rates','/ghana/cit/computations','/ghana/cit/self-assessments','/ghana/capital-allowances/classes','/ghana/capital-allowances/assets','/ghana/capital-allowances/runs','/ghana/industry-profiles','/ghana/readiness']) assert.ok(routes.includes(route));
 });
 

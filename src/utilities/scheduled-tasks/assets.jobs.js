@@ -1,4 +1,5 @@
 const { pool } = require("../../db/pool");
+const { bindTenant } = require("../../shared/security/tenantContext");
 const { getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
 const depreciationSvc = require("../../modules/assets/depreciation/depreciation.service");
 
@@ -8,6 +9,7 @@ async function runPeriodEndDepreciationDaily() {
   const { rows: orgs } = await pool.query(`SELECT id FROM organizations ORDER BY created_at ASC`);
 
   for (const o of orgs) {
+    bindTenant(o.id);
     const orgId = o.id;
     const actorUserId = await getSystemActorUserId({ orgId });
 

@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['confidenceScore', 'excludePattern', 'isActive', 'keywordPattern', 'matchedRuleId', 'name', 'output', 'priority', 'sourceKind', 'sourceText', 'targetKind', 'text']));
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');
 const svc = require('./aiClassification.service');

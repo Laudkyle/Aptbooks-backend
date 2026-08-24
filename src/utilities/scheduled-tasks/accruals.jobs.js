@@ -1,4 +1,5 @@
 const { pool } = require("../../db/pool");
+const { bindTenant } = require("../../shared/security/tenantContext");
 const accrualIF = require("../../interfaces/accruals.interface");
 const periodIF = require("../../interfaces/periodManagement.interface");
 const {  getSystemActorUserId } = require("../../core/foundation/users/systemActor.service");
@@ -19,6 +20,7 @@ async function runDueAccrualsDaily() {
 
   let ran = 0;
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await  getSystemActorUserId({ orgId: o.id });
     if (!actorUserId) continue;
     const out = await accrualIF.runDueAccruals({ orgId: o.id, actorUserId, asOfDate });
@@ -34,6 +36,7 @@ async function runPeriodEndAccruals() {
 
   let ran = 0;
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await  getSystemActorUserId({ orgId: o.id });
     if (!actorUserId) continue;
 
@@ -61,6 +64,7 @@ async function runReversalsDaily() {
 
   let ran = 0;
   for (const o of orgs) {
+    bindTenant(o.id);
     const actorUserId = await  getSystemActorUserId({ orgId: o.id });
     if (!actorUserId) continue;
 

@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./allocations.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['entryDate', 'memo', 'periodId', 'reason', 'replace', 'ruleIds']));
 const { resolveOrgId } = require("../_util");
 
 // Bases

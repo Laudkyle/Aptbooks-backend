@@ -549,6 +549,8 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypa
       const draft = await createDraftJournal({
         orgId,
         actorUserId,
+        client,
+        source: { type: 'inventory_transaction', id: txn.id, action: 'post', reference: txn.reference || txn.id, module: 'inventory' },
         payload: {
           periodId: txn.period_id,
           entryDate: txn.txn_date,
@@ -558,7 +560,7 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypa
           lines: agg.map((l) => ({ accountId: l.accountId, debit: l.debit, credit: l.credit, description: l.memo || null })),
         },
       });
-      const posted = await postDraftJournal({ orgId, journalId: draft.journalId, actorUserId });
+      const posted = await postDraftJournal({ orgId, journalId: draft.journalId, actorUserId, client, source: { type: 'inventory_transaction', id: txn.id, action: 'post', reference: txn.reference || txn.id, module: 'inventory' } });
       postedJournalId = posted.journalId;
       await repo.linkJournal(client, txn.id, postedJournalId);
     }

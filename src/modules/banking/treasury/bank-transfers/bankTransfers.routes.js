@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../../../shared/http/requestValidation");
 
 const express = require('express');
 const { authRequired } = require('../../../../middleware/auth.middleware');
@@ -6,6 +7,7 @@ const { idempotency } = require('../../../../middleware/idempotency.middleware')
 const svc = require('./bankTransfers.service');
 
 const router = express.Router();
+router.use(createModuleBodyContract(['amount', 'approvalBatchId', 'approvedByUserId', 'cancelledReason', 'code', 'feeAccountId', 'feeAmount', 'fee_account_id', 'fee_amount', 'fromBankAccountId', 'from_bank_account_id', 'journalEntryId', 'memo', 'periodId', 'postedByUserId', 'reason', 'reference', 'toBankAccountId', 'to_bank_account_id', 'transferDate', 'transfer_date']));
 router.use(authRequired);
 
 router.get('/', requirePermission('banking.treasury.read'), async (req, res, next) => {

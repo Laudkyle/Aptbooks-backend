@@ -1,3 +1,4 @@
+const { readTaxRouteSources } = require('./helpers/tax-route-sources');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -126,7 +127,7 @@ test('GRA-3 service supports threshold, certificates, remittances, frozen return
 });
 
 test('GRA-3 API exposes DT110/WHVAT workflows', () => {
-  const src = read('core/accounting/tax/tax.routes.js');
+  const src = readTaxRouteSources();
   for (const route of ['/ghana/withholding/preview','/ghana/withholding/events','/ghana/withholding/certificates','/ghana/withholding/returns','/ghana/withholding/remittances','/ghana/withholding/reconciliation']) {
     assert.ok(src.includes(route), `missing route ${route}`);
   }
@@ -135,7 +136,7 @@ test('GRA-3 API exposes DT110/WHVAT workflows', () => {
 test('GRA-3 supports recording received income-WHT and WHVAT credit certificates', () => {
   const validator = read('core/accounting/tax/tax.validators.js');
   const service = read('core/accounting/tax/ghanaWithholding.service.js');
-  const routes = read('core/accounting/tax/tax.routes.js');
+  const routes = readTaxRouteSources();
   assert.match(validator, /ghReceivedWithholdingCertificateSchema/);
   assert.match(service, /recordReceivedCertificate/);
   assert.match(service, /'received'/);

@@ -12,6 +12,7 @@ const { ifrs16AutoPostDaily } = require("./ifrs16.jobs");
 const { ifrs15AutoPostRevenueDaily } = require("./ifrs15.jobs");
 const { ifrs9AutoComputeAndFinalizeEclDaily } = require("./ifrs9.jobs");
 const { runDueSavedReportSchedulesHourly } = require("./reports.jobs");
+const { runFinancialIntegrityDaily } = require('./accountingIntegrity.jobs');
 const {
   maintenanceRetentionDaily,
   maintenanceRateLimitCleanupDaily,
@@ -76,6 +77,12 @@ function listTasks() {
       name: "IFRS9 ECL compute & finalize (period end)",
       schedule: { type: "daily_at_utc", dailyHourUtc: 23, dailyMinuteUtc: 45 },
       handler: async () => ifrs9AutoComputeAndFinalizeEclDaily()
+    },
+    {
+      code: "accounting.financial_integrity.daily",
+      name: "Run financial integrity and subledger checks",
+      schedule: { type: "daily_at_utc", dailyHourUtc: 0, dailyMinuteUtc: 30 },
+      handler: async () => runFinancialIntegrityDaily(),
     },
     {
       code: "reporting.saved_reports.run_due.hourly",

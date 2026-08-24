@@ -1,0 +1,45 @@
+[
+  {
+    "name": "cash sale",
+    "lines": [
+      { "accountId": "cash", "debit": "115.00", "credit": "0.00" },
+      { "accountId": "revenue", "debit": "0.00", "credit": "100.00" },
+      { "accountId": "vat", "debit": "0.00", "credit": "15.00" }
+    ],
+    "balances": { "cash": "115.00", "revenue": "-100.00", "vat": "-15.00" }
+  },
+  {
+    "name": "credit sale",
+    "lines": [
+      { "accountId": "ar", "debit": "230.00", "credit": "0.00" },
+      { "accountId": "revenue", "debit": "0.00", "credit": "200.00" },
+      { "accountId": "vat", "debit": "0.00", "credit": "30.00" }
+    ],
+    "balances": { "ar": "230.00", "revenue": "-200.00", "vat": "-30.00" }
+  },
+  {
+    "name": "customer receipt",
+    "lines": [
+      { "accountId": "cash", "debit": "230.00", "credit": "0.00" },
+      { "accountId": "ar", "debit": "0.00", "credit": "230.00" }
+    ],
+    "balances": { "cash": "230.00", "ar": "-230.00" }
+  },
+  {
+    "name": "vendor bill",
+    "lines": [
+      { "accountId": "expense", "debit": "100.00", "credit": "0.00" },
+      { "accountId": "inputVat", "debit": "15.00", "credit": "0.00" },
+      { "accountId": "ap", "debit": "0.00", "credit": "115.00" }
+    ],
+    "balances": { "expense": "100.00", "inputVat": "15.00", "ap": "-115.00" }
+  },
+  {
+    "name": "vendor payment",
+    "lines": [
+      { "accountId": "ap", "debit": "115.00", "credit": "0.00" },
+      { "accountId": "cash", "debit": "0.00", "credit": "115.00" }
+    ],
+    "balances": { "ap": "115.00", "cash": "-115.00" }
+  }
+]

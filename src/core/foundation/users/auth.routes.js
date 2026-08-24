@@ -9,6 +9,10 @@ const jwt = require("jsonwebtoken");
 const { pool } = require("../../../db/pool");
 const { env } = require("../../../config/env");
 const { AppError } = require("../../../shared/errors/AppError");
+const { setClientTenant } = require("../../../db/pool");
+const { z, validateBody } = require("../../../shared/http/requestValidation");
+const { originRequiredForCredentialCookie } = require("../../../middleware/origin.middleware");
+const { loginRateLimit, passwordResetRateLimit } = require("../../../middleware/rateLimit.middleware");
 const { writeAudit } = require("../audit-logs/audit.service");
 const {
   issueEmailTwoFactorChallenge,
@@ -23,61 +27,27 @@ const {
   revokeAllRefreshTokensAcrossOrganizations,
 } = require("./tokens.service");
 
-// Minimal in-memory rate limiter (per IP + email) for the login endpoint.
-// For horizontally scaled deployments, replace with a shared store (e.g., Redis).
-const WINDOW_MS = 15 * 60 * 1000;
-const MAX_ATTEMPTS = 10;
-const attempts = new Map();
-
-function rateLimitKey(req, email) {
-  const ip = req.ip || req.socket.remoteAddress || "unknown";
-  return `${ip}:${String(email || "").toLowerCase()}`;
-}
-
-function assertNotRateLimited(req, email) {
-  const key = rateLimitKey(req, email);
-  const now = Date.now();
-  const entry = attempts.get(key) || { count: 0, resetAt: now + WINDOW_MS };
-
-  if (now > entry.resetAt) {
-    entry.count = 0;
-    entry.resetAt = now + WINDOW_MS;
+function getCookieValue(req, name) {
+  const cookieHeader = req.headers["cookie"];
+  if (!cookieHeader || typeof cookieHeader !== "string") return null;
+  const parts = cookieHeader.split(";").map((part) => part.trim());
+  for (const part of parts) {
+    if (part.startsWith(`${name}=`)) return decodeURIComponent(part.substring(name.length + 1));
   }
-
-  entry.count += 1;
-  attempts.set(key, entry);
-
-  if (entry.count > MAX_ATTEMPTS) {
-    throw new AppError(429, "Too many login attempts. Please try again later.");
-  }
-}
-
-function clearAttempts(req, email) {
-  attempts.delete(rateLimitKey(req, email));
+  return null;
 }
 
 function getRefreshTokenFromRequest(req) {
-  // 1) body
+  // Production uses the HttpOnly cookie exclusively so browser JavaScript can
+  // never read or supply the long-lived credential. Body/header transport is
+  // retained only for non-cookie development integrations.
+  if (env.REFRESH_TOKEN_USE_COOKIE) {
+    return getCookieValue(req, env.REFRESH_TOKEN_COOKIE_NAME);
+  }
   const bodyToken = req.body?.refreshToken;
   if (bodyToken && typeof bodyToken === "string") return bodyToken;
-
-  // 2) header
-  const hdr = req.headers["x-refresh-token"];
-  if (hdr && typeof hdr === "string") return hdr;
-
-  // 3) cookie (manual parse to avoid external dependency)
-  const cookieHeader = req.headers["cookie"];
-  if (cookieHeader && typeof cookieHeader === "string") {
-    const parts = cookieHeader.split(";").map((p) => p.trim());
-    for (const p of parts) {
-      if (p.startsWith(`${env.REFRESH_TOKEN_COOKIE_NAME}=`)) {
-        return decodeURIComponent(
-          p.substring(env.REFRESH_TOKEN_COOKIE_NAME.length + 1),
-        );
-      }
-    }
-  }
-
+  const headerToken = req.headers["x-refresh-token"];
+  if (headerToken && typeof headerToken === "string") return headerToken;
   return null;
 }
 
@@ -98,7 +68,12 @@ function setRefreshCookie(res, token) {
 
 function clearRefreshCookie(res) {
   if (!env.REFRESH_TOKEN_USE_COOKIE) return;
-  const opts = { path: "/auth" };
+  const opts = {
+    path: "/auth",
+    httpOnly: true,
+    secure: env.COOKIE_SECURE,
+    sameSite: env.COOKIE_SAMESITE,
+  };
   if (env.COOKIE_DOMAIN) opts.domain = env.COOKIE_DOMAIN;
   res.clearCookie(env.REFRESH_TOKEN_COOKIE_NAME, opts);
 }
@@ -110,13 +85,40 @@ function jwtVerifyOpts() {
   return opts;
 }
 
-router.post("/login", async (req, res, next) => {
+const email = z.string().trim().email().max(254).transform((value) => value.toLowerCase());
+const password = z.string().min(10).max(256);
+const loginSchema = z.object({
+  email,
+  password: z.string().min(1).max(256),
+  otp: z.string().trim().regex(/^\d{6}$/).optional(),
+  challengeId: z.string().uuid().optional(),
+}).strict();
+const registrationSchema = z.object({
+  organizationName: z.string().trim().min(2).max(200),
+  baseCurrencyCode: z.string().trim().regex(/^[A-Za-z]{3}$/).optional(),
+  email,
+  password,
+}).strict();
+const forgotPasswordSchema = z.object({ email }).strict();
+const resetPasswordSchema = z.object({ token: z.string().min(32).max(512), newPassword: password }).strict();
+const refreshTransportSchema = env.REFRESH_TOKEN_USE_COOKIE
+  ? z.object({}).strict()
+  : z.object({ refreshToken: z.string().min(32).max(4096) }).strict();
+const twoFactorVerifySchema = z.object({ challengeId: z.string().uuid(), otp: z.string().trim().regex(/^\d{6}$/) }).strict();
+const twoFactorDisableRequestSchema = z.object({ password: z.string().min(1).max(256) }).strict();
+const twoFactorDisableSchema = z.object({
+  password: z.string().min(1).max(256),
+  challengeId: z.string().uuid(),
+  otp: z.string().trim().regex(/^\d{6}$/),
+}).strict();
+
+router.use(originRequiredForCredentialCookie);
+
+router.post("/login", loginRateLimit, validateBody(loginSchema), async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
     if (!email || !password)
       throw new AppError(400, "email and password required");
-
-    assertNotRateLimited(req, email);
 
     const { rows } = await pool.query(
       `SELECT id, organization_id, password_hash, status, is_system, two_factor_enabled, auth_version
@@ -229,8 +231,6 @@ router.post("/login", async (req, res, next) => {
 
     setRefreshCookie(res, refresh.token);
 
-    clearAttempts(req, email);
-
     await writeAudit({
       organizationId: user.organization_id,
       actorUserId: user.id,
@@ -277,6 +277,7 @@ router.post("/login", async (req, res, next) => {
 router.post(
   "/2fa/enroll",
   require("../../../middleware/auth.middleware").authRequired,
+  validateBody(z.object({}).strict()),
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
@@ -298,6 +299,7 @@ router.post(
 router.post(
   "/2fa/verify",
   require("../../../middleware/auth.middleware").authRequired,
+  validateBody(twoFactorVerifySchema),
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
@@ -325,6 +327,7 @@ router.post(
 router.post(
   "/2fa/disable/request",
   require("../../../middleware/auth.middleware").authRequired,
+  validateBody(twoFactorDisableRequestSchema),
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
@@ -349,6 +352,7 @@ router.post(
 router.post(
   "/2fa/disable",
   require("../../../middleware/auth.middleware").authRequired,
+  validateBody(twoFactorDisableSchema),
   async (req, res, next) => {
     try {
       const orgId = req.user.organization_id;
@@ -380,7 +384,7 @@ router.post(
  * Public registration (org + initial admin user provisioning)
  * NOTE: In production you may want to gate this (invite-only) via env.PUBLIC_REGISTRATION_ENABLED=false.
  */
-router.post("/register", async (req, res, next) => {
+router.post("/register", validateBody(registrationSchema), async (req, res, next) => {
   let client = null;
   let inTransaction = false;
   try {
@@ -412,6 +416,10 @@ router.post("/register", async (req, res, next) => {
       [organizationName, currencyCode],
     );
     const org = orgRows[0];
+
+    // Registration begins without a tenant. Once the organization exists, bind
+    // this transaction to it before touching any RLS-protected bootstrap data.
+    await setClientTenant(client, org.id, { local: true });
 
     // 2) Initialize all organization defaults (COA, periods, payment config, partners, inventory, banking, etc.)
     const defaults = await initializeOrganizationDefaults({
@@ -595,7 +603,7 @@ router.post("/register", async (req, res, next) => {
  * Forgot password: create an expiring, single-use reset token.
  * Returns 200 even if the email does not exist to avoid user enumeration.
  */
-router.post("/forgot-password", async (req, res, next) => {
+router.post("/forgot-password", passwordResetRateLimit, validateBody(forgotPasswordSchema), async (req, res, next) => {
   try {
     const { email } = req.body || {};
     if (!email) throw new AppError(400, "email required");
@@ -662,7 +670,7 @@ router.post("/forgot-password", async (req, res, next) => {
   }
 });
 
-router.post("/reset-password", async (req, res, next) => {
+router.post("/reset-password", passwordResetRateLimit, validateBody(resetPasswordSchema), async (req, res, next) => {
   try {
     const { token, newPassword } = req.body || {};
     if (!token) throw new AppError(400, "token required");
@@ -737,7 +745,7 @@ router.post("/reset-password", async (req, res, next) => {
     next(e);
   }
 });
-router.post("/refresh", async (req, res, next) => {
+router.post("/refresh", validateBody(refreshTransportSchema), async (req, res, next) => {
   try {
     const rt = getRefreshTokenFromRequest(req);
     if (!rt) throw new AppError(400, "refreshToken required");
@@ -772,7 +780,7 @@ router.post("/refresh", async (req, res, next) => {
   }
 });
 
-router.post("/logout", async (req, res, next) => {
+router.post("/logout", validateBody(refreshTransportSchema), async (req, res, next) => {
   try {
     const rt = getRefreshTokenFromRequest(req);
     if (!rt) throw new AppError(400, "refreshToken required");
@@ -831,7 +839,7 @@ router.post("/logout", async (req, res, next) => {
   }
 });
 
-router.post("/logout-all", async (req, res, next) => {
+router.post("/logout-all", validateBody(refreshTransportSchema), async (req, res, next) => {
   let client = null;
   let inTransaction = false;
   try {

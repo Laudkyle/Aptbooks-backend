@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require('express');
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const svc = require('./disputes.service');
 
 const router = express.Router();
 
+router.use(createModuleBodyContract(['action_type', 'code', 'description', 'entity_id', 'entity_type', 'is_active', 'notes', 'partner_id', 'payload', 'reason_code', 'resolution']));
 router.get('/reason-codes', requirePermission('disputes.read'), async (req,res,next)=>{
   try {
     const { organization_id: orgId } = req.user;

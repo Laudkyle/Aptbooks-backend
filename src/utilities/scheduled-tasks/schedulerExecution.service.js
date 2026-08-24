@@ -1,5 +1,6 @@
 const os = require("os");
 const { pool } = require("../../db/pool");
+const { metrics } = require("../../observability/metrics.registry");
 
 function lockKeyFromCode(code) {
   let h = 2166136261;
@@ -25,6 +26,7 @@ function computeBackoff(attemptCount) {
  * transitioned in place to its terminal state.
  */
 async function executeTask({ task, handler, computeNextRunAt, triggerType = "scheduled", actorUserId = null, instanceId = runnerId() }) {
+  const startedNs = process.hrtime.bigint();
   const client = await pool.connect();
   const lockKey = lockKeyFromCode(task.code);
   let locked = false;
@@ -34,7 +36,11 @@ async function executeTask({ task, handler, computeNextRunAt, triggerType = "sch
   try {
     const { rows: lockRows } = await client.query(`SELECT pg_try_advisory_lock($1) AS ok`, [lockKey]);
     locked = !!lockRows[0]?.ok;
-    if (!locked) return { skipped: true, locked: true, message: "Task is already running" };
+    if (!locked) {
+      metrics.schedulerRuns.inc({ task: task.code, status: "locked" });
+      metrics.schedulerDuration.observe({ task: task.code, status: "locked" }, Number(process.hrtime.bigint() - startedNs) / 1e9);
+      return { skipped: true, locked: true, message: "Task is already running" };
+    }
 
     await client.query(
       `UPDATE scheduled_tasks SET locked_at=NOW(), locked_by=$2, updated_at=NOW() WHERE code=$1`,
@@ -118,6 +124,10 @@ async function executeTask({ task, handler, computeNextRunAt, triggerType = "sch
     );
     await client.query("COMMIT");
     finalized = true;
+    const durationSeconds = Number(process.hrtime.bigint() - startedNs) / 1e9;
+    metrics.schedulerRuns.inc({ task: task.code, status });
+    metrics.schedulerDuration.observe({ task: task.code, status }, durationSeconds);
+    if (status === "failed") metrics.schedulerFailures.inc({ task: task.code });
     return { runId, status, message, error };
   } catch (e) {
     try { await client.query("ROLLBACK"); } catch (_) {}
@@ -134,6 +144,9 @@ async function executeTask({ task, handler, computeNextRunAt, triggerType = "sch
     try {
       await client.query(`UPDATE scheduled_tasks SET locked_at=NULL, locked_by=NULL, updated_at=NOW() WHERE code=$1`, [task.code]);
     } catch (_) {}
+    metrics.schedulerRuns.inc({ task: task.code, status: "infrastructure_failed" });
+    metrics.schedulerFailures.inc({ task: task.code });
+    metrics.schedulerDuration.observe({ task: task.code, status: "infrastructure_failed" }, Number(process.hrtime.bigint() - startedNs) / 1e9);
     throw e;
   } finally {
     if (locked) {

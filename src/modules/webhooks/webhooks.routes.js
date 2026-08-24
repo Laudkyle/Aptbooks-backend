@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { authRequired } = require("../../middleware/auth.middleware");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const svc = require("./webhooks.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['eventType', 'targetUrl']));
 router.use(authRequired);
 
 router.get("/subscriptions", requirePermission("webhooks.manage"), async (req, res, next) => {

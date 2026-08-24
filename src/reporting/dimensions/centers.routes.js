@@ -1,3 +1,4 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
@@ -5,6 +6,7 @@ const svc = require("./centers.service");
 const { AppError } = require('../../shared/errors/AppError');
 
 const router = express.Router();
+router.use(createModuleBodyContract(['comment']));
 const { resolveOrgId } = require("../_util");
 
 // Get all centers across all types (cost, profit, investment)

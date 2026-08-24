@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const express = require("express");
 const { requirePermission } = require("../../middleware/permission.middleware");
 const { idempotency } = require("../../middleware/idempotency.middleware");
 const svc = require("./dashboards.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['configJson', 'description', 'isArchived', 'layoutJson', 'name', 'positionJson', 'title', 'widgetType']));
 const { resolveOrgId } = require("../_util");
 
 function ctx(req) {

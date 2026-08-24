@@ -1,9 +1,11 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const express = require("express");
 const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const service = require("./connections.service");
 
 const router = express.Router();
+router.use(createModuleBodyContract(['configJson', 'lastSyncAt', 'lastTestResult', 'lastTestedAt', 'name', 'status', 'type']));
 router.use(authRequired);
 
 router.get("/", requirePermission("integrations.connections.read"), async (req, res, next) => {

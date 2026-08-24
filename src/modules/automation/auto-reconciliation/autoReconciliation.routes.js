@@ -1,4 +1,6 @@
+const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
 const router = require('express').Router();
+router.use(createModuleBodyContract(['bankAccountId', 'confidenceScore', 'isEnabled', 'lookbackDays', 'maxSuggestionsPerLine', 'message', 'metadata', 'minConfidenceScore', 'name', 'runDate', 'statementLineId', 'status', 'suggestionJson', 'summaryJson']));
 const { requirePermission } = require('../../../middleware/permission.middleware');
 const { idempotency } = require('../../../middleware/idempotency.middleware');
 const svc = require('./autoReconciliation.service');
