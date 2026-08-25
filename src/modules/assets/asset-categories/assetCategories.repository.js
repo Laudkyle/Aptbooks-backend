@@ -7,9 +7,10 @@ async function createCategory({ orgId, payload }) {
       organization_id, code, name,
       asset_account_id, accum_depr_account_id, depr_expense_account_id,
       disposal_gain_account_id, disposal_loss_account_id,
-      status
+      default_depreciation_method, default_useful_life_months,
+      default_depreciation_convention, default_declining_rate_percent, status
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active')
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'active')
     RETURNING *
     `,
     [
@@ -20,7 +21,11 @@ async function createCategory({ orgId, payload }) {
       payload.accumDeprAccountId,
       payload.deprExpenseAccountId,
       payload.disposalGainAccountId,
-      payload.disposalLossAccountId
+      payload.disposalLossAccountId,
+      payload.defaultDepreciationMethod || 'straight_line',
+      payload.defaultUsefulLifeMonths ?? null,
+      payload.defaultDepreciationConvention || 'full_month',
+      payload.defaultDecliningRatePercent ?? null
     ]
   );
   return rows[0];
@@ -53,7 +58,11 @@ async function updateCategory({ orgId, id, payload }) {
         depr_expense_account_id=COALESCE($7, depr_expense_account_id),
         disposal_gain_account_id=COALESCE($8, disposal_gain_account_id),
         disposal_loss_account_id=COALESCE($9, disposal_loss_account_id),
-        status=COALESCE($10, status),
+        default_depreciation_method=COALESCE($10, default_depreciation_method),
+        default_useful_life_months=COALESCE($11, default_useful_life_months),
+        default_depreciation_convention=COALESCE($12, default_depreciation_convention),
+        default_declining_rate_percent=CASE WHEN $13::boolean THEN $14 ELSE default_declining_rate_percent END,
+        status=COALESCE($15, status),
         updated_at=now()
     WHERE organization_id=$1 AND id=$2
     RETURNING *
@@ -68,6 +77,11 @@ async function updateCategory({ orgId, id, payload }) {
       payload.deprExpenseAccountId ?? null,
       payload.disposalGainAccountId ?? null,
       payload.disposalLossAccountId ?? null,
+      payload.defaultDepreciationMethod ?? null,
+      payload.defaultUsefulLifeMonths ?? null,
+      payload.defaultDepreciationConvention ?? null,
+      Object.prototype.hasOwnProperty.call(payload, 'defaultDecliningRatePercent'),
+      payload.defaultDecliningRatePercent ?? null,
       payload.status ?? null
     ]
   );

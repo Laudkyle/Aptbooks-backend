@@ -5,6 +5,8 @@ const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { idempotency } = require("../../../middleware/idempotency.middleware");
 const svc = require("./transactions.service");
+const { validate } = require("../../../shared/validators/validate");
+const { createInventoryTransactionSchema } = require("../../../shared/validators/inventory.validators");
 
 router.use(authRequired);
 
@@ -32,7 +34,7 @@ router.post("/", idempotency({ required: true }), requirePermission("inventory.t
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-    const result = await svc.createDraftTransaction({ orgId, actorUserId, payload: req.body });
+    const result = await svc.createDraftTransaction({ orgId, actorUserId, payload: validate(createInventoryTransactionSchema, req.body) });
     res.status(201).json(result);
   } catch (e) { next(e); }
 });

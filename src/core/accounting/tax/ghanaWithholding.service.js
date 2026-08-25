@@ -1,4 +1,5 @@
 const { pool } = require('../../../db/pool');
+const withholdingRepo = require('./ghanaWithholding.repository');
 const { withTransaction } = require('../../../db/tx');
 const { AppError } = require('../../../shared/errors/AppError');
 const journalIF = require('../../../interfaces/journalPosting.interface');
@@ -26,7 +27,6 @@ function proportionalAmount(amount, numerator, denominator) {
   if (a === 0n || n === 0n || d <= 0n) return '0.00';
   return bigIntToDecimalString(divideAndRoundHalfUp(a * n, d), 2);
 }
-
 async function getSettings({ orgId, client = null }) {
   const db = client || pool;
   const { rows } = await db.query(
@@ -39,7 +39,6 @@ async function getSettings({ orgId, client = null }) {
   if (!rows.length) throw new AppError(404, 'Tax settings not found');
   return rows[0];
 }
-
 async function getPartnerProfile({ orgId, partnerId, client = null }) {
   if (!partnerId) return null;
   const db = client || pool;
@@ -56,7 +55,6 @@ async function getPartnerProfile({ orgId, partnerId, client = null }) {
   );
   return rows[0] || null;
 }
-
 async function getTaxCode({ orgId, taxCodeId = null, code = null, client = null }) {
   const db = client || pool;
   const params = [orgId];
@@ -66,7 +64,6 @@ async function getTaxCode({ orgId, taxCodeId = null, code = null, client = null 
   const { rows } = await db.query(`SELECT * FROM tax_codes WHERE ${where} LIMIT 1`, params);
   return rows[0] || null;
 }
-
 async function getDashboard({ orgId, fromDate = null, toDate = null }) {
   const params = [orgId];
   const filters = [];
@@ -101,7 +98,6 @@ async function getDashboard({ orgId, fromDate = null, toDate = null }) {
   );
   return { eventSummary: rows, returnSummary: returnRows, vendorsOverThreshold: thresholdRows[0]?.vendors_over_threshold || 0 };
 }
-
 async function getReconciliation({ orgId, toDate = null }) {
   const settings = await getSettings({ orgId });
   const effectiveTo = toDate || new Date().toISOString().slice(0,10);
@@ -501,32 +497,13 @@ async function finalizeReturn({ orgId, returnId, actorUserId }) {
 }
 
 async function markReturnFiled({ orgId, returnId, actorUserId, graReference }) {
-  const { rows } = await pool.query(
-    `UPDATE ghana_withholding_returns SET status='filed',gra_reference=$3,filed_at=NOW(),filed_by=$4,updated_at=NOW()
-      WHERE organization_id=$1 AND id=$2 AND status IN ('finalized','amended') RETURNING *`,
-    [orgId,returnId,graReference || null,actorUserId || null],
-  );
-  if (!rows.length) throw new AppError(409, 'Return must be finalized before it can be marked filed');
-  return rows[0];
+  const row = await withholdingRepo.markReturnFiled({ orgId, returnId, actorUserId, graReference });
+  if (!row) throw new AppError(409, 'Return must be finalized before it can be marked filed');
+  return row;
 }
 
 async function listRemittances({ orgId, query = {} }) {
-  const params = [orgId];
-  const filters = ["organization_id=$1", "withholding_regime IN ('income_wht','vat_withholding')"];
-  if (query.regime) { params.push(query.regime); filters.push(`withholding_regime=$${params.length}`); }
-  if (query.status) { params.push(query.status); filters.push(`status=$${params.length}`); }
-  if (query.fromDate) { params.push(query.fromDate); filters.push(`remittance_date >= $${params.length}::date`); }
-  if (query.toDate) { params.push(query.toDate); filters.push(`remittance_date <= $${params.length}::date`); }
-  const { rows } = await pool.query(
-    `SELECT id,organization_id,remittance_no,direction,status,period_start,period_end,remittance_date,
-            currency_code,settlement_account_id,reference,memo,total_amount,withholding_regime,due_date,
-            journal_entry_id,reversal_journal_entry_id,posted_at,voided_at,created_at,updated_at
-       FROM withholding_remittances
-      WHERE ${filters.join(' AND ')}
-      ORDER BY remittance_date DESC,created_at DESC`,
-    params,
-  );
-  return rows;
+  return withholdingRepo.listRemittances({ orgId, query });
 }
 
 async function createRemittanceFromEvents({ orgId, actorUserId, payload }) {

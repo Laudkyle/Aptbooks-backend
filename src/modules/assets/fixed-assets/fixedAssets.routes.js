@@ -8,6 +8,8 @@ const {
   updateFixedAssetSchema,
   acquireFixedAssetSchema,
   disposeFixedAssetSchema,
+  retireFixedAssetSchema,
+  createAssetDimensionSchema,
   assetTransferSchema,
   assetRevaluationSchema,
   assetImpairmentSchema,
@@ -22,7 +24,21 @@ router.post("/", idempotency({ required: true }), requirePermission("assets.fixe
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     const payload = validate(createFixedAssetSchema, req.body);
-    res.status(201).json(await svc.createAsset({ orgId, actorUserId, payload }));
+    res.status(201).json(await svc.createAsset({ orgId, actorUserId, payload, audit: req.audit }));
+  } catch (e) { next(e); }
+});
+
+
+router.get("/overview", requirePermission("assets.fixed_assets.read"), async (req, res, next) => {
+  try {
+    res.json(await svc.getOverview({ orgId: req.user.organization_id }));
+  } catch (e) { next(e); }
+});
+
+router.post("/dimensions", idempotency({ required: true }), requirePermission("assets.fixed_assets.manage"), async (req, res, next) => {
+  try {
+    const payload = validate(createAssetDimensionSchema, req.body);
+    res.status(201).json(await svc.createDimension({ orgId: req.user.organization_id, actorUserId: req.user.id, payload, audit: req.audit }));
   } catch (e) { next(e); }
 });
 
@@ -69,7 +85,7 @@ router.post("/:id/acquire", idempotency({ required: true }), requirePermission("
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     const payload = validate(acquireFixedAssetSchema, req.body);
-    res.json(await svc.acquireAsset({ orgId, actorUserId, assetId: req.params.id, payload }));
+    res.json(await svc.acquireAsset({ orgId, actorUserId, assetId: req.params.id, payload, audit: req.audit }));
   } catch (e) { next(e); }
 });
 
@@ -77,7 +93,8 @@ router.post("/:id/retire", idempotency({ required: true }), requirePermission("a
   try {
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
-    res.json(await svc.retireAsset({ orgId, actorUserId, assetId: req.params.id }));
+    const payload = validate(retireFixedAssetSchema, req.body || {});
+    res.json(await svc.retireAsset({ orgId, actorUserId, assetId: req.params.id, payload, audit: req.audit }));
   } catch (e) { next(e); }
 });
 
@@ -86,7 +103,7 @@ router.post("/:id/dispose", idempotency({ required: true }), requirePermission("
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     const payload = validate(disposeFixedAssetSchema, req.body);
-    res.json(await svc.disposeAsset({ orgId, actorUserId, assetId: req.params.id, payload }));
+    res.json(await svc.disposeAsset({ orgId, actorUserId, assetId: req.params.id, payload, audit: req.audit }));
   } catch (e) { next(e); }
 });
 

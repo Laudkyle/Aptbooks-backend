@@ -27,10 +27,26 @@ function getInventoryTxnEntityType(txnType) {
   throw new AppError(400, `Unsupported inventory transaction type: ${txnType}`);
 }
 
-async function ensureCostMethod(orgId) {
-  const current = await getSetting(orgId, "inventoryCostMethod");
+async function withDbTransaction(existingClient, work) {
+  if (existingClient) return work(existingClient);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function ensureCostMethod(orgId, client = null) {
+  const current = await getSetting(orgId, "inventoryCostMethod", client);
   if (!current) {
-    await upsertSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_AVERAGE", locked: false });
+    await upsertSetting(orgId, "inventoryCostMethod", { method: "WEIGHTED_AVERAGE", locked: false }, client);
     return { method: "WEIGHTED_AVERAGE", locked: false };
   }
   return current;
@@ -104,7 +120,7 @@ async function buildTransactionSnapshot({ orgId, transactionId, client = null })
       extendedCost: l.extended_cost == null ? null : Number(l.extended_cost)
     })),
     valuation_context: {
-      costMethod: await ensureCostMethod(orgId)
+      costMethod: await ensureCostMethod(orgId, client)
     },
     related: {
       journalEntryId: txn.journal_entry_id || null,
@@ -116,10 +132,8 @@ async function buildTransactionSnapshot({ orgId, transactionId, client = null })
   };
 }
 
-async function createDraftTransaction({ orgId, actorUserId, payload }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+async function createDraftTransaction({ orgId, actorUserId, payload, client: existingClient = null }) {
+  return withDbTransaction(existingClient, async (client) => {
 
     if (!payload?.periodId || !payload?.txnDate || !payload?.txnType) {
       throw new AppError(400, "periodId, txnDate, txnType are required");
@@ -137,6 +151,34 @@ async function createDraftTransaction({ orgId, actorUserId, payload }) {
       if (payload.sourceWarehouseId === payload.destWarehouseId) throw new AppError(400, "sourceWarehouseId cannot equal destWarehouseId");
     }
     if (txnType === "adjustment" && !payload.sourceWarehouseId) throw new AppError(400, "sourceWarehouseId is required for adjustment");
+
+    const warehouseIds = [payload.sourceWarehouseId, payload.destWarehouseId].filter(Boolean);
+    if (warehouseIds.length) {
+      const { rows: warehouses } = await client.query(
+        `SELECT id FROM warehouses WHERE organization_id=$1 AND id=ANY($2::uuid[]) AND status='active' AND is_active=true`,
+        [orgId, warehouseIds]
+      );
+      const activeIds = new Set(warehouses.map((row) => String(row.id)));
+      for (const warehouseId of warehouseIds) {
+        if (!activeIds.has(String(warehouseId))) throw new AppError(422, `Warehouse ${warehouseId} is invalid or inactive`);
+      }
+    }
+
+    const itemIds = [...new Set(lines.map((line) => line.itemId).filter(Boolean))];
+    if (itemIds.length) {
+      const { rows: activeItems } = await client.query(
+        `SELECT i.id, i.tracking_method
+           FROM inventory_items i
+           JOIN item_categories c ON c.id=i.category_id AND c.organization_id=i.organization_id AND c.status='active'
+           JOIN item_units u ON u.id=i.unit_id AND u.organization_id=i.organization_id AND u.status='active'
+          WHERE i.organization_id=$1 AND i.id=ANY($2::uuid[]) AND i.status='active' AND i.is_active=true`,
+        [orgId, itemIds]
+      );
+      const activeIds = new Set(activeItems.map((row) => String(row.id)));
+      for (const itemId of itemIds) {
+        if (!activeIds.has(String(itemId))) throw new AppError(422, `Item ${itemId} is invalid, inactive, or uses inactive master data`);
+      }
+    }
 
     const txn = await repo.insertDraftTransaction(client, orgId, {
       periodId: payload.periodId,
@@ -166,14 +208,8 @@ async function createDraftTransaction({ orgId, actorUserId, payload }) {
       });
     }
 
-    await client.query("COMMIT");
     return { transactionId: txn.id, status2: "draft" };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function listTransactions({ orgId, query }) {
@@ -186,10 +222,8 @@ async function getTransaction({ orgId, transactionId }) {
   return out;
 }
 
-async function submitTransactionForApproval({ orgId, actorUserId, transactionId }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+async function submitTransactionForApproval({ orgId, actorUserId, transactionId, client: existingClient = null }) {
+  return withDbTransaction(existingClient, async (client) => {
     const out = await repo.getTransactionWithLines(client, orgId, transactionId);
     if (!out) throw new AppError(404, "Transaction not found");
     const { txn } = out;
@@ -211,20 +245,12 @@ async function submitTransactionForApproval({ orgId, actorUserId, transactionId 
     });
 
     const updated = await repo.setStatus2(client, orgId, transactionId, "submitted", actorUserId);
-    await client.query("COMMIT");
     return { transaction: updated, workflowDocument: doc };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
-async function approveTransactionWorkflow({ orgId, actorUserId, transactionId, comment }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+async function approveTransactionWorkflow({ orgId, actorUserId, transactionId, comment, client: existingClient = null }) {
+  return withDbTransaction(existingClient, async (client) => {
     const out = await repo.getTransactionWithLines(client, orgId, transactionId);
     if (!out) throw new AppError(404, "Transaction not found");
     const { txn } = out;
@@ -242,14 +268,8 @@ async function approveTransactionWorkflow({ orgId, actorUserId, transactionId, c
     });
 
     const updated = await repo.setStatus2(client, orgId, transactionId, "approved", actorUserId);
-    await client.query("COMMIT");
     return { transaction: updated, workflowDocument: doc };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function rejectTransactionWorkflow({ orgId, actorUserId, transactionId, comment }) {
@@ -323,10 +343,8 @@ async function voidTransaction({ orgId, actorUserId, transactionId, reason }) {
   }
 }
 
-async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypassApprovalCheck = false }) {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypassApprovalCheck = false, client: existingClient = null }) {
+  return withDbTransaction(existingClient, async (client) => {
     const locked = await client.query(
       `SELECT * FROM inventory_transactions WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
       [orgId, transactionId]
@@ -340,7 +358,7 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypa
       await assertTransactionApprovalStateAllowsPost({ orgId, transactionId, client });
     }
 
-    const { method } = await ensureCostMethod(orgId);
+    const { method } = await ensureCostMethod(orgId, client);
     await assertPeriodOpen(client, orgId, txn.period_id, txn.txn_date);
 
     const { rows: lineRows } = await client.query(
@@ -566,18 +584,12 @@ async function postApprovedTransaction({ orgId, actorUserId, transactionId, bypa
     }
 
     await client.query(
-      `UPDATE inventory_transactions SET status2='posted', status='posted' WHERE organization_id=$1 AND id=$2`,
-      [orgId, txn.id]
+      `UPDATE inventory_transactions SET status2='posted', status='posted', posted_at=NOW(), posted_by=$3 WHERE organization_id=$1 AND id=$2`,
+      [orgId, txn.id, actorUserId]
     );
 
-    await client.query("COMMIT");
     return { transactionId: txn.id, status2: "posted", journalEntryId: postedJournalId };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function reversePostedTransaction({ orgId, actorUserId, transactionId, reason }) {

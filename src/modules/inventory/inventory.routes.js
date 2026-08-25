@@ -12,7 +12,9 @@ const reservationsRoutes = require("./reservations/reservations.routes");
 const transfersRoutes = require("./transfers/transfers.routes");
 const traceabilityRoutes = require("./traceability/traceability.routes");
 const reorderRoutes = require("./reorder/reorder.routes");
+const overviewRoutes = require("./overview/inventoryOverview.routes");
 
+router.use("/overview", overviewRoutes);
 router.use("/categories", categoriesRoutes);
 router.use("/units", unitsRoutes);
 router.use("/items", itemsRoutes);

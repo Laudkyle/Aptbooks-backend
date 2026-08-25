@@ -3,6 +3,7 @@ const { authRequired } = require("../../../middleware/auth.middleware");
 const { requirePermission } = require("../../../middleware/permission.middleware");
 const { idempotency } = require("../../../middleware/idempotency.middleware");
 const { validate } = require("../../../shared/validators/validate");
+const { AppError } = require("../../../shared/errors/AppError");
 const {
   createDepreciationScheduleSchema,
   updateDepreciationScheduleSchema,
@@ -50,6 +51,12 @@ router.delete("/schedules/:id", requirePermission("assets.fixed_assets.manage"),
     const orgId = req.user.organization_id;
     const actorUserId = req.user.id;
     res.json(await svc.deleteSchedule({ orgId, actorUserId, scheduleId: req.params.id }));
+  } catch (e) { next(e); }
+});
+
+router.get("/runs", requirePermission("assets.fixed_assets.read"), async (req, res, next) => {
+  try {
+    res.json(await svc.listDepreciationRuns({ orgId: req.user.organization_id, limit: req.query.limit }));
   } catch (e) { next(e); }
 });
 

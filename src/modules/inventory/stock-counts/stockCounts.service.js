@@ -187,64 +187,119 @@ async function assertStockCountApprovalStateAllowsPost({ orgId, id, client = nul
 }
 
 async function postStockCountAdjustments({ orgId, actorUserId, id, payload }) {
-  const sc = await repo.getStockCount(orgId, id);
-  if (!sc) throw new AppError(404, "Stock count not found");
-  if (sc.status !== 'approved') throw new AppError(409, "Only approved counts can be posted");
-
-  await assertStockCountApprovalStateAllowsPost({ orgId, id });
-
   if (!payload?.periodId || !payload?.txnDate) throw new AppError(400, "periodId and txnDate are required");
 
-  const lines = await repo.listLines(id);
-  const itemIds = lines.map(l => l.item_id);
-  const { rows: balances } = await pool.query(
-    `SELECT item_id, qty_on_hand, avg_unit_cost
-     FROM inventory_balances
-     WHERE organization_id=$1 AND warehouse_id=$2 AND item_id = ANY($3::uuid[])`,
-    [orgId, sc.warehouse_id, itemIds]
-  );
-  const balMap = new Map(balances.map(b => [b.item_id, b]));
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
 
-  const adjLines = [];
-  for (const l of lines) {
-    const bal = balMap.get(l.item_id) || { qty_on_hand: 0, avg_unit_cost: 0 };
-    const systemQty = Number(bal.qty_on_hand || 0);
-    const countedQty = Number(l.counted_qty || 0);
-    const diff = countedQty - systemQty;
-    if (diff === 0) continue;
-    if (diff > 0) {
-      adjLines.push({ itemId: l.item_id, quantity: diff, direction: 'increase', unitCost: l.unit_cost ?? bal.avg_unit_cost });
-    } else {
-      adjLines.push({ itemId: l.item_id, quantity: Math.abs(diff), direction: 'decrease' });
+    // Lock the stock-count header so concurrent/retried posting requests serialize.
+    const { rows: lockedRows } = await client.query(
+      `SELECT sc.*, w.code AS warehouse_code, w.name AS warehouse_name
+         FROM inventory_stock_counts sc
+         JOIN warehouses w ON w.id=sc.warehouse_id
+        WHERE sc.organization_id=$1 AND sc.id=$2
+        FOR UPDATE OF sc`,
+      [orgId, id]
+    );
+    const sc = lockedRows[0] || null;
+    if (!sc) throw new AppError(404, "Stock count not found");
+
+    // Idempotent recovery: once the stock count is posted, return the recorded result.
+    if (sc.status === "posted") {
+      await client.query("COMMIT");
+      return {
+        stockCount: sc,
+        postedTxnId: sc.posted_txn_id || null,
+        note: sc.posted_txn_id ? "already_posted" : "no_variances"
+      };
     }
+    if (sc.status !== "approved") throw new AppError(409, "Only approved counts can be posted");
+
+    await assertStockCountApprovalStateAllowsPost({ orgId, id, client });
+
+    const lines = await repo.listLines(id, client);
+    if (!lines.length) throw new AppError(409, "Stock count has no lines");
+
+    const itemIds = lines.map((l) => l.item_id);
+    const { rows: balances } = await client.query(
+      `SELECT item_id, qty_on_hand, avg_unit_cost
+         FROM inventory_balances
+        WHERE organization_id=$1 AND warehouse_id=$2 AND item_id = ANY($3::uuid[])
+        FOR UPDATE`,
+      [orgId, sc.warehouse_id, itemIds]
+    );
+    const balMap = new Map(balances.map((b) => [b.item_id, b]));
+
+    const adjLines = [];
+    for (const l of lines) {
+      const bal = balMap.get(l.item_id) || { qty_on_hand: 0, avg_unit_cost: 0 };
+      const systemQty = Number(bal.qty_on_hand || 0);
+      const countedQty = Number(l.counted_qty || 0);
+      const diff = Number((countedQty - systemQty).toFixed(6));
+      if (diff === 0) continue;
+      if (diff > 0) {
+        adjLines.push({
+          itemId: l.item_id,
+          quantity: diff,
+          direction: "increase",
+          unitCost: l.unit_cost ?? bal.avg_unit_cost
+        });
+      } else {
+        adjLines.push({ itemId: l.item_id, quantity: Math.abs(diff), direction: "decrease" });
+      }
+    }
+
+    if (!adjLines.length) {
+      const updated = await repo.setStatus(orgId, id, "posted", actorUserId, { postedTxnId: null }, client);
+      await client.query("COMMIT");
+      return { stockCount: updated, postedTxnId: null, note: "no_variances" };
+    }
+
+    // The adjustment lifecycle and stock-count status now share ONE database transaction.
+    // Any failure rolls back the inventory balances, GL journal, workflow state and stock count together.
+    const draft = await txSvc.createDraftTransaction({
+      orgId,
+      actorUserId,
+      client,
+      payload: {
+        periodId: payload.periodId,
+        txnDate: payload.txnDate,
+        txnType: "adjustment",
+        sourceWarehouseId: sc.warehouse_id,
+        reference: payload.reference || sc.reference || `STOCK-COUNT:${id}`,
+        memo: payload.memo || sc.memo || `Stock count adjustment (${id})`,
+        idempotencyKey: `stock-count:${orgId}:${id}`,
+        lines: adjLines,
+      },
+    });
+
+    // Stock-count approval is the primary user approval. The generated inventory
+    // adjustment still receives its own workflow evidence, but all steps are atomic.
+    await txSvc.submitTransactionForApproval({ orgId, actorUserId, transactionId: draft.transactionId, client });
+    await txSvc.approveTransactionWorkflow({
+      orgId,
+      actorUserId,
+      transactionId: draft.transactionId,
+      comment: `Auto-approved from stock count ${id}`,
+      client
+    });
+    const posted = await txSvc.postApprovedTransaction({
+      orgId,
+      actorUserId,
+      transactionId: draft.transactionId,
+      client
+    });
+
+    const updated = await repo.setStatus(orgId, id, "posted", actorUserId, { postedTxnId: posted.transactionId }, client);
+    await client.query("COMMIT");
+    return { stockCount: updated, postedTxnId: posted.transactionId };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
   }
-
-  if (!adjLines.length) {
-    const updated = await repo.setStatus(orgId, id, 'posted', actorUserId, { postedTxnId: null });
-    return { stockCount: updated, postedTxnId: null, note: 'no_variances' };
-  }
-
-  const draft = await txSvc.createDraftTransaction({
-    orgId,
-    actorUserId,
-    payload: {
-      periodId: payload.periodId,
-      txnDate: payload.txnDate,
-      txnType: 'adjustment',
-      sourceWarehouseId: sc.warehouse_id,
-      reference: payload.reference || sc.reference || `STOCK-COUNT:${id}`,
-      memo: payload.memo || sc.memo || `Stock count adjustment (${id})`,
-      lines: adjLines,
-    },
-  });
-
-  // Stock count approval is the primary approval gate here.
-  await txSvc.submitTransactionForApproval({ orgId, actorUserId, transactionId: draft.transactionId });
-  await txSvc.approveTransactionWorkflow({ orgId, actorUserId, transactionId: draft.transactionId, comment: `Auto-approved from stock count ${id}` });
-  const posted = await txSvc.postApprovedTransaction({ orgId, actorUserId, transactionId: draft.transactionId });
-
-  const updated = await repo.setStatus(orgId, id, 'posted', actorUserId, { postedTxnId: posted.transactionId });
-  return { stockCount: updated, postedTxnId: posted.transactionId };
 }
 
 module.exports = {
