@@ -162,6 +162,10 @@ router.post('/ghana/withholding/returns/:id/filed', idempotency({ required:true 
   } catch (e) { next(e); }
 });
 
+router.get('/ghana/withholding/remittances', requirePermission('tax.read'), async (req,res,next)=>{
+  try { res.json({ data: await ghWithholdingSvc.listRemittances({ orgId:getOrganizationId(req), query:req.query }) }); } catch (e) { next(e); }
+});
+
 router.post('/ghana/withholding/remittances', idempotency({ required:true }), requirePermission('tax.manage'), async (req,res,next)=>{
   try {
     const orgId = getOrganizationId(req);

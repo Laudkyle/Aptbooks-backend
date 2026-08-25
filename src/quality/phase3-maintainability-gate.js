@@ -77,7 +77,7 @@ function runPhase3MaintainabilityGate() {
 
   const taxRootLines = read('core/accounting/tax/tax.routes.js').trimEnd().split(/\r?\n/).length;
   if (taxRootLines > 80) errors.push(`core/accounting/tax/tax.routes.js must remain a composition root (got ${taxRootLines} lines)`);
-  for (const name of ['tax-setup.routes.js', 'tax-compliance.routes.js', 'tax-returns.routes.js', 'tax-withholding.routes.js']) {
+  for (const name of ['tax-workspace.routes.js', 'tax-setup.routes.js', 'tax-compliance.routes.js', 'tax-returns.routes.js', 'tax-withholding.routes.js']) {
     const r = `core/accounting/tax/${name}`;
     if (!fs.existsSync(path.join(SRC, r))) errors.push(`${r}: missing bounded tax route module`);
     else if (read(r).trimEnd().split(/\r?\n/).length > 700) errors.push(`${r}: route module exceeds 700-line Phase 3 ceiling`);
