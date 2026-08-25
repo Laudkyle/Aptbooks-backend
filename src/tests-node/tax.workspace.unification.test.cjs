@@ -18,9 +18,10 @@ test('tax workspace exposes one read-only aggregate endpoint ahead of tax.read g
 test('Ghana withholding remittances have a canonical read endpoint backed by statutory rows only', () => {
   const routes = read('core/accounting/tax/tax-withholding.routes.js');
   const service = read('core/accounting/tax/ghanaWithholding.service.js');
+  const repo = read('core/accounting/tax/ghanaWithholding.repository.js');
   assert.match(routes, /router\.get\('\/ghana\/withholding\/remittances'/);
   assert.match(routes, /ghWithholdingSvc\.listRemittances/);
   assert.match(service, /async function listRemittances/);
-  assert.match(service, /withholding_regime IN \('income_wht','vat_withholding'\)/);
-  assert.match(service, /SELECT id,organization_id,remittance_no,direction,status/);
+  assert.match(repo, /withholding_regime IN \('income_wht','vat_withholding'\)/);
+  assert.match(repo, /SELECT id,organization_id,remittance_no,direction,status/);
 });

@@ -1,133 +1,15 @@
-
-const repo = require('./bankTransfers.repository');
-const { AppError } = require('../../../../shared/errors/AppError');
-const { withTransaction } = require('../../../../db/tx');
-const journalIF = require('../../../../interfaces/journalPosting.interface');
-const { genCode, normalizeAmount, parseOptionalAmount, findOpenPeriodId } = require('../_shared/helpers');
-
-async function list(orgId, filters) { return repo.list(orgId, filters); }
-async function get(orgId, bankTransferId) {
-  const out = await repo.get(orgId, bankTransferId);
-  if (!out) throw new AppError(404, 'Bank transfer not found');
-  return out;
-}
-
-async function create(orgId, actorUserId, payload) {
-  const fromBankAccountId = payload?.fromBankAccountId || payload?.from_bank_account_id;
-  const toBankAccountId = payload?.toBankAccountId || payload?.to_bank_account_id;
-  const transferDate = payload?.transferDate || payload?.transfer_date;
-  const feeAmount = payload?.feeAmount ?? payload?.fee_amount;
-  const feeAccountId = payload?.feeAccountId || payload?.fee_account_id;
-  if (!fromBankAccountId) throw new AppError(400, 'fromBankAccountId is required');
-  if (!toBankAccountId) throw new AppError(400, 'toBankAccountId is required');
-  if (!transferDate) throw new AppError(400, 'transferDate is required');
-  if (fromBankAccountId === toBankAccountId) throw new AppError(400, 'fromBankAccountId and toBankAccountId must differ');
-  return withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `SELECT id FROM bank_accounts WHERE organization_id=$1 AND id = ANY($2::uuid[])`,
-      [orgId, [fromBankAccountId, toBankAccountId]]
-    );
-    if (rows.length !== 2) throw new AppError(404, 'One or more bank accounts were not found');
-    return repo.create(orgId, {
-      code: payload.code || genCode('BT'),
-      fromBankAccountId,
-      toBankAccountId,
-      transferDate,
-      amount: normalizeAmount(payload.amount),
-      feeAmount: parseOptionalAmount(feeAmount, 'feeAmount'),
-      feeAccountId: feeAccountId || null,
-      reference: payload.reference || null,
-      memo: payload.memo || null,
-    }, actorUserId, client);
-  });
-}
-
-async function submit(orgId, bankTransferId) {
-  return withTransaction(async (client) => {
-    const row = await repo.get(orgId, bankTransferId, client);
-    if (!row) throw new AppError(404, 'Bank transfer not found');
-    if (row.status !== 'draft') throw new AppError(409, 'Only draft bank transfers can be submitted');
-    return repo.updateStatus(orgId, bankTransferId, 'submitted', {}, client);
-  });
-}
-
-async function approve(orgId, bankTransferId, actorUserId) {
-  return withTransaction(async (client) => {
-    const row = await repo.get(orgId, bankTransferId, client);
-    if (!row) throw new AppError(404, 'Bank transfer not found');
-    if (!['draft','submitted'].includes(row.status)) throw new AppError(409, 'Only draft/submitted bank transfers can be approved');
-    return repo.updateStatus(orgId, bankTransferId, 'approved', { approvedByUserId: actorUserId }, client);
-  });
-}
-
-async function post(orgId, bankTransferId, actorUserId) {
-  return withTransaction(async (client) => {
-    const row = await repo.get(orgId, bankTransferId, client);
-    if (!row) throw new AppError(404, 'Bank transfer not found');
-    if (row.status !== 'approved') throw new AppError(409, 'Only approved bank transfers can be posted');
-
-    const { rows: banks } = await client.query(
-      `SELECT id, code, name, gl_account_id, currency_code FROM bank_accounts WHERE organization_id=$1 AND id = ANY($2::uuid[])`,
-      [orgId, [row.from_bank_account_id, row.to_bank_account_id]]
-    );
-    if (banks.length !== 2) throw new AppError(404, 'One or more bank accounts were not found');
-    const fromBank = banks.find((b) => b.id === row.from_bank_account_id);
-    const toBank = banks.find((b) => b.id === row.to_bank_account_id);
-
-    const periodId = await findOpenPeriodId(orgId, row.transfer_date, client);
-    const lines = [
-      {
-        accountId: toBank.gl_account_id,
-        debit: Number(row.amount || 0),
-        credit: 0,
-        currencyCode: toBank.currency_code,
-        memo: `Transfer in ${row.code}`,
-        dimensionsJson: {}
-      },
-      {
-        accountId: fromBank.gl_account_id,
-        debit: 0,
-        credit: Number(row.amount || 0) + Number(row.fee_amount || 0),
-        currencyCode: fromBank.currency_code,
-        memo: `Transfer out ${row.code}`,
-        dimensionsJson: {}
-      }
-    ];
-    if (Number(row.fee_amount || 0) > 0) {
-      if (!row.fee_account_id) throw new AppError(400, 'feeAccountId is required when feeAmount is greater than zero');
-      lines.splice(1, 0, {
-        accountId: row.fee_account_id,
-        debit: Number(row.fee_amount || 0),
-        credit: 0,
-        currencyCode: fromBank.currency_code,
-        memo: `Transfer fee ${row.code}`,
-        dimensionsJson: {}
-      });
-    }
-    const posted = await journalIF.postJournal({
-      orgId,
-      actorUserId,
-      client,
-      payload: {
-        entryDate: row.transfer_date,
-        periodId,
-        memo: row.memo || `Bank transfer ${row.code}`,
-        sourceType: 'bank_transfer',
-        sourceId: row.id,
-        lines
-      }
-    });
-    return repo.updateStatus(orgId, bankTransferId, 'posted', { periodId, journalEntryId: posted.journalId, postedByUserId: actorUserId }, client);
-  });
-}
-
-async function cancel(orgId, bankTransferId, reason) {
-  return withTransaction(async (client) => {
-    const row = await repo.get(orgId, bankTransferId, client);
-    if (!row) throw new AppError(404, 'Bank transfer not found');
-    if (row.status === 'posted') throw new AppError(409, 'Posted bank transfers cannot be cancelled');
-    return repo.updateStatus(orgId, bankTransferId, 'cancelled', { cancelledReason: reason || null }, client);
-  });
-}
-
-module.exports = { list, get, create, submit, approve, post, cancel };
+const repo=require('./bankTransfers.repository');
+const {AppError}=require('../../../../shared/errors/AppError');
+const {withTransaction}=require('../../../../db/tx');
+const journalIF=require('../../../../interfaces/journalPosting.interface');
+const {genCode,normalizeAmount,parseOptionalAmount,findOpenPeriodId}=require('../_shared/helpers');
+const {addMoney}=require('../../../../shared/utils/financialMath');
+const {writeAudit}=require('../../../../core/foundation/audit-logs/audit.service');
+const controlsSvc=require('../controls/treasuryControls.service');
+async function list(orgId,filters){return repo.list(orgId,filters);} async function get(orgId,id){const out=await repo.get(orgId,id);if(!out)throw new AppError(404,'Bank transfer not found');return out;}
+async function create(orgId,actorUserId,payload){const fromBankAccountId=payload?.fromBankAccountId||payload?.from_bank_account_id,toBankAccountId=payload?.toBankAccountId||payload?.to_bank_account_id,transferDate=payload?.transferDate||payload?.transfer_date,feeAmount=parseOptionalAmount(payload?.feeAmount??payload?.fee_amount,'feeAmount'),feeAccountId=payload?.feeAccountId||payload?.fee_account_id;if(!fromBankAccountId)throw new AppError(400,'fromBankAccountId is required');if(!toBankAccountId)throw new AppError(400,'toBankAccountId is required');if(!transferDate)throw new AppError(400,'transferDate is required');if(String(fromBankAccountId)===String(toBankAccountId))throw new AppError(400,'Source and destination bank accounts must differ');return withTransaction(async client=>{const {rows}=await client.query(`SELECT id,code,name,gl_account_id,currency_code,is_active FROM bank_accounts WHERE organization_id=$1 AND id=ANY($2::uuid[]) FOR SHARE`,[orgId,[fromBankAccountId,toBankAccountId]]);if(rows.length!==2)throw new AppError(404,'One or more bank accounts were not found');const from=rows.find(r=>String(r.id)===String(fromBankAccountId)),to=rows.find(r=>String(r.id)===String(toBankAccountId));if(!from.is_active||!to.is_active)throw new AppError(409,'Both bank accounts must be active');if(from.currency_code!==to.currency_code)throw new AppError(422,'Direct cross-currency bank transfers are blocked because they require an explicit FX conversion/gain-loss workflow');if(feeAmount!=='0.00'){if(!feeAccountId)throw new AppError(400,'feeAccountId is required when feeAmount is greater than zero');const {rows:fee}=await client.query(`SELECT id,is_postable,status FROM chart_of_accounts WHERE organization_id=$1 AND id=$2`,[orgId,feeAccountId]);if(!fee.length)throw new AppError(404,'Fee account not found');if(!fee[0].is_postable||fee[0].status!=='active')throw new AppError(409,'Fee account must be active and postable');}const row=await repo.create(orgId,{code:payload.code||genCode('BT'),fromBankAccountId,toBankAccountId,transferDate,amount:normalizeAmount(payload.amount),feeAmount,feeAccountId:feeAccountId||null,reference:payload.reference||null,memo:payload.memo||null,sourceCurrencyCode:from.currency_code,destinationCurrencyCode:to.currency_code},actorUserId,client);await writeAudit({organizationId:orgId,actorUserId,action:'BANK_TRANSFER_CREATED',entityType:'bank_transfer',entityId:row.id,after:row,client});return row;});}
+async function submit(orgId,id,actorUserId=null){return withTransaction(async client=>{await repo.lockHeader(orgId,id,client);const row=await repo.get(orgId,id,client);if(!row)throw new AppError(404,'Bank transfer not found');if(row.status==='submitted')return row;if(row.status!=='draft')throw new AppError(409,'Only draft bank transfers can be submitted');const out=await repo.updateStatus(orgId,id,'submitted',{submittedByUserId:actorUserId,submittedAt:true},client);await writeAudit({organizationId:orgId,actorUserId,action:'BANK_TRANSFER_SUBMITTED',entityType:'bank_transfer',entityId:id,after:{status:'submitted'},client});return out;});}
+async function approve(orgId,id,actorUserId){return withTransaction(async client=>{await repo.lockHeader(orgId,id,client);const row=await repo.get(orgId,id,client);if(!row)throw new AppError(404,'Bank transfer not found');if(row.status==='approved')return row;if(row.status!=='submitted')throw new AppError(409,'Only submitted bank transfers can be approved');if(row.approval_batch_id)throw new AppError(409,'This bank transfer belongs to an approval batch and must be approved through that batch');const controls=await controlsSvc.get(orgId,client);controlsSvc.assertMakerChecker(controls,{actorUserId,createdByUserId:row.created_by_user_id,action:'approve'});const out=await repo.updateStatus(orgId,id,'approved',{approvedByUserId:actorUserId,approvedAt:true},client);await writeAudit({organizationId:orgId,actorUserId,action:'BANK_TRANSFER_APPROVED',entityType:'bank_transfer',entityId:id,after:{status:'approved'},client});return out;});}
+async function post(orgId,id,actorUserId){return withTransaction(async client=>{await repo.lockHeader(orgId,id,client);const row=await repo.get(orgId,id,client);if(!row)throw new AppError(404,'Bank transfer not found');if(row.status==='posted')return row;const controls=await controlsSvc.get(orgId,client);const allowed=controls.require_transfer_approval?['approved']:['submitted','approved'];if(!allowed.includes(row.status))throw new AppError(409,controls.require_transfer_approval?'Only approved bank transfers can be posted':'Bank transfer must be submitted before posting');controlsSvc.assertExecutionSeparation(controls,{actorUserId,approvedByUserId:row.approved_by_user_id||row.created_by_user_id,action:'post'});const {rows:banks}=await client.query(`SELECT id,code,name,gl_account_id,currency_code,is_active FROM bank_accounts WHERE organization_id=$1 AND id=ANY($2::uuid[])`,[orgId,[row.from_bank_account_id,row.to_bank_account_id]]);if(banks.length!==2)throw new AppError(404,'One or more bank accounts were not found');const from=banks.find(b=>String(b.id)===String(row.from_bank_account_id)),to=banks.find(b=>String(b.id)===String(row.to_bank_account_id));if(!from.is_active||!to.is_active)throw new AppError(409,'Both bank accounts must remain active at posting');if(from.currency_code!==to.currency_code)throw new AppError(422,'Cross-currency bank transfer posting requires a dedicated FX workflow');const lines=[{accountId:to.gl_account_id,debit:row.amount,credit:'0.00',currencyCode:to.currency_code,memo:`Transfer in ${row.code}`,dimensionsJson:{}}];if(String(row.fee_amount||'0')!=='0'&&String(row.fee_amount||'0')!=='0.00'){if(!row.fee_account_id)throw new AppError(400,'feeAccountId is required when feeAmount is greater than zero');lines.push({accountId:row.fee_account_id,debit:row.fee_amount,credit:'0.00',currencyCode:from.currency_code,memo:`Transfer fee ${row.code}`,dimensionsJson:{}});}lines.push({accountId:from.gl_account_id,debit:'0.00',credit:addMoney(row.amount,row.fee_amount||0),currencyCode:from.currency_code,memo:`Transfer out ${row.code}`,dimensionsJson:{}});const periodId=await findOpenPeriodId(orgId,row.transfer_date,client);const posted=await journalIF.postJournal({orgId,actorUserId,client,payload:{entryDate:row.transfer_date,periodId,memo:row.memo||`Bank transfer ${row.code}`,sourceType:'bank_transfer',sourceId:row.id,lines}});const out=await repo.updateStatus(orgId,id,'posted',{periodId,journalEntryId:posted.journalId,postedByUserId:actorUserId,postedAt:true,sourceCurrencyCode:from.currency_code,destinationCurrencyCode:to.currency_code,controlJson:{amount:row.amount,feeAmount:row.fee_amount,currencyCode:from.currency_code,journalId:posted.journalId}},client);await writeAudit({organizationId:orgId,actorUserId,action:'BANK_TRANSFER_POSTED',entityType:'bank_transfer',entityId:id,after:{status:'posted',journal_entry_id:posted.journalId},client});return out;});}
+async function cancel(orgId,id,reason,actorUserId=null){return withTransaction(async client=>{await repo.lockHeader(orgId,id,client);const row=await repo.get(orgId,id,client);if(!row)throw new AppError(404,'Bank transfer not found');if(row.status==='cancelled')return row;if(row.status==='posted')throw new AppError(409,'Posted bank transfers cannot be cancelled; reverse the posted journal through a controlled correction workflow');if(row.approval_batch_id){const {rows:batches}=await client.query(`SELECT status FROM payment_approval_batches WHERE organization_id=$1 AND id=$2`,[orgId,row.approval_batch_id]);if(batches[0]&&['draft','submitted','approved'].includes(batches[0].status))throw new AppError(409,'Bank transfer belongs to an active approval batch; cancel the batch or complete its controlled workflow first');}const out=await repo.updateStatus(orgId,id,'cancelled',{cancelledReason:reason||null},client);await writeAudit({organizationId:orgId,actorUserId,action:'BANK_TRANSFER_CANCELLED',entityType:'bank_transfer',entityId:id,before:{status:row.status},after:{status:'cancelled',reason:reason||null},client});return out;});}
+module.exports={list,get,create,submit,approve,post,cancel};

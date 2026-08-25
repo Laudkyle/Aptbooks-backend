@@ -1,117 +1,68 @@
-const { AppError } = require("../../shared/errors/AppError");
-const repo = require("./dashboards.repository");
-const { writeAudit } = require("../../core/foundation/audit-logs/audit.service");
+const { AppError } = require('../../shared/errors/AppError');
+const repo = require('./dashboards.repository');
+const metrics = require('./metrics/metricExecutor');
+const { getMetric } = require('./metrics/metricRegistry');
+const { listSystemTemplates, getSystemTemplate } = require('./systemTemplates');
+const { writeAudit } = require('../../core/foundation/audit-logs/audit.service');
 
-function assertName(name) {
-  if (!name || !String(name).trim()) throw new AppError(400, "Name is required");
-  return String(name).trim();
+const MAX_WIDGETS=24;
+const LOCATIONS=new Set(['home','accounting','receivables','payables','banking','treasury','inventory','assets','tax','commerce','hr','planning','compliance','reporting']);
+const VISIBILITIES=new Set(['private','shared','organization']);
+const TEMPLATE_SCOPES=new Set(['private','organization']);
+
+function text(value,{required=false,max=160}={}) {const s=value==null?'':String(value).trim();if(required&&!s)throw new AppError(422,'A name is required',null,'validation_error');if(s.length>max)throw new AppError(422,`Text may not exceed ${max} characters`,null,'validation_error');return s||null;}
+function visibility(value){const v=String(value||'private');if(!VISIBILITIES.has(v))throw new AppError(422,'Invalid dashboard visibility',null,'dashboard_visibility_invalid');return v;}
+function templateScope(value){const v=String(value||'private');if(!TEMPLATE_SCOPES.has(v))throw new AppError(422,'Invalid template scope',null,'dashboard_template_scope_invalid');return v;}
+function normalizePosition(pos={},index=0){const n=(v,f)=>Number.isFinite(Number(v))?Math.trunc(Number(v)):f;const w=Math.min(12,Math.max(2,n(pos.w,4)));const h=Math.min(8,Math.max(2,n(pos.h,3)));const x=Math.min(12-w,Math.max(0,n(pos.x,(index*4)%12)));const y=Math.max(0,n(pos.y,Math.floor(index/3)*3));return{x,y,w,h};}
+function normalizeFilters(filters={}){const out={};if(filters.preset)out.preset=String(filters.preset).slice(0,40);if(filters.fromDate)out.fromDate=String(filters.fromDate).slice(0,10);if(filters.toDate)out.toDate=String(filters.toDate).slice(0,10);return out;}
+function normalizeWidget(input,index=0){
+  const metricKey=String(input?.metricKey||input?.metric_key||'').trim();const def=getMetric(metricKey);if(!def)throw new AppError(422,'Widget metric is not registered',{metricKey},'dashboard_metric_not_found');
+  const visualization=String(input?.visualization||input?.widgetType||def.defaultVisualization);if(!def.allowedVisualizations.includes(visualization))throw new AppError(422,'Visualization is not supported for this metric',{metricKey,visualization},'dashboard_visualization_invalid');
+  const groupBy=input?.config?.groupBy||input?.groupBy||null;if(groupBy&&!def.allowedGroupBy.includes(groupBy))throw new AppError(422,'Grouping is not supported for this metric',{metricKey,groupBy},'dashboard_metric_grouping_invalid');
+  const config={};if(groupBy)config.groupBy=groupBy;if(input?.config?.showLegend!==undefined)config.showLegend=Boolean(input.config.showLegend);if(input?.config?.compact!==undefined)config.compact=Boolean(input.config.compact);if(input?.config?.comparison)config.comparison=String(input.config.comparison).slice(0,40);
+  return {title:text(input?.title||def.label,{required:true,max:120}),metricKey,visualization,position:normalizePosition(input?.position||input?.positionJson,index),config};
 }
+function normalizeDefinition(input={}){const widgets=(input.widgets||[]).map(normalizeWidget);if(widgets.length>MAX_WIDGETS)throw new AppError(422,`A dashboard may contain at most ${MAX_WIDGETS} widgets`,null,'dashboard_widget_limit');return{defaultFilters:normalizeFilters(input.defaultFilters||input.default_filters_json||{}),widgets};}
+function ctxAudit(ctx,extra){return{organizationId:ctx.organizationId,actorUserId:ctx.userId,ip:ctx.ip,userAgent:ctx.userAgent,...extra};}
 
-async function listDashboards(ctx, query) {
-  return repo.listDashboards({ organizationId: ctx.organizationId, includeArchived: query.includeArchived, limit: query.limit, offset: query.offset });
-}
+async function listDashboards(ctx,query={}){return repo.listDashboards({organizationId:ctx.organizationId,userId:ctx.userId,includeArchived:query.includeArchived,limit:query.limit,offset:query.offset});}
+async function getDashboard(ctx,id){const out=await repo.definition({organizationId:ctx.organizationId,userId:ctx.userId,dashboardId:id});if(!out)throw new AppError(404,'Dashboard not found',null,'dashboard_not_found');return out;}
+async function createDashboard(ctx,payload={}){const normalized=normalizeDefinition(payload);const out=await repo.createDashboard({organizationId:ctx.organizationId,userId:ctx.userId,name:text(payload.name,{required:true}),description:text(payload.description,{max:500}),visibility:visibility(payload.visibility),defaultFilters:normalized.defaultFilters,widgets:normalized.widgets});await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard.create',entityType:'dashboard',entityId:out.dashboard.id,before:null,after:out.dashboard}));return out;}
+async function saveDesign(ctx,id,payload={}){const normalized=normalizeDefinition(payload);const name=text(payload.name,{required:true});const result=await repo.saveDesign({organizationId:ctx.organizationId,userId:ctx.userId,dashboardId:id,expectedVersion:payload.version,name,description:text(payload.description,{max:500}),visibility:visibility(payload.visibility),defaultFilters:normalized.defaultFilters,widgets:normalized.widgets});if(result.notFound)throw new AppError(404,'Dashboard not found',null,'dashboard_not_found');if(result.forbidden)throw new AppError(403,'You cannot edit this dashboard',null,'dashboard_edit_forbidden');if(result.conflict)throw new AppError(409,'This dashboard was changed by another user. Reload before saving again.',{currentVersion:result.currentVersion},'dashboard_version_conflict');await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard.design.save',entityType:'dashboard',entityId:id,before:result.before,after:result.definition.dashboard}));return result.definition;}
+async function updateDashboard(ctx,id,patch={}){const current=await getDashboard(ctx,id);return saveDesign(ctx,id,{name:patch.name??current.dashboard.name,description:patch.description??current.dashboard.description,visibility:patch.visibility??current.dashboard.visibility,version:patch.version??current.dashboard.version,defaultFilters:patch.defaultFilters??current.dashboard.default_filters_json,widgets:current.widgets.map((w)=>({title:w.title,metricKey:w.metric_key,visualization:w.visualization||w.widget_type,config:w.config_json,position:w.position_json}))});}
+async function archiveDashboard(ctx,id){const before=await getDashboard(ctx,id);if(!before.dashboard.can_edit)throw new AppError(403,'You cannot archive this dashboard',null,'dashboard_edit_forbidden');const after=await repo.archiveDashboard({organizationId:ctx.organizationId,userId:ctx.userId,dashboardId:id});if(!after)throw new AppError(404,'Dashboard not found',null,'dashboard_not_found');await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard.archive',entityType:'dashboard',entityId:id,before:before.dashboard,after}));return after;}
 
-async function createDashboard(ctx, payload) {
-  const d = await repo.createDashboard({
-    organizationId: ctx.organizationId,
-    actorUserId: ctx.userId,
-    name: assertName(payload.name),
-    description: payload.description || null,
-    layoutJson: payload.layoutJson || {},
-  });
+async function listWidgets(ctx,id,includeArchived=false){const d=await getDashboard(ctx,id);return includeArchived?repo.listWidgets({organizationId:ctx.organizationId,dashboardId:id,includeArchived:true}):d.widgets;}
+async function createWidget(ctx,id,payload={}){const d=await getDashboard(ctx,id);const widgets=d.widgets.map((w)=>({title:w.title,metricKey:w.metric_key,visualization:w.visualization||w.widget_type,config:w.config_json,position:w.position_json}));widgets.push(normalizeWidget(payload,widgets.length));const saved=await saveDesign(ctx,id,{name:d.dashboard.name,description:d.dashboard.description,visibility:d.dashboard.visibility,version:d.dashboard.version,defaultFilters:d.dashboard.default_filters_json,widgets});return saved.widgets[saved.widgets.length-1];}
+async function updateWidget(ctx,widgetId,patch={}){const dashboardId=await repo.getWidgetDashboardId({organizationId:ctx.organizationId,widgetId});if(!dashboardId)throw new AppError(404,'Widget not found',null,'dashboard_widget_not_found');const d=await getDashboard(ctx,dashboardId);const widgets=d.widgets.map((w)=>w.id===widgetId?{title:patch.title??w.title,metricKey:patch.metricKey??patch.metric_key??w.metric_key,visualization:patch.visualization??patch.widgetType??w.visualization??w.widget_type,config:patch.configJson??patch.config??w.config_json,position:patch.positionJson??patch.position??w.position_json}:{title:w.title,metricKey:w.metric_key,visualization:w.visualization||w.widget_type,config:w.config_json,position:w.position_json});const saved=await saveDesign(ctx,d.dashboard.id,{name:d.dashboard.name,description:d.dashboard.description,visibility:d.dashboard.visibility,version:d.dashboard.version,defaultFilters:d.dashboard.default_filters_json,widgets});return saved.widgets.find((w)=>w.title===(patch.title??d.widgets.find(x=>x.id===widgetId)?.title))||saved.widgets[0];}
 
-  await writeAudit({
-    organizationId: ctx.organizationId,
-    actorUserId: ctx.userId,
-    action: "reporting.dashboard.create",
-    entityType: "dashboard",
-    entityId: d.id,
-    ip: ctx.ip,
-    userAgent: ctx.userAgent,
-    before: null,
-    after: d,
-  });
-  return d;
-}
+async function listMetrics(ctx){return metrics.authorizedMetricList(ctx);}
+async function executeMetric(ctx,payload){return metrics.executeMetric(ctx,payload);}
+async function executeMetrics(ctx,payload){return metrics.executeBatch(ctx,payload?.requests||[]);}
 
-async function updateDashboard(ctx, dashboardId, patch) {
-  const before = await repo.getDashboard({ organizationId: ctx.organizationId, dashboardId });
-  if (!before) throw new AppError(404, "Dashboard not found");
-  const after = await repo.updateDashboard({ organizationId: ctx.organizationId, dashboardId, patch: {
-    ...patch,
-    name: patch.name ? assertName(patch.name) : undefined,
-  }});
-  await writeAudit({
-    organizationId: ctx.organizationId,
-    actorUserId: ctx.userId,
-    action: "reporting.dashboard.update",
-    entityType: "dashboard",
-    entityId: dashboardId,
-    ip: ctx.ip,
-    userAgent: ctx.userAgent,
-    before,
-    after,
-  });
-  return after;
-}
+async function listShares(ctx,id){const d=await getDashboard(ctx,id);if(!d.dashboard.can_edit)throw new AppError(403,'You cannot manage sharing for this dashboard',null,'dashboard_edit_forbidden');return repo.listShares({organizationId:ctx.organizationId,dashboardId:id});}
+async function saveShares(ctx,id,payload){const d=await getDashboard(ctx,id);if(!d.dashboard.can_edit)throw new AppError(403,'You cannot manage sharing for this dashboard',null,'dashboard_edit_forbidden');const shares=(payload?.shares||[]).slice(0,100).map(s=>{const pt=String(s.principalType||'');if(!['user','role'].includes(pt))throw new AppError(422,'Invalid dashboard share principal',null,'validation_error');return{principalType:pt,userId:pt==='user'?s.userId:null,roleId:pt==='role'?s.roleId:null,canEdit:Boolean(s.canEdit)}});const out=await repo.replaceShares({organizationId:ctx.organizationId,dashboardId:id,userId:ctx.userId,shares});await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard.share.update',entityType:'dashboard',entityId:id,before:null,after:{shareCount:out.length}}));return out;}
 
-async function listWidgets(ctx, dashboardId, includeArchived) {
-  const d = await repo.getDashboard({ organizationId: ctx.organizationId, dashboardId });
-  if (!d) throw new AppError(404, "Dashboard not found");
-  return repo.listWidgets({ organizationId: ctx.organizationId, dashboardId, includeArchived });
-}
+function normalizePlacements(payload){return(payload?.placements||[]).slice(0,30).map((p)=>{const locationKey=String(p.locationKey||'');if(!LOCATIONS.has(locationKey))throw new AppError(422,'Invalid dashboard placement',{locationKey},'dashboard_placement_invalid');const scope=p.scope==='organization'?'organization':'user';return{locationKey,scope,sortOrder:Number(p.sortOrder)||0,isDefault:Boolean(p.isDefault)}});}
+async function listPlacements(ctx,id){await getDashboard(ctx,id);return repo.listDashboardPlacements({organizationId:ctx.organizationId,dashboardId:id,userId:ctx.userId});}
+async function savePlacements(ctx,id,payload){const d=await getDashboard(ctx,id);if(!d.dashboard.can_edit)throw new AppError(403,'You cannot place this dashboard',null,'dashboard_edit_forbidden');const out=await repo.replacePlacements({organizationId:ctx.organizationId,dashboardId:id,userId:ctx.userId,placements:normalizePlacements(payload)});await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard.placement.update',entityType:'dashboard',entityId:id,before:null,after:{placements:out}}));return out;}
+async function dashboardsForLocation(ctx,locationKey){if(!LOCATIONS.has(locationKey))throw new AppError(422,'Invalid dashboard location',null,'dashboard_placement_invalid');return repo.dashboardsForLocation({organizationId:ctx.organizationId,userId:ctx.userId,locationKey});}
 
-async function createWidget(ctx, dashboardId, payload) {
-  const d = await repo.getDashboard({ organizationId: ctx.organizationId, dashboardId });
-  if (!d) throw new AppError(404, "Dashboard not found");
-  const w = await repo.createWidget({
-    organizationId: ctx.organizationId,
-    dashboardId,
-    title: assertName(payload.title),
-    widgetType: assertName(payload.widgetType),
-    configJson: payload.configJson || {},
-    positionJson: payload.positionJson || {},
-  });
-  await writeAudit({
-    organizationId: ctx.organizationId,
-    actorUserId: ctx.userId,
-    action: "reporting.dashboard.widget.create",
-    entityType: "dashboard_widget",
-    entityId: w.id,
-    ip: ctx.ip,
-    userAgent: ctx.userAgent,
-    before: null,
-    after: w,
-  });
-  return w;
-}
+async function listRevisions(ctx,id){await getDashboard(ctx,id);return repo.listRevisions({organizationId:ctx.organizationId,dashboardId:id});}
+async function listSnapshots(ctx,id){await getDashboard(ctx,id);return repo.listSnapshots({organizationId:ctx.organizationId,dashboardId:id});}
+async function createSnapshot(ctx,id,payload={}){const definition=await getDashboard(ctx,id);const requests=definition.widgets.filter(w=>w.metric_key).map(w=>({key:w.metric_key,groupBy:w.config_json?.groupBy||null,filters:{...definition.dashboard.default_filters_json,...(payload.filters||{})}}));const data=await metrics.executeBatch(ctx,requests);const out=await repo.createSnapshot({organizationId:ctx.organizationId,dashboardId:id,userId:ctx.userId,definition,data,name:text(payload.name,{max:160})});await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard.snapshot.create',entityType:'dashboard_snapshot',entityId:out.id,before:null,after:out}));return out;}
 
-async function updateWidget(ctx, widgetId, patch) {
-  const w = await repo.updateWidget({ organizationId: ctx.organizationId, widgetId, patch: {
-    ...patch,
-    title: patch.title ? assertName(patch.title) : undefined,
-    widgetType: patch.widgetType ? assertName(patch.widgetType) : undefined,
-  }});
-  if (!w) throw new AppError(404, "Widget not found");
-  await writeAudit({
-    organizationId: ctx.organizationId,
-    actorUserId: ctx.userId,
-    action: "reporting.dashboard.widget.update",
-    entityType: "dashboard_widget",
-    entityId: widgetId,
-    ip: ctx.ip,
-    userAgent: ctx.userAgent,
-    before: null,
-    after: w,
-  });
-  return w;
-}
+function publicSystemTemplate(t){return{id:t.id,name:t.name,description:t.description,template_scope:'system',scope:'system',version:1,status:'active',isSystem:true,can_edit:false,definition_json:t.definition};}
+async function listTemplates(ctx,query={}){const own=await repo.listTemplates({organizationId:ctx.organizationId,userId:ctx.userId,includeArchived:query.includeArchived});return[...listSystemTemplates().map(publicSystemTemplate),...own.map(t=>({...t,isSystem:false}))];}
+async function getTemplate(ctx,id){if(String(id).startsWith('system:')){const t=getSystemTemplate(id);if(!t)throw new AppError(404,'Dashboard template not found',null,'dashboard_template_not_found');return publicSystemTemplate(t);}const t=await repo.getTemplate({organizationId:ctx.organizationId,userId:ctx.userId,templateId:id});if(!t)throw new AppError(404,'Dashboard template not found',null,'dashboard_template_not_found');return{...t,isSystem:false};}
+async function createTemplate(ctx,payload={}){let def;if(payload.definition){def=normalizeDefinition(payload.definition);}else if(payload.dashboardId){const d=await getDashboard(ctx,payload.dashboardId);def={defaultFilters:d.dashboard.default_filters_json,widgets:d.widgets.map(w=>({title:w.title,metricKey:w.metric_key,visualization:w.visualization||w.widget_type,config:w.config_json,position:w.position_json}))};}else def=normalizeDefinition(payload);def=normalizeDefinition(def);const out=await repo.createTemplate({organizationId:ctx.organizationId,userId:ctx.userId,name:text(payload.name,{required:true}),description:text(payload.description,{max:500}),scope:templateScope(payload.scope),definition:def});await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard_template.create',entityType:'dashboard_template',entityId:out.id,before:null,after:out}));return{...out,can_edit:true,isSystem:false};}
+async function saveTemplate(ctx,id,payload={}){if(String(id).startsWith('system:'))throw new AppError(403,'System templates cannot be edited; save a copy instead',null,'dashboard_template_system_immutable');const current=await getTemplate(ctx,id);const def=normalizeDefinition(payload.definition||current.definition_json);const result=await repo.saveTemplate({organizationId:ctx.organizationId,userId:ctx.userId,templateId:id,expectedVersion:payload.version,name:text(payload.name??current.name,{required:true}),description:text(payload.description??current.description,{max:500}),scope:templateScope(payload.scope??current.template_scope),definition:def});if(result.notFound)throw new AppError(404,'Dashboard template not found',null,'dashboard_template_not_found');if(result.forbidden)throw new AppError(403,'Only the template owner can edit it',null,'dashboard_template_edit_forbidden');if(result.conflict)throw new AppError(409,'This template was changed by another user. Reload before saving again.',{currentVersion:result.currentVersion},'dashboard_template_version_conflict');await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard_template.update',entityType:'dashboard_template',entityId:id,before:result.before,after:result.template}));return{...result.template,can_edit:true,isSystem:false};}
+async function archiveTemplate(ctx,id){if(String(id).startsWith('system:'))throw new AppError(403,'System templates cannot be archived',null,'dashboard_template_system_immutable');const before=await getTemplate(ctx,id);const after=await repo.archiveTemplate({organizationId:ctx.organizationId,userId:ctx.userId,templateId:id});if(!after)throw new AppError(403,'Only the template owner can archive it',null,'dashboard_template_edit_forbidden');await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard_template.archive',entityType:'dashboard_template',entityId:id,before,after}));return after;}
+async function instantiateTemplate(ctx,id,payload={}){const t=await getTemplate(ctx,id);const def=normalizeDefinition(t.definition_json||t.definition);const out=await repo.createDashboard({organizationId:ctx.organizationId,userId:ctx.userId,name:text(payload.name||t.name,{required:true}),description:text(payload.description??t.description,{max:500}),visibility:visibility(payload.visibility||'private'),defaultFilters:def.defaultFilters,widgets:def.widgets});await writeAudit(ctxAudit(ctx,{action:'reporting.dashboard_template.instantiate',entityType:'dashboard',entityId:out.dashboard.id,before:{templateId:id},after:out.dashboard}));return out;}
 
-module.exports = {
-  listDashboards,
-  createDashboard,
-  updateDashboard,
-  listWidgets,
-  createWidget,
-  updateWidget,
+module.exports={
+  listDashboards,getDashboard,createDashboard,updateDashboard,saveDesign,archiveDashboard,listWidgets,createWidget,updateWidget,
+  listMetrics,executeMetric,executeMetrics,listShares,saveShares,listPlacements,savePlacements,dashboardsForLocation,
+  listRevisions,listSnapshots,createSnapshot,listTemplates,getTemplate,createTemplate,saveTemplate,archiveTemplate,instantiateTemplate,
+  LOCATIONS
 };

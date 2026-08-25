@@ -20,7 +20,7 @@ router.post('/', idempotency({ required: true }), requirePermission('banking.tre
   try { res.status(201).json(await svc.create(req.user.organization_id, req.user.id, req.body)); } catch (e) { next(e); }
 });
 router.post('/:bankTransferId/submit', idempotency({ required: true }), requirePermission('banking.treasury.manage'), async (req, res, next) => {
-  try { res.json(await svc.submit(req.user.organization_id, req.params.bankTransferId)); } catch (e) { next(e); }
+  try { res.json(await svc.submit(req.user.organization_id, req.params.bankTransferId, req.user.id)); } catch (e) { next(e); }
 });
 router.post('/:bankTransferId/approve', idempotency({ required: true }), requirePermission('banking.treasury.approve'), async (req, res, next) => {
   try { res.json(await svc.approve(req.user.organization_id, req.params.bankTransferId, req.user.id)); } catch (e) { next(e); }
@@ -29,7 +29,7 @@ router.post('/:bankTransferId/post', idempotency({ required: true }), requirePer
   try { res.json(await svc.post(req.user.organization_id, req.params.bankTransferId, req.user.id)); } catch (e) { next(e); }
 });
 router.post('/:bankTransferId/cancel', idempotency({ required: true }), requirePermission('banking.treasury.manage'), async (req, res, next) => {
-  try { res.json(await svc.cancel(req.user.organization_id, req.params.bankTransferId, req.body?.reason)); } catch (e) { next(e); }
+  try { res.json(await svc.cancel(req.user.organization_id, req.params.bankTransferId, req.body?.reason, req.user.id)); } catch (e) { next(e); }
 });
 
 module.exports = router;

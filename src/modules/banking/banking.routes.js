@@ -6,6 +6,7 @@ const statementsRoutes = require("./statements/statements.routes");
 const reconciliationsRoutes = require("./reconciliations/reconciliations.routes");
 const cashbookRoutes = require("./cashbook/cashbook.routes");
 const matchingRoutes = require("./matching/matching.routes");
+const overviewRoutes = require("./overview/overview.routes");
 
 const paymentRunsRoutes = require("./treasury/payment-runs/paymentRuns.routes");
 const bankTransfersRoutes = require("./treasury/bank-transfers/bankTransfers.routes");
@@ -13,7 +14,9 @@ const approvalBatchesRoutes = require("./treasury/approval-batches/approvalBatch
 const chequesRoutes = require("./treasury/cheques/cheques.routes");
 const cashForecastRoutes = require("./treasury/cash-forecast/cashForecast.routes");
 const treasuryDashboardRoutes = require("./treasury/dashboard/dashboard.routes");
+const treasuryControlsRoutes = require("./treasury/controls/treasuryControls.routes");
 
+router.use("/workspace", overviewRoutes);
 router.use("/accounts", accountsRoutes);
 router.use("/statements", statementsRoutes);
 router.use("/reconciliations", reconciliationsRoutes);
@@ -27,6 +30,7 @@ router.use("/approval-batches", approvalBatchesRoutes);
 router.use("/cheques", chequesRoutes);
 router.use("/cash-forecast", cashForecastRoutes);
 router.use("/treasury-dashboard", treasuryDashboardRoutes);
+router.use("/treasury-controls", treasuryControlsRoutes);
 
 // Frontend-compatible nested treasury mounts
 treasuryRouter.use("/payment-runs", paymentRunsRoutes);
@@ -35,6 +39,7 @@ treasuryRouter.use("/approval-batches", approvalBatchesRoutes);
 treasuryRouter.use("/cheques", chequesRoutes);
 treasuryRouter.use("/cash-forecast", cashForecastRoutes);
 treasuryRouter.use("/dashboard", treasuryDashboardRoutes);
+treasuryRouter.use("/controls", treasuryControlsRoutes);
 router.use("/treasury", treasuryRouter);
 
 module.exports = router;

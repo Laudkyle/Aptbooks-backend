@@ -1,21 +1,10 @@
-const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
-const router = require("express").Router();
-router.use(createModuleBodyContract(['code', 'currencyCode', 'glAccountId', 'isActive', 'name']));
-const { authRequired } = require("../../../middleware/auth.middleware");
-const { requirePermission } = require("../../../middleware/permission.middleware");
-const { idempotency } = require("../../../middleware/idempotency.middleware");
-const svc = require("./bankAccounts.service");
-
+const { createModuleBodyContract } = require('../../../shared/http/requestValidation');
+const router=require('express').Router();
+router.use(createModuleBodyContract(['code','name','currencyCode','currency_code','glAccountId','gl_account_id','isActive','is_active','bankName','bank_name','branchName','branch_name','accountNumberMasked','account_number_masked','swiftBic','swift_bic','accountType','account_type','minimumBalance','minimum_balance','overdraftLimit','overdraft_limit','reconciliationTolerance','reconciliation_tolerance']));
+const {authRequired}=require('../../../middleware/auth.middleware'); const {requirePermission}=require('../../../middleware/permission.middleware'); const {idempotency}=require('../../../middleware/idempotency.middleware'); const svc=require('./bankAccounts.service');
 router.use(authRequired);
-
-router.get("/", requirePermission("banking.accounts.read"), async (req, res, next) => {
-  try { res.json(await svc.list(req.user.organization_id)); }
-  catch (e) { next(e); }
-});
-
-router.post("/", idempotency({ required: true }), requirePermission("banking.accounts.manage"), async (req, res, next) => {
-  try { res.status(201).json(await svc.create(req.user.organization_id, req.body)); }
-  catch (e) { next(e); }
-});
-
-module.exports = router;
+router.get('/',requirePermission('banking.accounts.read'),async(req,res,next)=>{try{res.json(await svc.list(req.user.organization_id));}catch(e){next(e);}});
+router.get('/:id',requirePermission('banking.accounts.read'),async(req,res,next)=>{try{res.json(await svc.get(req.user.organization_id,req.params.id));}catch(e){next(e);}});
+router.post('/',idempotency({required:true}),requirePermission('banking.accounts.manage'),async(req,res,next)=>{try{res.status(201).json(await svc.create(req.user.organization_id,req.user.id,req.body));}catch(e){next(e);}});
+router.put('/:id',idempotency({required:true}),requirePermission('banking.accounts.manage'),async(req,res,next)=>{try{res.json(await svc.update(req.user.organization_id,req.params.id,req.user.id,req.body));}catch(e){next(e);}});
+module.exports=router;

@@ -1,69 +1,16 @@
-const { createModuleBodyContract } = require("../../../shared/http/requestValidation");
-const express = require("express");
-const router = express.Router();
-router.use(createModuleBodyContract(['bankAccountId', 'closingBalance', 'journalEntryId', 'lines', 'matchMethod', 'matchReason', 'matchRuleVersion', 'method', 'openingBalance', 'reason', 'ruleVersion', 'statementDate']));
-const { authRequired } = require("../../../middleware/auth.middleware");
-const { requirePermission } = require("../../../middleware/permission.middleware");
-const { idempotency } = require("../../../middleware/idempotency.middleware");
-const svc = require("./statements.service");
-
+const { createModuleBodyContract } = require('../../../shared/http/requestValidation');
+const express=require('express');const router=express.Router();
+router.use(createModuleBodyContract(['bankAccountId','closingBalance','externalStatementId','journalEntryId','lines','matchMethod','matchReason','matchRuleVersion','method','openingBalance','reason','ruleVersion','sourceType','statementDate']));
+const {authRequired}=require('../../../middleware/auth.middleware');const {requirePermission}=require('../../../middleware/permission.middleware');const {idempotency}=require('../../../middleware/idempotency.middleware');const svc=require('./statements.service');
 router.use(authRequired);
-
-router.get("/", requirePermission("banking.statements.read"), async (req, res, next) => {
-  try { res.json(await svc.listStatements(req.user.organization_id)); }
-  catch (e) { next(e); }
-});
-
-// List statement lines
-router.get("/:statementId/lines", requirePermission("banking.statements.read"), async (req, res, next) => {
-  try {
-    const { organization_id: orgId } = req.user;
-    const { statementId } = req.params;
-    const { limit, offset, matched } = req.query;
-    const data = await svc.listStatementLines(orgId, statementId, {
-      limit: limit ? Number(limit) : undefined,
-      offset: offset ? Number(offset) : undefined,
-      matched: typeof matched === "string" ? (matched.toLowerCase() === "true") : undefined
-    });
-    res.json(data);
-  } catch (e) { next(e); }
-});
-
-router.post("/", idempotency({ required: true }), requirePermission("banking.statements.manage"), async (req, res, next) => {
-  try {
-    const created = await svc.createStatement(req.user.organization_id, req.user.id, req.body);
-    res.status(201).json(created);
-  } catch (e) { next(e); }
-});
-
-router.post("/:statementId/lines", idempotency({ required: true }), requirePermission("banking.statements.manage"), async (req, res, next) => {
-  try {
-    const lines = await svc.addLines(req.user.organization_id, req.user.id, req.params.statementId, req.body.lines);
-    res.status(201).json(lines);
-  } catch (e) { next(e); }
-});
-
-// CSV import of statement lines (text/csv body)
-router.post(
-  "/:statementId/lines/import-csv",
-  idempotency({ required: true }),
-  requirePermission("banking.statements.manage"),
-  express.text({ type: ["text/csv", "application/csv", "text/plain"], limit: "5mb" }),
-  async (req, res, next) => {
-    try {
-      const { organization_id: orgId, id: userId } = req.user;
-      const statementId = req.params.statementId;
-      const result = await svc.importLinesCsv(orgId, userId, statementId, req.body);
-      res.status(201).json(result);
-    } catch (e) { next(e); }
-  }
-);
-
-router.post("/lines/:lineId/match", idempotency({ required: true }), requirePermission("banking.reconciliation.run"), async (req, res, next) => {
-  try {
-    const updated = await svc.matchLine(req.user.organization_id, req.user.id, req.params.lineId, req.body);
-    res.json(updated);
-  } catch (e) { next(e); }
-});
-
-module.exports = router;
+router.get('/',requirePermission('banking.statements.read'),async(req,res,next)=>{try{res.json(await svc.listStatements(req.user.organization_id));}catch(e){next(e);}});
+router.get('/:statementId',requirePermission('banking.statements.read'),async(req,res,next)=>{try{res.json(await svc.getStatement(req.user.organization_id,req.params.statementId));}catch(e){next(e);}});
+router.get('/:statementId/lines',requirePermission('banking.statements.read'),async(req,res,next)=>{try{const {limit,offset,matched}=req.query;res.json(await svc.listStatementLines(req.user.organization_id,req.params.statementId,{limit:limit?Number(limit):undefined,offset:offset?Number(offset):undefined,matched:typeof matched==='string'?matched.toLowerCase()==='true':undefined}));}catch(e){next(e);}});
+router.post('/',idempotency({required:true}),requirePermission('banking.statements.manage'),async(req,res,next)=>{try{res.status(201).json(await svc.createStatement(req.user.organization_id,req.user.id,req.body));}catch(e){next(e);}});
+router.post('/:statementId/lines',idempotency({required:true}),requirePermission('banking.statements.manage'),async(req,res,next)=>{try{res.status(201).json(await svc.addLines(req.user.organization_id,req.user.id,req.params.statementId,req.body.lines));}catch(e){next(e);}});
+router.post('/:statementId/lines/import-csv',idempotency({required:true}),requirePermission('banking.statements.manage'),express.text({type:['text/csv','application/csv','text/plain'],limit:'5mb'}),async(req,res,next)=>{try{res.status(201).json(await svc.importLinesCsv(req.user.organization_id,req.user.id,req.params.statementId,req.body));}catch(e){next(e);}});
+router.post('/:statementId/validate',idempotency({required:true}),requirePermission('banking.statements.manage'),async(req,res,next)=>{try{res.json(await svc.validateStatement(req.user.organization_id,req.user.id,req.params.statementId));}catch(e){next(e);}});
+router.post('/:statementId/lock',idempotency({required:true}),requirePermission('banking.reconciliation.run'),async(req,res,next)=>{try{res.json(await svc.lockStatement(req.user.organization_id,req.user.id,req.params.statementId));}catch(e){next(e);}});
+router.post('/lines/:lineId/match',idempotency({required:true}),requirePermission('banking.reconciliation.run'),async(req,res,next)=>{try{res.json(await svc.matchLine(req.user.organization_id,req.user.id,req.params.lineId,req.body));}catch(e){next(e);}});
+router.post('/lines/:lineId/unmatch',idempotency({required:true}),requirePermission('banking.reconciliation.run'),async(req,res,next)=>{try{res.json(await svc.unmatchLine(req.user.organization_id,req.user.id,req.params.lineId));}catch(e){next(e);}});
+module.exports=router;

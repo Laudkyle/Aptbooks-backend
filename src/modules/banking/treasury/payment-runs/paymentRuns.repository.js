@@ -87,28 +87,21 @@ async function addLines(orgId, paymentRunId, lines, client = pool) {
 
 async function replaceStatus(orgId, paymentRunId, status, patch = {}, client = pool) {
   const fields = [
-    ['status', status],
-    ['period_id', patch.periodId],
-    ['journal_entry_id', patch.journalEntryId],
-    ['approval_batch_id', patch.approvalBatchId],
-    ['approved_by_user_id', patch.approvedByUserId],
-    ['executed_by_user_id', patch.executedByUserId],
-    ['cancelled_reason', patch.cancelledReason]
+    ['status', status], ['period_id', patch.periodId], ['journal_entry_id', patch.journalEntryId],
+    ['approval_batch_id', patch.approvalBatchId], ['approved_by_user_id', patch.approvedByUserId],
+    ['executed_by_user_id', patch.executedByUserId], ['submitted_by_user_id', patch.submittedByUserId],
+    ['cancelled_reason', patch.cancelledReason], ['control_total', patch.controlTotal], ['control_json', patch.controlJson],
+    ['reversal_journal_entry_id', patch.reversalJournalEntryId], ['reversed_by_user_id', patch.reversedByUserId], ['reversal_reason', patch.reversalReason]
   ];
-  const sets = [];
-  const params = [orgId, paymentRunId];
-  for (const [col, val] of fields) {
-    if (val !== undefined) {
-      params.push(val);
-      sets.push(`${col}=$${params.length}`);
-    }
-  }
+  const sets=[]; const params=[orgId,paymentRunId];
+  for(const [col,val] of fields){ if(val!==undefined){params.push(col==='control_json'?JSON.stringify(val||{}):val);sets.push(`${col}=$${params.length}`);} }
+  if(patch.submittedAt) sets.push('submitted_at=NOW()');
+  if(patch.approvedAt) sets.push('approved_at=NOW()');
+  if(patch.executedAt) sets.push('executed_at=NOW()');
+  if(patch.reversedAt) sets.push('reversed_at=NOW()');
   sets.push('updated_at=NOW()');
-  const { rows } = await client.query(
-    `UPDATE payment_runs SET ${sets.join(', ')} WHERE organization_id=$1 AND id=$2 RETURNING *`,
-    params
-  );
-  return rows[0] || null;
+  const {rows}=await client.query(`UPDATE payment_runs SET ${sets.join(', ')} WHERE organization_id=$1 AND id=$2 RETURNING *`,params);
+  return rows[0]||null;
 }
 
 async function lockHeader(orgId, paymentRunId, client = pool) {

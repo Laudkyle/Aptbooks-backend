@@ -1,160 +1,92 @@
-const repo = require("./reconciliations.repository");
-const { AppError } = require("../../../shared/errors/AppError");
-const { pool } = require("../../../db/pool");
-const { withTransaction } = require("../../../db/tx");
-const { writeAudit } = require("../../../core/foundation/audit-logs/audit.service");
+const repo = require('./reconciliations.repository');
+const { AppError } = require('../../../shared/errors/AppError');
+const { withTransaction } = require('../../../db/tx');
+const { writeAudit } = require('../../../core/foundation/audit-logs/audit.service');
+const { moneyUnits, absUnits } = require('../../../shared/utils/financialMath');
+
+async function assertPeriodOpen(orgId, periodId, client) {
+  const { rows } = await client.query(
+    `SELECT id, status FROM accounting_periods WHERE organization_id=$1 AND id=$2 FOR SHARE`,
+    [orgId, periodId]
+  );
+  if (!rows.length) throw new AppError(404, 'Period not found');
+  if (rows[0].status !== 'open') {
+    throw new AppError(409, 'Bank reconciliation cannot be changed while its accounting period is closed');
+  }
+}
 
 async function reconcile(orgId, userId, payload) {
-  const req=["bankAccountId","periodId"];
-  for (const k of req) if (!payload?.[k]) throw new AppError(400, `${k} is required`);
-
+  for (const key of ['bankAccountId', 'periodId']) {
+    if (!payload?.[key]) throw new AppError(400, `${key} is required`);
+  }
   return withTransaction(async (client) => {
-    // Prevent concurrent reconciliations for the same org/account/period
-    await client.query(
-      `SELECT pg_advisory_xact_lock(hashtext($1))`,
-      [`recon:${orgId}:${payload.bankAccountId}:${payload.periodId}`]
-    );
-
-    // Validate bank account belongs to org
-    const { rows: ba } = await client.query(
-      `SELECT id FROM bank_accounts WHERE organization_id=$1 AND id=$2`,
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`recon:${orgId}:${payload.bankAccountId}:${payload.periodId}`]);
+    const { rows: accounts } = await client.query(
+      `SELECT id,is_active FROM bank_accounts WHERE organization_id=$1 AND id=$2`,
       [orgId, payload.bankAccountId]
     );
-    if (!ba.length) throw new AppError(404, "Bank account not found");
-
-    // Ensure period open (reconcile only within open periods)
-    const { rows: p } = await client.query(
-      `SELECT status FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
-      [orgId, payload.periodId]
-    );
-    if (!p.length) throw new AppError(404, "Period not found");
-    if (p[0].status !== "open") throw new AppError(409, "Period not open");
-
-    // Natural idempotency: if an active reconciliation already exists, return it.
+    if (!accounts.length) throw new AppError(404, 'Bank account not found');
+    if (!accounts[0].is_active) throw new AppError(409, 'Inactive bank accounts cannot start new reconciliations');
+    await assertPeriodOpen(orgId, payload.periodId, client);
     const existing = await repo.findActive(orgId, payload.bankAccountId, payload.periodId, client);
     if (existing) return existing;
-
-    const created = await repo.create(orgId, userId, payload, client);
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId: userId,
-      action: "BANK_RECONCILIATION_CREATED",
-      entityType: "bank_reconciliation",
-      entityId: created.id,
-      after: {
-        bank_account_id: payload.bankAccountId,
-        period_id: payload.periodId
-      }
-    });
+    const stmt = await repo.resolveStatement(orgId, payload.bankAccountId, payload.periodId, payload.statementId || payload.statement_id || null, client);
+    if (!stmt) throw new AppError(409, 'A bank statement ending on or before the period end is required');
+    if (stmt.status === 'draft') throw new AppError(409, 'Validate the bank statement before starting reconciliation');
+    const created = await repo.create(orgId, userId, { bankAccountId: payload.bankAccountId, periodId: payload.periodId, statementId: stmt.id }, client);
+    await writeAudit({ organizationId: orgId, actorUserId: userId, action: 'BANK_RECONCILIATION_CREATED', entityType: 'bank_reconciliation', entityId: created.id, after: { bank_account_id: payload.bankAccountId, period_id: payload.periodId, statement_id: stmt.id }, client });
     return created;
   });
 }
 
-async function listReconciliations(orgId, query) {
-  return { data: await repo.list(orgId, query || {}) };
+async function listReconciliations(orgId, query) { return { data: await repo.list(orgId, query || {}) }; }
+async function getReconciliation(orgId, id) {
+  const row = await repo.getById(orgId, id);
+  if (!row) throw new AppError(404, 'Reconciliation not found');
+  return { data: row };
 }
 
-async function getReconciliation(orgId, id) {
-  const r = await repo.getById(orgId, id);
-  if (!r) throw new AppError(404, "Reconciliation not found");
-  return { data: r };
+async function computeDiff(orgId, id, client = null) {
+  const rec = await repo.getById(orgId, id, client);
+  if (!rec) throw new AppError(404, 'Reconciliation not found');
+  const control = await repo.computeControl(orgId, rec, client);
+  if (!control?.statement_id) throw new AppError(409, 'Reconciliation has no statement control');
+  return { data: { reconciliation_id: id, ...control } };
 }
 
 async function closeReconciliation(orgId, userId, id, payload = {}) {
   const note = payload.note || payload.close_note || null;
   return withTransaction(async (client) => {
-    const cur = await repo.getById(orgId, id, client, true);
-    if (!cur) throw new AppError(404, "Reconciliation not found");
-    const updated = await repo.close(orgId, id, userId, note, client);
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId: userId,
-      action: "BANK_RECONCILIATION_CLOSED",
-      entityType: "bank_reconciliation",
-      entityId: id,
-      after: { is_locked: true, note }
-    });
-    return { data: updated };
+    const current = await repo.getById(orgId, id, client, true);
+    if (!current) throw new AppError(404, 'Reconciliation not found');
+    if (current.is_locked) return { data: current, idempotent: true };
+    await assertPeriodOpen(orgId, current.period_id, client);
+    const control = await repo.computeControl(orgId, current, client);
+    if (!control?.statement_id) throw new AppError(409, 'A validated statement is required');
+    if (!['validated', 'locked'].includes(control.statement_status)) throw new AppError(409, 'Statement must be validated before reconciliation can close');
+    if (Number(control.wrong_currency_lines) > 0) throw new AppError(409, 'Bank GL contains journal lines in a currency different from the bank account currency');
+    if (Number(control.unmatched_count) > 0) throw new AppError(409, `Reconciliation cannot close while ${control.unmatched_count} statement line(s) remain unmatched`);
+    if (absUnits(moneyUnits(control.difference)) > moneyUnits(control.tolerance_amount || 0)) {
+      throw new AppError(409, `Reconciliation difference ${control.difference} exceeds tolerance ${control.tolerance_amount}`);
+    }
+    const updated = await repo.close(orgId, id, userId, note, control, client);
+    await repo.setStatementStatus(orgId, control.statement_id, 'locked', userId, client);
+    await writeAudit({ organizationId: orgId, actorUserId: userId, action: 'BANK_RECONCILIATION_CLOSED', entityType: 'bank_reconciliation', entityId: id, after: { ...control, is_locked: true, note }, client });
+    return { data: updated, control };
   });
 }
 
 async function unlockReconciliation(orgId, userId, id) {
   return withTransaction(async (client) => {
-    const cur = await repo.getById(orgId, id, client, true);
-    if (!cur) throw new AppError(404, "Reconciliation not found");
-    const updated = await repo.unlock(orgId, id, userId, client);
-    await writeAudit({
-      organizationId: orgId,
-      actorUserId: userId,
-      action: "BANK_RECONCILIATION_UNLOCKED",
-      entityType: "bank_reconciliation",
-      entityId: id,
-      after: { is_locked: false }
-    });
+    const current = await repo.getById(orgId, id, client, true);
+    if (!current) throw new AppError(404, 'Reconciliation not found');
+    if (!current.is_locked) return { data: current, idempotent: true };
+    await assertPeriodOpen(orgId, current.period_id, client);
+    const updated = await repo.unlock(orgId, id, client);
+    if (current.statement_id) await repo.setStatementStatus(orgId, current.statement_id, 'validated', null, client);
+    await writeAudit({ organizationId: orgId, actorUserId: userId, action: 'BANK_RECONCILIATION_UNLOCKED', entityType: 'bank_reconciliation', entityId: id, before: { is_locked: true }, after: { is_locked: false }, client });
     return { data: updated };
   });
 }
 
-async function computeDiff(orgId, id) {
-  const rec = await repo.getById(orgId, id);
-  if (!rec) throw new AppError(404, "Reconciliation not found");
-
-  const { rows: periodRows } = await pool.query(
-    `SELECT id, start_date, end_date FROM accounting_periods WHERE organization_id=$1 AND id=$2`,
-    [orgId, rec.period_id]
-  );
-  if (!periodRows.length) throw new AppError(404, "Period not found");
-  const period = periodRows[0];
-
-  const { rows: baRows } = await pool.query(
-    `SELECT gl_account_id FROM bank_accounts WHERE organization_id=$1 AND id=$2`,
-    [orgId, rec.bank_account_id]
-  );
-  if (!baRows.length) throw new AppError(404, "Bank account not found");
-
-  const glAccountId = baRows[0].gl_account_id;
-
-  const { rows: glBalRows } = await pool.query(
-    `SELECT debit_total, credit_total FROM general_ledger_balances WHERE organization_id=$1 AND period_id=$2 AND account_id=$3`,
-    [orgId, period.id, glAccountId]
-  );
-  const glDebit = Number(glBalRows[0]?.debit_total || 0);
-  const glCredit = Number(glBalRows[0]?.credit_total || 0);
-  const ledgerBalance = glDebit - glCredit;
-
-  const { rows: stmtRows } = await pool.query(
-    `
-    SELECT closing_balance, statement_date
-    FROM bank_statements
-    WHERE organization_id=$1 AND bank_account_id=$2
-      AND statement_date <= $3::date
-    ORDER BY statement_date DESC
-    LIMIT 1
-    `,
-    [orgId, rec.bank_account_id, period.end_date]
-  );
-
-  const statementBalance = stmtRows.length ? Number(stmtRows[0].closing_balance || 0) : null;
-  const statementDate = stmtRows.length ? stmtRows[0].statement_date : null;
-  const difference = statementBalance == null ? null : statementBalance - ledgerBalance;
-
-  return {
-    data: {
-      reconciliation_id: id,
-      period: { id: period.id, start_date: period.start_date, end_date: period.end_date },
-      ledger_balance: ledgerBalance,
-      statement_balance: statementBalance,
-      statement_date: statementDate,
-      difference
-    }
-  };
-}
-
-module.exports = {
-  reconcile,
-  listReconciliations,
-  getReconciliation,
-  closeReconciliation,
-  unlockReconciliation,
-  computeDiff
-};
+module.exports = { reconcile, listReconciliations, getReconciliation, closeReconciliation, unlockReconciliation, computeDiff };

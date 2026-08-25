@@ -52,18 +52,16 @@ async function addItems(orgId, batchId, items, client = pool) {
 }
 
 async function updateStatus(orgId, batchId, status, patch = {}, client = pool) {
-  const params = [orgId, batchId, status, patch.approvedByUserId ?? null, patch.cancelledReason ?? null];
-  const { rows } = await client.query(
-    `UPDATE payment_approval_batches
-        SET status=$3,
-            approved_by_user_id=COALESCE($4, approved_by_user_id),
-            cancelled_reason=COALESCE($5, cancelled_reason),
-            updated_at=NOW()
-      WHERE organization_id=$1 AND id=$2
-      RETURNING *`,
-    params
-  );
-  return rows[0] || null;
+  const params=[orgId,batchId,status]; const sets=['status=$3'];
+  const fields=[['approved_by_user_id',patch.approvedByUserId],['submitted_by_user_id',patch.submittedByUserId],['cancelled_reason',patch.cancelledReason]];
+  for(const [col,val] of fields){if(val!==undefined){params.push(val);sets.push(`${col}=$${params.length}`);}}
+  if(patch.submittedAt) sets.push('submitted_at=NOW()');
+  if(patch.approvedAt) sets.push('approved_at=NOW()');
+  sets.push('updated_at=NOW()');
+  const {rows}=await client.query(`UPDATE payment_approval_batches SET ${sets.join(', ')} WHERE organization_id=$1 AND id=$2 RETURNING *`,params);
+  return rows[0]||null;
 }
 
-module.exports = { list, get, getItems, create, addItems, updateStatus };
+async function lockHeader(orgId,batchId,client=pool){const {rows}=await client.query(`SELECT id FROM payment_approval_batches WHERE organization_id=$1 AND id=$2 FOR UPDATE`,[orgId,batchId]);return rows[0]||null;}
+
+module.exports = { list, get, getItems, create, addItems, updateStatus, lockHeader };

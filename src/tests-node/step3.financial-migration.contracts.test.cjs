@@ -54,14 +54,16 @@ test('asset valuation and depreciation use exact money with deterministic final-
   const migration = read('db/migrations/sql/155_step3_financial_precision_hardening.sql');
   assert.match(assets, /moneyUnits/);
   assert.match(assets, /loadAssetBookState/);
-  assert.match(assets, /grossBookCents = book\.grossBookUnits/);
-  assert.match(assets, /baseValueCents = book\.carryingUnits/);
+  assert.match(assets, /grossBookUnits = book\.grossBookUnits/);
+  assert.match(assets, /(?:baseValueUnits|carryingUnits) = book\.carryingUnits/);
   assert.doesNotMatch(assets, /asset\.current_value != null/);
   assert.doesNotMatch(assets, /\.toFixed\(2\)/);
   assert.match(depreciation, /periodicDepreciationUnits/);
-  assert.match(depreciation, /HAVING SUM\(amount\) > 0/);
-  assert.match(depreciation, /entry_type\)\s*\n\s*VALUES \(\$1,\$2,\$3,\$4,\$5,'reversal'\)/);
-  for (const method of ['hasPostings', 'getRunByPeriod', 'createRun', 'markRun', 'linkRunPosting', 'insertDepreciationTransactions']) {
+  assert.match(depreciation, /COALESCE\(SUM\(basis_amount\),0\)::numeric AS amount/);
+  assert.match(depreciation, /alreadyAllocated \+ basisUnits > book\.grossBookUnits/);
+  assert.match(depreciation, /entryType: 'reversal'/);
+  assert.match(depreciationRepo, /entryType === 'reversal'.*`-\$\{posting\.amount\}`/s);
+  for (const method of ['hasPostings', 'getRunByPeriod', 'createOrRestartRun', 'markRun', 'linkRunPosting', 'insertDepreciationTransactions']) {
     assert.match(depreciationRepo, new RegExp(`async function ${method}`));
   }
   assert.match(migration, /entry_type='depreciation' AND amount > 0/);

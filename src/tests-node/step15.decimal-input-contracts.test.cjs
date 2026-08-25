@@ -50,10 +50,10 @@ test('all shared operational transaction schemas accept string money and quantit
 
 test('asset and payment integration money validators no longer reject decimal strings', () => {
   const assets = read('src/shared/validators/assets.validators.js');
-  assert.match(assets, /cost: moneyAmount/);
+  assert.match(assets, /cost: (?:positiveMoneyAmount|moneyAmount)/);
   assert.match(assets, /salvageValue: moneyAmount/);
   assert.match(assets, /proceeds: moneyAmount/);
-  assert.match(assets, /newValue: moneyAmount/);
+  assert.match(assets, /newValue: positiveMoneyAmount/);
   assert.match(assets, /impairmentAmount: positiveMoneyAmount/);
 
   const payments = read('src/modules/integrations/payments/payments.validators.js');
