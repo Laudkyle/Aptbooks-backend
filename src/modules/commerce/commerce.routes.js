@@ -1,19 +1,30 @@
 const { createModuleBodyContract } = require("../../shared/http/requestValidation");
 const router = require('express').Router();
-router.use(createModuleBodyContract(['address', 'amount', 'batchNo', 'cartId', 'cashOverShortAccountId', 'channel', 'channelCode', 'closingCashAmount', 'code', 'cogsAccountId', 'config', 'countedAmount', 'currencyCode', 'currency_code', 'customerId', 'defaultCashAccountId', 'deviceCode', 'deviceLabel', 'deviceName', 'discountAccountId', 'discountValue', 'displayName', 'disposition', 'effectiveFrom', 'effectiveTo', 'email', 'endsAt', 'event', 'eventId', 'expectedAmount', 'id', 'idempotencyKey', 'inventoryAccountId', 'isDefault', 'itemId', 'lines', 'maxDiscountAmount', 'memo', 'metadata', 'minSpendAmount', 'movementType', 'name', 'note', 'notes', 'openingCashAmount', 'orderDate', 'orderId', 'orderNo', 'payments', 'phone', 'points', 'price', 'promotionId', 'promotionType', 'provider', 'providerId', 'providerPayload', 'providerType', 'reason', 'reference', 'registerId', 'requiresApproval', 'returnNo', 'rows', 'saleDate', 'saleId', 'saleNo', 'salesReturnsAccountId', 'salesRevenueAccountId', 'shiftId', 'sourceOrderId', 'startsAt', 'status', 'storeId', 'subtotal', 'taxCodeId', 'taxInclusive', 'type', 'usageLimit', 'warehouseId']));
+router.use(createModuleBodyContract(['address', 'amount', 'batchNo', 'cartId', 'cashOverShortAccountId', 'channel', 'channelCode', 'closingCashAmount', 'code', 'cogsAccountId', 'config', 'countedAmount', 'currencyCode', 'currency_code', 'customerId', 'defaultCashAccountId', 'deviceCode', 'deviceLabel', 'deviceName', 'discountAccountId', 'discountValue', 'displayName', 'disposition', 'effectiveFrom', 'effectiveTo', 'email', 'endsAt', 'event', 'eventId', 'expectedAmount', 'id', 'idempotencyKey', 'inventoryAccountId', 'isDefault', 'itemId', 'lines', 'maxDiscountAmount', 'memo', 'metadata', 'minSpendAmount', 'movementType', 'name', 'note', 'notes', 'openingCashAmount', 'orderDate', 'orderId', 'orderNo', 'payments', 'phone', 'points', 'price', 'promotionId', 'promotionType', 'provider', 'providerId', 'providerPayload', 'providerType', 'reason', 'reference', 'registerId', 'requiresApproval', 'returnNo', 'rows', 'saleDate', 'saleId', 'saleNo', 'sales', 'localId', 'salesReturnsAccountId', 'salesRevenueAccountId', 'shiftId', 'sourceOrderId', 'startsAt', 'status', 'storeId', 'subtotal', 'taxCodeId', 'taxInclusive', 'type', 'usageLimit', 'warehouseId']));
 const { authRequired } = require('../../middleware/auth.middleware');
 const { requirePermission } = require('../../middleware/permission.middleware');
 const { idempotency } = require('../../middleware/idempotency.middleware');
 const svc = require('./commerce.service');
+const { AppError } = require('../../shared/errors/AppError');
 
 function orgId(req) {
   const id = req.user?.organization_id || req.user?.organizationId || req.user?.org_id || req.user?.orgId;
   if (!id) {
-    const { AppError } = require('../../shared/errors/AppError');
     throw new AppError(401, 'Missing organization context');
   }
   return id;
 }
+
+// Commerce payment callbacks used to sit behind user authentication and were
+// therefore unusable by payment providers. Provider callbacks now live in the
+// hardened integrations module, where Paystack signatures are verified and MTN
+// callbacks are re-verified against MTN before any tenant mutation occurs.
+router.post('/payments/webhooks/:provider', (req, res, next) => {
+  const provider = String(req.params.provider || '').toLowerCase();
+  const supported = provider === 'paystack' ? 'paystack' : (['mtn', 'mtn_momo', 'mtn-momo'].includes(provider) ? 'mtn' : null);
+  if (!supported) return next(new AppError(404, 'Unsupported payment webhook provider'));
+  return next(new AppError(410, `Use /modules/integrations/payments/webhooks/${supported} for provider callbacks`));
+});
 
 router.use(authRequired);
 
@@ -285,9 +296,6 @@ router.post('/payments/confirm', idempotency({ required: true }), requirePermiss
 });
 router.post('/payments/refund', idempotency({ required: true }), requirePermission('pos.refund.manage'), async (req, res, next) => {
   try { res.json(await svc.refundPayment({ orgId: orgId(req), payload: req.body })); } catch (e) { next(e); }
-});
-router.post('/payments/webhooks/:provider', async (req, res, next) => {
-  try { res.json(await svc.recordPaymentWebhook({ orgId: req.user ? orgId(req) : null, provider: req.params.provider, payload: req.body, signatureValid: null })); } catch (e) { next(e); }
 });
 router.get('/payments/:id/status', requirePermission('pos.sale.read'), async (req, res, next) => {
   try { res.json(await svc.paymentStatus({ orgId: orgId(req), paymentId: req.params.id })); } catch (e) { next(e); }

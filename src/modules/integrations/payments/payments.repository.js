@@ -1,4 +1,5 @@
 const { pool } = require("../../../db/pool");
+const { runWithTenant } = require("../../../shared/security/tenantContext");
 
 async function insertIntent({ orgId, providerCode, direction, reference, amount, currencyCode, customerEmail, customerPhone, metadata, createdBy }) {
   const { rows } = await pool.query(
@@ -19,53 +20,76 @@ async function setIntentProviderFields({ id, orgId, fields }) {
   if (keys.length === 0) return;
   const sets = keys.map((k, idx) => `${k}=$${idx + 3}`);
   const vals = keys.map((k) => fields[k]);
-  await pool.query(
+  await runWithTenant(orgId, () => pool.query(
     `UPDATE payment_intents SET ${sets.join(", ")}, updated_at=now() WHERE id=$1 AND organization_id=$2`,
     [id, orgId, ...vals]
-  );
+  ));
 }
 
 async function updateIntentStatus({ id, orgId, status, rawLastResponse, providerTransactionId, fees }) {
-  const { rows } = await pool.query(
-    `
-    UPDATE payment_intents
-    SET status=$3,
-        raw_last_response=COALESCE($4, raw_last_response),
-        provider_transaction_id=COALESCE($5, provider_transaction_id),
-        fees=COALESCE($6, fees),
-        updated_at=now()
-    WHERE id=$1 AND organization_id=$2
-    RETURNING *
-    `,
-    [id, orgId, status, rawLastResponse || null, providerTransactionId || null, fees || null]
-  );
-  return rows[0] || null;
+  return runWithTenant(orgId, async () => {
+    const { rows } = await pool.query(
+      `
+      UPDATE payment_intents
+      SET status=$3,
+          raw_last_response=COALESCE($4, raw_last_response),
+          provider_transaction_id=COALESCE($5, provider_transaction_id),
+          fees=COALESCE($6, fees),
+          updated_at=now()
+      WHERE id=$1 AND organization_id=$2
+      RETURNING *
+      `,
+      [id, orgId, status, rawLastResponse || null, providerTransactionId || null, fees || null]
+    );
+    return rows[0] || null;
+  });
 }
 
 async function getIntentById({ orgId, id }) {
-  const { rows } = await pool.query(
-    `SELECT * FROM payment_intents WHERE organization_id=$1 AND id=$2`,
-    [orgId, id]
-  );
-  return rows[0] || null;
+  return runWithTenant(orgId, async () => {
+    const { rows } = await pool.query(
+      `SELECT * FROM payment_intents WHERE organization_id=$1 AND id=$2`,
+      [orgId, id]
+    );
+    return rows[0] || null;
+  });
+}
+
+async function findIntentAcrossTenants(queryOne) {
+  // Public provider callbacks have no authenticated tenant context. payment_intents
+  // is protected by RLS, so deliberately enumerate the control-plane organization
+  // ids and bind each tenant before querying. This preserves fail-closed RLS while
+  // still allowing a verified provider callback to resolve its opaque reference.
+  const { rows: organizations } = await pool.query(`SELECT id FROM organizations ORDER BY created_at, id`);
+  for (const organization of organizations) {
+    const found = await runWithTenant(organization.id, () => queryOne(organization.id));
+    if (found) return found;
+  }
+  return null;
 }
 
 async function findIntentByProviderReference({ providerCode, reference }) {
-  const { rows } = await pool.query(
-    `SELECT * FROM payment_intents WHERE provider_code=$1 AND reference=$2 ORDER BY created_at DESC LIMIT 1`,
-    [providerCode, reference]
-  );
-  return rows[0] || null;
+  return findIntentAcrossTenants(async (orgId) => {
+    const { rows } = await pool.query(
+      `SELECT * FROM payment_intents
+        WHERE organization_id=$1 AND provider_code=$2 AND reference=$3
+        ORDER BY created_at DESC LIMIT 1`,
+      [orgId, providerCode, reference]
+    );
+    return rows[0] || null;
+  });
 }
 
 async function findIntentByProviderTransactionId({ providerCode, providerTransactionId }) {
-  const { rows } = await pool.query(
-    `SELECT * FROM payment_intents
-      WHERE provider_code=$1 AND provider_transaction_id=$2
-      ORDER BY created_at DESC LIMIT 1`,
-    [providerCode, providerTransactionId]
-  );
-  return rows[0] || null;
+  return findIntentAcrossTenants(async (orgId) => {
+    const { rows } = await pool.query(
+      `SELECT * FROM payment_intents
+        WHERE organization_id=$1 AND provider_code=$2 AND provider_transaction_id=$3
+        ORDER BY created_at DESC LIMIT 1`,
+      [orgId, providerCode, providerTransactionId]
+    );
+    return rows[0] || null;
+  });
 }
 
 async function insertIntentLinks({ intentId, links }) {
@@ -106,10 +130,10 @@ async function markWebhookProcessed({ id, error }) {
 }
 
 async function attachPostedReceipt({ orgId, intentId, customerReceiptId }) {
-  await pool.query(
+  await runWithTenant(orgId, () => pool.query(
     `UPDATE payment_intents SET posted_customer_receipt_id=$3, updated_at=now() WHERE organization_id=$1 AND id=$2`,
     [orgId, intentId, customerReceiptId]
-  );
+  ));
 }
 
 module.exports = {

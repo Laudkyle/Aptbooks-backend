@@ -903,9 +903,62 @@ async function registerDevice({ orgId, payload }) {
 }
 async function syncOfflineBatch({ orgId, actorUserId, payload }) {
   if (!payload?.batchNo) throw new AppError(400, 'batchNo is required');
-  const { rows: devRows } = payload.deviceCode ? await pool.query(`SELECT id FROM pos_devices WHERE organization_id=$1 AND device_code=$2`, [orgId, payload.deviceCode]) : { rows: [] };
-  const { rows } = await pool.query(`INSERT INTO pos_sync_batches(organization_id, device_id, batch_no, status, metadata) VALUES($1,$2,$3,'received',$4) ON CONFLICT (organization_id, batch_no) DO UPDATE SET metadata=EXCLUDED.metadata RETURNING *`, [orgId, devRows[0]?.id || null, payload.batchNo, payload.metadata || {}]);
-  return { batch: rows[0], processedCount: 0, note: 'Batch recorded. Offline sale replay should call POS sale creation with idempotency keys.' };
+  const sales = Array.isArray(payload.sales) ? payload.sales : (Array.isArray(payload.rows) ? payload.rows : []);
+  if (!sales.length) throw new AppError(400, 'sales must contain at least one offline sale');
+
+  const { rows: devRows } = payload.deviceCode
+    ? await pool.query(`SELECT id FROM pos_devices WHERE organization_id=$1 AND device_code=$2 AND status='active'`, [orgId, payload.deviceCode])
+    : { rows: [] };
+  if (payload.deviceCode && !devRows.length) throw new AppError(404, 'Registered POS device not found or inactive');
+
+  const { rows: batchRows } = await pool.query(
+    `INSERT INTO pos_sync_batches(organization_id, device_id, batch_no, status, metadata)
+     VALUES($1,$2,$3,'received',$4)
+     ON CONFLICT (organization_id, batch_no) DO UPDATE SET
+       device_id=COALESCE(EXCLUDED.device_id,pos_sync_batches.device_id),
+       metadata=pos_sync_batches.metadata || EXCLUDED.metadata
+     RETURNING *`,
+    [orgId, devRows[0]?.id || null, payload.batchNo, payload.metadata || {}]
+  );
+
+  const results = [];
+  let processedCount = 0;
+  let duplicateCount = 0;
+  let failedCount = 0;
+
+  for (let index = 0; index < sales.length; index += 1) {
+    const salePayload = normalizePayload(sales[index] || {});
+    const keySource = salePayload.idempotencyKey || salePayload.localId || salePayload.saleNo || String(index + 1);
+    const idempotencyKey = `OFFLINE:${payload.batchNo}:${String(keySource)}`;
+    try {
+      const existing = await pool.query(
+        `SELECT id FROM pos_sales WHERE organization_id=$1 AND idempotency_key=$2 LIMIT 1`,
+        [orgId, idempotencyKey]
+      );
+      const sale = existing.rows.length
+        ? await getSale({ orgId, saleId: existing.rows[0].id })
+        : await createSale({ orgId, actorUserId, payload: { ...salePayload, idempotencyKey } });
+      if (existing.rows.length) duplicateCount += 1;
+      else processedCount += 1;
+      results.push({ index, idempotencyKey, saleId: sale.id, saleNo: sale.sale_no, status: existing.rows.length ? 'duplicate' : 'processed' });
+    } catch (error) {
+      failedCount += 1;
+      results.push({ index, idempotencyKey, status: 'failed', error: error?.message || String(error) });
+    }
+  }
+
+  const successfulCount = processedCount + duplicateCount;
+  const status = failedCount === 0 ? 'processed' : (successfulCount > 0 ? 'partial' : 'failed');
+  const summary = { processedCount, duplicateCount, failedCount, totalCount: sales.length };
+  const { rows: updatedRows } = await pool.query(
+    `UPDATE pos_sync_batches
+        SET status=$3, processed_at=now(), metadata=metadata || $4::jsonb
+      WHERE organization_id=$1 AND id=$2
+      RETURNING *`,
+    [orgId, batchRows[0].id, status, JSON.stringify({ syncSummary: summary })]
+  );
+
+  return { batch: updatedRows[0], ...summary, results };
 }
 async function syncStatus({ orgId, batchId }) {
   const { rows } = await pool.query(`SELECT * FROM pos_sync_batches WHERE organization_id=$1 AND id=$2`, [orgId, batchId]);
@@ -926,10 +979,6 @@ async function confirmPayment({ orgId, payload }) {
 }
 async function refundPayment({ orgId, payload }) {
   return initializePayment({ orgId, payload: { ...payload, reference: payload.reference || `REF-${Date.now()}`, amount: payload.amount || 0, metadata: { refund: true, ...(payload.metadata || {}) } } });
-}
-async function recordPaymentWebhook({ orgId, provider, payload, signatureValid = null }) {
-  const { rows } = await pool.query(`INSERT INTO commerce_payment_webhook_events(organization_id, provider, provider_event_id, event_type, payload, signature_valid) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (provider, provider_event_id) DO UPDATE SET payload=EXCLUDED.payload RETURNING *`, [orgId || null, provider, payload?.id || payload?.eventId || null, payload?.event || payload?.type || null, payload || {}, signatureValid]);
-  return rows[0];
 }
 async function paymentStatus({ orgId, paymentId }) {
   const { rows } = await pool.query(`SELECT * FROM commerce_payment_transactions WHERE organization_id=$1 AND id=$2`, [orgId, paymentId]);
@@ -1205,7 +1254,7 @@ module.exports = {
   listCoupons: wrap(listCoupons), createCoupon: wrap(createCoupon), validateCoupon: wrap(validateCoupon),
   getLoyalty: wrap(getLoyalty), adjustLoyalty: wrap(adjustLoyalty), getStoreCredit: wrap(getStoreCredit), adjustStoreCredit: wrap(adjustStoreCredit),
   recordCashCount: wrap(recordCashCount), createCashDeposit: wrap(createCashDeposit), registerDevice: wrap(registerDevice), listDevices: wrap(listDevices), syncOfflineBatch: wrap(syncOfflineBatch), syncStatus: wrap(syncStatus),
-  initializePayment: wrap(initializePayment), confirmPayment: wrap(confirmPayment), refundPayment: wrap(refundPayment), recordPaymentWebhook: wrap(recordPaymentWebhook), paymentStatus: wrap(paymentStatus),
+  initializePayment: wrap(initializePayment), confirmPayment: wrap(confirmPayment), refundPayment: wrap(refundPayment), paymentStatus: wrap(paymentStatus),
   listPaymentMethods: wrap(listPaymentMethods), listPaymentProviders: wrap(listPaymentProviders), savePaymentProvider: wrap(savePaymentProvider), listAccountingProfiles: wrap(listAccountingProfiles), saveAccountingProfile: wrap(saveAccountingProfile),
   dailySalesReport: wrap(dailySalesReport), productSalesReport: wrap(productSalesReport), paymentReconciliationReport: wrap(paymentReconciliationReport), taxSummaryReport: wrap(taxSummaryReport),
   categorySalesReport: wrap(categorySalesReport), grossMarginReport: wrap(grossMarginReport), refundsReturnsReport: wrap(refundsReturnsReport), discountsReport: wrap(discountsReport), customerSalesReport: wrap(customerSalesReport), ecommerceOrdersReport: wrap(ecommerceOrdersReport), shiftSummaryReport: wrap(shiftSummaryReport), cashierSalesReport: wrap(cashierSalesReport)

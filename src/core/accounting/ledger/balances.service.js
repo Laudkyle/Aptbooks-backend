@@ -20,11 +20,13 @@ async function trialBalance({ orgId, periodId }) {
       coa.name,
       at.code AS account_type,
       at.normal_balance,
+      org.base_currency_code,
       COALESCE(src.debit_total, 0) AS debit_total,
       COALESCE(src.credit_total, 0) AS credit_total,
       (COALESCE(src.debit_total,0) - COALESCE(src.credit_total,0)) AS net_debit_minus_credit
     FROM chart_of_accounts coa
     JOIN account_types at ON at.id = coa.account_type_id
+    JOIN organizations org ON org.id = coa.organization_id
     LEFT JOIN accounting_posted_ledger_totals src
       ON src.organization_id = coa.organization_id
      AND src.account_id = coa.id

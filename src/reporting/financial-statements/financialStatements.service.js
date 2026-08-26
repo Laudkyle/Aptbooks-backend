@@ -1,3 +1,4 @@
+const Decimal = require("decimal.js");
 const { AppError } = require("../../shared/errors/AppError");
 const { pool } = require("../../db/pool");
 const { trialBalance: trialBalanceSvc } = require("../../core/accounting/ledger/balances.service");
@@ -6,6 +7,14 @@ const { writeAudit } = require("../../core/foundation/audit-logs/audit.service")
 
 function assertPeriodId(periodId) {
   if (!periodId) throw new AppError(400, "periodId is required");
+}
+
+async function getBaseCurrencyCode({ orgId }) {
+  const { rows } = await pool.query(
+    `SELECT base_currency_code FROM organizations WHERE id=$1`,
+    [orgId]
+  );
+  return rows[0]?.base_currency_code || "GHS";
 }
 
 async function getPeriod({ orgId, periodId }) {
@@ -40,12 +49,25 @@ async function trialBalance({ orgId, periodId }) {
   return trialBalanceSvc({ orgId, periodId });
 }
 
+function decimal(value) {
+  if (value instanceof Decimal) return value;
+  if (value === null || value === undefined || value === "") return new Decimal(0);
+  return new Decimal(String(value));
+}
+
+function moneyDecimal(value) {
+  return decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+}
+
+function moneyString(value) {
+  return moneyDecimal(value).toFixed(2);
+}
+
 function netForStatement(row, signNormal) {
-  // trialBalance rows include normal_balance.
-  const debit = Number(row.debit_total || 0);
-  const credit = Number(row.credit_total || 0);
+  const debit = decimal(row.debit_total || 0);
+  const credit = decimal(row.credit_total || 0);
   const normal = signNormal || row.normal_balance || "debit";
-  return normal === "credit" ? credit - debit : debit - credit;
+  return normal === "credit" ? credit.minus(debit) : debit.minus(credit);
 }
 
 async function fetchTbMap({ orgId, periodId, mode }) {
@@ -105,46 +127,85 @@ function buildTree(lines) {
 }
 
 function safeEvalFormula(expression, context) {
-  // Minimal DSL: allow identifiers that match line_no (e.g. L10), and + - * / ( )
-  // We map identifiers to numeric values from context.
-  if (!expression) return 0;
-  const cleaned = String(expression).trim();
-  if (!cleaned) return 0;
+  // Minimal decimal DSL: line identifiers (L10), decimal literals, + - * / and
+  // parentheses. It deliberately avoids JavaScript eval/Function so formulas
+  // retain Decimal precision and cannot execute code.
+  if (!expression) return new Decimal(0);
+  const cleaned = String(expression).replace(/\s+/g, "");
+  if (!cleaned) return new Decimal(0);
 
-  // Replace tokens like L123 with values
-  const replaced = cleaned.replace(/\bL(\d+)\b/g, (_, n) => {
-    const key = `L${n}`;
-    const v = context[key];
-    return Number.isFinite(v) ? String(v) : "0";
-  });
-  // Only allow safe chars
-  if (!/^[0-9+\-*/().\s]+$/.test(replaced)) {
+  const tokens = cleaned.match(/L\d+|\d+(?:\.\d+)?|[()+\-*/]/g) || [];
+  if (tokens.join("") !== cleaned) throw new AppError(400, "Invalid formula expression");
+
+  let index = 0;
+  const peek = () => tokens[index];
+  const take = () => tokens[index++];
+
+  const parseFactor = () => {
+    const token = take();
+    if (token === undefined) throw new AppError(400, "Invalid formula expression");
+    if (token === "+") return parseFactor();
+    if (token === "-") return parseFactor().negated();
+    if (token === "(") {
+      const value = parseExpression();
+      if (take() !== ")") throw new AppError(400, "Invalid formula expression");
+      return value;
+    }
+    if (/^L\d+$/.test(token)) return decimal(context[token] || 0);
+    if (/^\d+(?:\.\d+)?$/.test(token)) return decimal(token);
     throw new AppError(400, "Invalid formula expression");
+  };
+
+  const parseTerm = () => {
+    let value = parseFactor();
+    while (peek() === "*" || peek() === "/") {
+      const operator = take();
+      const right = parseFactor();
+      if (operator === "*") value = value.times(right);
+      else {
+        if (right.isZero()) throw new AppError(400, "Formula division by zero");
+        value = value.div(right);
+      }
+    }
+    return value;
+  };
+
+  function parseExpression() {
+    let value = parseTerm();
+    while (peek() === "+" || peek() === "-") {
+      const operator = take();
+      const right = parseTerm();
+      value = operator === "+" ? value.plus(right) : value.minus(right);
+    }
+    return value;
   }
-  // eslint-disable-next-line no-new-func
-  return Function(`"use strict"; return (${replaced});`)();
+
+  const result = parseExpression();
+  if (index !== tokens.length) throw new AppError(400, "Invalid formula expression");
+  return result;
 }
 
 function computeLineAmounts({ line, lineAccounts, tbMap, ctx }) {
   if (!line.is_visible) return { amount: null };
 
   if (line.line_type === "account") {
+    let amount = new Decimal(0);
     const mapped = lineAccounts.get(line.id) || [];
-    let amount = 0;
     for (const m of mapped) {
       const tbRow = tbMap.get(m.account_id);
       if (!tbRow) continue;
       const normal = m.sign_override || m.normal_balance || tbRow.normal_balance;
-      amount += netForStatement(tbRow, normal) * Number(m.weight || 1);
+      amount = amount.plus(netForStatement(tbRow, normal).times(decimal(m.weight || 1)));
     }
+    amount = moneyDecimal(amount);
     ctx[`L${line.line_no}`] = amount;
-    return { amount };
+    return { amount: amount.toFixed(2) };
   }
 
   if (line.line_type === "formula") {
-    const amount = safeEvalFormula(line.expression, ctx);
+    const amount = moneyDecimal(safeEvalFormula(line.expression, ctx));
     ctx[`L${line.line_no}`] = amount;
-    return { amount };
+    return { amount: amount.toFixed(2) };
   }
 
   // section/subtotal/total/text: computed from children (handled by caller) or null
@@ -158,11 +219,10 @@ function rollupTree(node, childResults, ctx) {
 
   let amount = computed?.amount;
   if (amount === null || amount === undefined) {
-    // For section/subtotal/total default: sum visible children amounts
-    const sum = kids.reduce((s, k) => s + (Number(k.amount) || 0), 0);
-    if (["section", "subtotal", "total"].includes(node.line_type)) amount = sum;
+    const sum = kids.reduce((total, child) => total.plus(decimal(child.amount || 0)), new Decimal(0));
+    if (["section", "subtotal", "total"].includes(node.line_type)) amount = moneyString(sum);
   }
-  if (amount !== null && amount !== undefined) ctx[`L${node.line_no}`] = amount;
+  if (amount !== null && amount !== undefined) ctx[`L${node.line_no}`] = moneyDecimal(amount);
 
   return {
     id: node.id,
@@ -519,8 +579,10 @@ async function buildTemplateStatement({ orgId, statementType, periodId, compareP
     cmpBuilt = tree.map((r) => child2.get(r.id)).filter(Boolean);
   }
 
+  const baseCurrencyCode = await getBaseCurrencyCode({ orgId });
   return {
     statement_type: statementType,
+    base_currency_code: baseCurrencyCode,
     template_id: tpl.id,
     period_id: periodId,
     compare_period_id: comparePeriodId || null,
@@ -560,7 +622,7 @@ async function cashFlowStatement({ orgId, periodId, comparePeriodId }) {
         from: period.start_date,
         to: period.end_date,
         lines: [],
-        totals: { operating: 0, investing: 0, financing: 0, net_change: 0 }
+        totals: { operating: "0.00", investing: "0.00", financing: "0.00", net_change: "0.00" }
       };
     }
 
@@ -628,61 +690,92 @@ async function cashFlowStatement({ orgId, periodId, comparePeriodId }) {
       }
     }
 
-    const totals = { operating: 0, investing: 0, financing: 0 };
+    const totals = {
+      operating: new Decimal(0),
+      investing: new Decimal(0),
+      financing: new Decimal(0)
+    };
     const buckets = new Map();
 
-    const addAmount = (categoryId, amount) => {
+    const addAmount = (categoryId, rawAmount) => {
+      const amount = moneyDecimal(rawAmount);
       const cat = byId.get(categoryId) || unclassified;
       const catKey = cat ? cat.id : "UNMAPPED";
       if (!buckets.has(catKey)) {
         buckets.set(catKey, {
           category: cat ? { id: cat.id, section: cat.section, code: cat.code, name: cat.name } : { id: null, section: "operating", code: "UNMAPPED", name: "Unmapped" },
-          amount: 0
+          amount: new Decimal(0)
         });
       }
-      buckets.get(catKey).amount += amount;
-      if (cat) totals[cat.section] += amount;
-      else totals.operating += amount;
+      buckets.get(catKey).amount = buckets.get(catKey).amount.plus(amount);
+      if (cat) totals[cat.section] = totals[cat.section].plus(amount);
+      else totals.operating = totals.operating.plus(amount);
     };
 
     for (const cl of cashLines) {
-      const cashChange = Number(cl.debit || 0) - Number(cl.credit || 0); // cash accounts are debit-normal
+      const cashChange = moneyDecimal(decimal(cl.debit || 0).minus(decimal(cl.credit || 0))); // cash accounts are debit-normal
       const others = nonCashByJournal.get(cl.journal_id) || [];
       if (!others.length) {
         addAmount(unclassified?.id, cashChange);
         continue;
       }
-      const weights = others.map((o) => Math.abs(Number(o.amount_base || (Number(o.debit || 0) + Number(o.credit || 0)))));
-      const denom = weights.reduce((s, w) => s + w, 0) || 0;
+
+      const weights = others.map((other) => {
+        const explicitBase = decimal(other.amount_base || 0).abs();
+        if (!explicitBase.isZero()) return explicitBase;
+        return decimal(other.debit || 0).plus(decimal(other.credit || 0)).abs();
+      });
+      const denominator = weights.reduce((sum, weight) => sum.plus(weight), new Decimal(0));
+
+      // Round each allocation at the money boundary and assign the residual to
+      // the final line. This guarantees allocations sum exactly to cashChange.
+      let allocatedSoFar = new Decimal(0);
       for (let i = 0; i < others.length; i++) {
-        const o = others[i];
-        const w = denom ? weights[i] / denom : 1 / others.length;
-        const allocated = cashChange * w;
-        const catId = mapAccountToCat.get(o.account_id) || unclassified?.id;
+        const other = others[i];
+        let allocated;
+        if (i === others.length - 1) {
+          allocated = cashChange.minus(allocatedSoFar);
+        } else if (!denominator.isZero()) {
+          allocated = moneyDecimal(cashChange.times(weights[i]).div(denominator));
+          allocatedSoFar = allocatedSoFar.plus(allocated);
+        } else {
+          allocated = moneyDecimal(cashChange.div(others.length));
+          allocatedSoFar = allocatedSoFar.plus(allocated);
+        }
+        const catId = mapAccountToCat.get(other.account_id) || unclassified?.id;
         addAmount(catId, allocated);
       }
     }
 
-    const lines = Array.from(buckets.values()).sort((a, b) => {
-      const sa = a.category.section;
-      const sb = b.category.section;
-      if (sa !== sb) return sa.localeCompare(sb);
-      return a.category.name.localeCompare(b.category.name);
-    });
-    const net_change = totals.operating + totals.investing + totals.financing;
+    const lines = Array.from(buckets.values())
+      .map((row) => ({ ...row, amount: moneyString(row.amount) }))
+      .sort((a, b) => {
+        const sa = a.category.section;
+        const sb = b.category.section;
+        if (sa !== sb) return sa.localeCompare(sb);
+        return a.category.name.localeCompare(b.category.name);
+      });
+    const netChange = totals.operating.plus(totals.investing).plus(totals.financing);
     return {
       period_id: pid,
       from: period.start_date,
       to: period.end_date,
       lines,
-      totals: { ...totals, net_change }
+      totals: {
+        operating: moneyString(totals.operating),
+        investing: moneyString(totals.investing),
+        financing: moneyString(totals.financing),
+        net_change: moneyString(netChange)
+      }
     };
   };
 
   const current = await buildOne(periodId);
   const compare = comparePeriodId ? await buildOne(comparePeriodId) : null;
+  const baseCurrencyCode = await getBaseCurrencyCode({ orgId });
   return {
     statement_type: "cash_flow",
+    base_currency_code: baseCurrencyCode,
     period_id: periodId,
     compare_period_id: comparePeriodId || null,
     data: current,
@@ -718,12 +811,12 @@ async function getPreviousPeriodId({ orgId, periodId }) {
 async function equityBalanceAsOf({ orgId, periodId }) {
   // Uses the same canonical posted/voided journal-line source as the other statements.
   const tb = await trialBalanceSvc({ orgId, periodId });
-  let equity = 0;
+  let equity = new Decimal(0);
   for (const r of tb) {
     if (r.account_type !== "EQUITY") continue;
-    equity += netForStatement(r, "credit");
+    equity = equity.plus(netForStatement(r, "credit"));
   }
-  return equity;
+  return moneyDecimal(equity);
 }
 
 async function equityMovements({ orgId, fromDate, toDate }) {
@@ -746,7 +839,7 @@ async function equityMovements({ orgId, fromDate, toDate }) {
     [orgId, fromDate, toDate]
   );
   const map = {};
-  for (const r of rows) map[r.movement_code] = Number(r.amount || 0);
+  for (const r of rows) map[r.movement_code] = moneyString(r.amount || 0);
   return map;
 }
 
@@ -756,42 +849,47 @@ async function changesInEquityStatement({ orgId, periodId, comparePeriodId }) {
   const buildOne = async (pid) => {
     const p = await getPeriod({ orgId, periodId: pid });
     const prevId = await getPreviousPeriodId({ orgId, periodId: pid });
-    const opening = prevId ? await equityBalanceAsOf({ orgId, periodId: prevId }) : 0;
+    const opening = prevId ? await equityBalanceAsOf({ orgId, periodId: prevId }) : new Decimal(0);
     const closingReported = await equityBalanceAsOf({ orgId, periodId: pid });
 
     // Net income from the income statement template (preferred), fallback to 0.
     const isPayload = await incomeStatement({ orgId, periodId: pid, comparePeriodId: null, mode: "period" });
     const netLine = findLineBySectionCode(isPayload.lines || [], "NET_INCOME");
-    const netIncome = Number(netLine?.amount || 0);
+    const netIncome = moneyDecimal(netLine?.amount || 0);
 
     const movements = await equityMovements({ orgId, fromDate: p.start_date, toDate: p.end_date });
     // Avoid double counting if retained earnings posting already included in movement mappings.
     // We treat net income as its own required component.
-    const movementTotal = Object.values(movements).reduce((s, v) => s + Number(v || 0), 0);
-    const computedClosing = opening + netIncome + movementTotal;
-    const diff = computedClosing - closingReported;
+    const movementTotal = Object.values(movements).reduce(
+      (total, value) => total.plus(decimal(value || 0)),
+      new Decimal(0)
+    );
+    const computedClosing = moneyDecimal(opening.plus(netIncome).plus(movementTotal));
+    const diff = moneyDecimal(computedClosing.minus(closingReported));
 
     return {
       period_id: pid,
       from: p.start_date,
       to: p.end_date,
-      opening_balance: opening,
-      net_income: netIncome,
+      opening_balance: moneyString(opening),
+      net_income: moneyString(netIncome),
       movements,
-      total_movements: movementTotal,
-      computed_closing_balance: computedClosing,
-      reported_closing_balance: closingReported,
+      total_movements: moneyString(movementTotal),
+      computed_closing_balance: moneyString(computedClosing),
+      reported_closing_balance: moneyString(closingReported),
       integrity: {
-        difference: diff,
-        within_tolerance: Math.abs(diff) < 0.01
+        difference: moneyString(diff),
+        within_tolerance: diff.abs().lt("0.01")
       }
     };
   };
 
   const current = await buildOne(periodId);
   const compare = comparePeriodId ? await buildOne(comparePeriodId) : null;
+  const baseCurrencyCode = await getBaseCurrencyCode({ orgId });
   return {
     statement_type: "changes_in_equity",
+    base_currency_code: baseCurrencyCode,
     period_id: periodId,
     compare_period_id: comparePeriodId || null,
     data: current,

@@ -1,32 +1,20 @@
 const router = require("express").Router();
-const { authRequired } = require("../../../middleware/auth.middleware");
-const { requirePermission } = require("../../../middleware/permission.middleware");
 const referenceService = require("./reference.service");
 
-router.use(authRequired);
-
 /**
- * GET /core/reference/currencies
- * Permission: settings.read (re-uses existing permission in your system)
- * Query:
- *  - q (optional): search by code prefix or name contains
- *  - limit (optional): default 500, max 1000
- *
- * Response:
- *  { data: [{ code: "GHS", name: "Ghana Cedi" }, ...] }
+ * Currency codes are public reference data and are required before a user has
+ * authenticated (for example on organization registration). Keep this route
+ * ahead of authentication middleware; it exposes no tenant data.
  */
-router.get(
-  "/currencies",
-  requirePermission("settings.read"),
-  async (req, res, next) => {
-    try {
-      const { q, limit } = req.query;
-      const data = await referenceService.listCurrencies({ q, limit });
-      res.json({ data });
-    } catch (e) {
-      next(e);
-    }
+router.get("/currencies", async (req, res, next) => {
+  try {
+    const { q, limit } = req.query;
+    const data = await referenceService.listCurrencies({ q, limit });
+    res.json({ data });
+  } catch (e) {
+    next(e);
   }
-);
+});
+
 
 module.exports = router;

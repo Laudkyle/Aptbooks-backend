@@ -37,7 +37,8 @@ async function getAgingBuckets({ orgId, bucketSetId }) {
         { label: '1-30', start_days: 1, end_days: 30, sort_order: 2 },
         { label: '31-60', start_days: 31, end_days: 60, sort_order: 3 },
         { label: '61-90', start_days: 61, end_days: 90, sort_order: 4 },
-        { label: '90+', start_days: 91, end_days: null, sort_order: 5 }
+        { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
+        { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
       ]
     };
   }
@@ -63,8 +64,14 @@ function assignBucketLabel(buckets, daysPastDue) {
   // Fallback
   return buckets[buckets.length - 1]?.label || 'CURRENT';
 }
+async function getBaseCurrencyCode(orgId) {
+  const { rows } = await pool.query(`SELECT base_currency_code FROM organizations WHERE id=$1`, [orgId]);
+  return rows[0]?.base_currency_code || "GHS";
+}
+
 async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
   assertDate(asOfDate, "asOfDate");
+  const baseCurrencyCode = await getBaseCurrencyCode(orgId);
 
   // Pass bucketSetId as is (can be undefined, null, or a valid ID)
   const { buckets } = await getAgingBuckets({ orgId, bucketSetId });
@@ -77,7 +84,8 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
       { label: '1-30', start_days: 1, end_days: 30, sort_order: 2 },
       { label: '31-60', start_days: 31, end_days: 60, sort_order: 3 },
       { label: '61-90', start_days: 61, end_days: 90, sort_order: 4 },
-      { label: '90+', start_days: 91, end_days: null, sort_order: 5 }
+      { label: '91-120', start_days: 91, end_days: 120, sort_order: 5 },
+        { label: '120+', start_days: 121, end_days: null, sort_order: 6 }
     ];
     
     const { rows } = await pool.query(
@@ -134,11 +142,11 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
         invoice_date: r.invoice_date,
         due_date: r.due_date,
         currency_code: r.currency_code,
-        total: moneyNumber(r.total || "0"),
-        allocated: moneyNumber(r.allocated || "0"),
-        notes_applied: moneyNumber(r.notes_applied || "0"),
-        written_off: moneyNumber(r.written_off || "0"),
-        outstanding: moneyNumber(outstanding),
+        total: normalizeMoney(r.total || "0"),
+        allocated: normalizeMoney(r.allocated || "0"),
+        notes_applied: normalizeMoney(r.notes_applied || "0"),
+        written_off: normalizeMoney(r.written_off || "0"),
+        outstanding: normalizeMoney(outstanding),
         days_past_due: Number(r.days_past_due || 0),
         bucket
       });
@@ -146,10 +154,11 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
 
     return {
       as_of_date: asOfDate,
-      totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, moneyNumber(value)])),
+      currency_code: baseCurrencyCode,
+      totals: totals,
       customers: Array.from(byCustomer.values()).map((customer) => ({
         ...customer,
-        buckets: Object.fromEntries(Object.entries(customer.buckets).map(([key, value]) => [key, moneyNumber(value)])),
+        buckets: customer.buckets,
       }))
     };
   }
@@ -210,11 +219,11 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
       invoice_date: r.invoice_date,
       due_date: r.due_date,
       currency_code: r.currency_code,
-      total: moneyNumber(r.total || "0"),
-      allocated: moneyNumber(r.allocated || "0"),
-      notes_applied: moneyNumber(r.notes_applied || "0"),
-      written_off: moneyNumber(r.written_off || "0"),
-      outstanding: moneyNumber(outstanding),
+      total: normalizeMoney(r.total || "0"),
+      allocated: normalizeMoney(r.allocated || "0"),
+      notes_applied: normalizeMoney(r.notes_applied || "0"),
+      written_off: normalizeMoney(r.written_off || "0"),
+      outstanding: normalizeMoney(outstanding),
       days_past_due: Number(r.days_past_due || 0),
       bucket
     });
@@ -222,10 +231,11 @@ async function agedReceivables({ orgId, asOfDate, bucketSetId }) {
 
   return {
     as_of_date: asOfDate,
-    totals: Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, moneyNumber(value)])),
+    currency_code: baseCurrencyCode,
+    totals: totals,
     customers: Array.from(byCustomer.values()).map((customer) => ({
       ...customer,
-      buckets: Object.fromEntries(Object.entries(customer.buckets).map(([key, value]) => [key, moneyNumber(value)])),
+      buckets: customer.buckets,
     }))
   };
 }
